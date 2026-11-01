@@ -16,6 +16,7 @@ import com.wingman.core.model.ApprovalDecisionResult
 import com.wingman.core.model.ApproveRequest
 import com.wingman.core.model.AutomationActionRequest
 import com.wingman.core.model.Connection
+import com.wingman.core.model.ConnectorEventIngestResult
 import com.wingman.core.model.ContactAutomationState
 import com.wingman.core.model.ContactPreferenceOverrideUpdate
 import com.wingman.core.model.ContactPreferences
@@ -26,6 +27,8 @@ import com.wingman.core.model.DraftCreateRequest
 import com.wingman.core.model.GlobalAutomationState
 import com.wingman.core.model.HealthResponse
 import com.wingman.core.model.Message
+import com.wingman.core.model.OutboxClaimRequest
+import com.wingman.core.model.OutboxClaimResult
 import com.wingman.core.model.Page
 import com.wingman.core.model.Preferences
 import com.wingman.core.model.PreferencesUpdate
@@ -36,6 +39,8 @@ import com.wingman.core.model.User
 import com.wingman.core.model.wireName
 import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -149,6 +154,14 @@ class HttpWingmanApi(
     override suspend fun listAgentActions(page: PageRequest, filter: AgentActionFilter): ApiResult<Page<AgentAction>> =
         call { service.listAgentActions(page.cursor, page.limit, filter.conversationId, filter.contactId, filter.type?.wireName()) }
 
+    override suspend fun ingestConnectorEvent(connectionId: String, envelope: JsonObject, key: IdempotencyKey): ApiResult<ConnectorEventIngestResult> {
+        eventKeyMismatch(envelope, key)?.let { return it }
+        return call { service.ingestConnectorEvent(connectionId, key.value, envelope) }
+    }
+
+    override suspend fun claimOutboxInstructions(connectionId: String, body: OutboxClaimRequest, key: IdempotencyKey): ApiResult<OutboxClaimResult> =
+        call { service.claimOutboxInstructions(connectionId, key.value, body) }
+
     private fun ifMatch(version: Int?): String? = version?.let { "\"$it\"" }
 
     private suspend fun <T : Any> call(block: suspend () -> Response<T>): ApiResult<T> = guard { toResult(block()) }
@@ -173,6 +186,12 @@ class HttpWingmanApi(
     }
 
     companion object {
+        /** `ingestConnectorEvent` requires `Idempotency-Key` == the envelope's `event_id`; refuse locally otherwise. */
+        internal fun eventKeyMismatch(envelope: JsonObject, key: IdempotencyKey): ApiResult.Failure? {
+            val eventId = (envelope["event_id"] as? JsonPrimitive)?.takeIf { it.isString }?.content
+            return if (eventId == key.value) null else ApiResult.Failure(ApiError.Client("Idempotency-Key must equal the envelope's event_id"))
+        }
+
         internal fun authInterceptor(tokenProvider: () -> String?) = Interceptor { chain ->
             val token = tokenProvider()
             val request = chain.request().newBuilder()

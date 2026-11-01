@@ -10,6 +10,10 @@ import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
+import com.wingman.BuildConfig
+import com.wingman.core.di.AppConfig
+import com.wingman.core.di.AppContainer
+import com.wingman.core.di.AppContainerProvider
 import com.wingman.integrations.sms.SmsAddress
 import com.wingman.integrations.sms.SmsCapabilities
 import com.wingman.integrations.sms.SmsConnectionScope
@@ -17,13 +21,13 @@ import com.wingman.integrations.sms.SmsSendCommand
 import java.util.UUID
 
 /*
- * DEBUG-ONLY DEVICE HARNESS (WING-016). UNVERIFIED: not compiled here, never run on a device.
+ * DEBUG-ONLY DEVICE HARNESS (WING-016). UNVERIFIED: compiled only in CI, never run on a device.
  *
- * Purpose: let a human run the device checklist in docs/integrations/android_sms.md before the
- * backend has a route to push dispatched sends to the device (I-010 and its downlink twin).
- * The user's tap on "Send" is the authorization; the record stores authorized_by =
- * "device-demo:manual-tap". It must only be declared in the DEBUG manifest (src/debug), and it
- * refuses to run in a non-debuggable build. Plain framework views, so it needs no new dependency.
+ * Purpose: let a human run the device checklist in docs/integrations/android_sms.md. Steps 4/5
+ * send directly: the user's tap on "Send" is the authorization; the record stores authorized_by =
+ * "device-demo:manual-tap". Steps 7/8 run the real contract v1.1.0 round trip instead: upload
+ * envelopes, claim leased instructions and execute them through the same SmsSender. It must only
+ * be declared in the DEBUG manifest (src/debug), and it refuses to run in a non-debuggable build. Plain framework views, so it needs no new dependency.
  *
  * Private text is shown on this screen (it is the device owner's own data) and never logged.
  */
@@ -67,6 +71,17 @@ class SmsDemoActivity : Activity() {
             val report = SmsConnectorRuntime.get(this)?.maintain()
             refresh("maintain: $report")
         }
+        button("7. Connect backend (AppContainer.api: mock or HTTP per build)") {
+            val container = AppContainerProvider.get {
+                AppContainer(AppConfig(apiBaseUrl = BuildConfig.API_BASE_URL, useMockApi = BuildConfig.USE_MOCK_API))
+            }
+            SmsConnectorRuntime.connectBackend(container.api)
+            refresh("Backend connected: ${if (container.isMock) "MockWingmanApi (offline)" else BuildConfig.API_BASE_URL}")
+        }
+        button("8. Sync with backend now (upload, claim, execute, upload)") {
+            refresh("sync running...")
+            SmsConnectorRuntime.syncInBackground(this) { report -> runOnUiThread { refresh("sync: $report") } }
+        }
         button("Refresh") { refresh(null) }
         output = TextView(this).apply { setTextIsSelectable(true); textSize = 11f }.also(col::addView)
         setContentView(ScrollView(this).apply { addView(col) })
@@ -101,6 +116,8 @@ class SmsDemoActivity : Activity() {
             appendLine(message ?: "")
             appendLine("default SMS app: ${device.isDefaultSmsApp}; RECEIVE ${device.receiveSmsGranted}; SEND ${device.sendSmsGranted}; READ ${device.readSmsGranted}")
             appendLine("scope configured: ${connector != null}; outbox: ${connector?.outbox?.size()}; dead letters: ${connector?.outbox?.deadLetterCount()}")
+            appendLine("backend: ${connector?.poller != null}; upload backoff until: ${connector?.uploadBackoff?.nextAttemptAtMillis()}")
+            connector?.poller?.let { appendLine("device_install_id: ${it.deviceInstallId()}; pending claim key: ${it.pendingClaimKey()}") }
         }
         output.text = buildString {
             appendLine("capabilities:")

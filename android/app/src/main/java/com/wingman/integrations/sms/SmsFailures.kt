@@ -96,6 +96,16 @@ object SmsFailureMapper {
         "no sent result from the platform in time; outcome unknown, the message may have been sent",
     )
 
+    /**
+     * ADR 0006 device obligation: the leased instruction's start deadline passed before the
+     * transport could be called. Nothing was sent, so a NEW attempt (new key) is safe.
+     */
+    val LEASE_DEADLINE_PASSED = SmsSendFailure(
+        SmsFailureCode.TIMEOUT,
+        true,
+        "lease deadline passed before the send could start; not sent",
+    )
+
     val PERMISSION_MISSING = SmsSendFailure(SmsFailureCode.PERMISSION_DENIED, false, "SEND_SMS not granted")
     val NO_TELEPHONY = SmsSendFailure(SmsFailureCode.NOT_CONNECTED, false, "device has no telephony feature")
     val INVALID_THREAD = SmsSendFailure(SmsFailureCode.TRANSPORT_ERROR, false, "external_thread_id is not an sms: thread")

@@ -2,13 +2,12 @@ package com.wingman.integrations.sms.android
 
 import android.content.Context
 import android.content.pm.ApplicationInfo
+import com.wingman.core.api.WingmanApi
 import com.wingman.integrations.sms.FileSmsStateStore
 import com.wingman.integrations.sms.IncomingSms
-import com.wingman.integrations.sms.SmsSendCommand
-import com.wingman.integrations.sms.NoIngestRouteUploader
 import com.wingman.integrations.sms.SmsConnectionScope
 import com.wingman.integrations.sms.SmsConnector
-import com.wingman.integrations.sms.SmsEnvelopeUploader
+import com.wingman.integrations.sms.SmsSendCommand
 import com.wingman.integrations.sms.SmsStateStore
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.buildJsonObject
@@ -32,8 +31,10 @@ import java.io.File
  * same app-private state file as the dedup claims, send ledger and outbox.
  *
  * Integrator wiring (AppContainer, D-003): call [configure] once the user enables the SMS
- * connection (scope = the Wingman user and connection IDs), and [setUploader] with the real
- * HTTP uploader once the I-010 ingest route exists.
+ * connection (scope = the Wingman user and connection IDs), and [connectBackend] with
+ * `AppContainer.api`. That client carries the bearer token from AppContainer's token provider;
+ * there is none yet (I-011), so until then every backend call answers 401 and is retried later.
+ * Then call [syncInBackground] periodically (WorkManager, requested) and on app start.
  */
 object SmsConnectorRuntime {
     private const val STATE_FILE = "wingman-sms-state.json"
@@ -42,7 +43,7 @@ object SmsConnectorRuntime {
 
     @Volatile private var store: SmsStateStore? = null
     @Volatile private var connector: SmsConnector? = null
-    @Volatile private var uploader: SmsEnvelopeUploader = NoIngestRouteUploader
+    @Volatile private var api: WingmanApi? = null
 
     @Synchronized
     private fun store(context: Context): SmsStateStore =
@@ -57,10 +58,39 @@ object SmsConnectorRuntime {
         connector = null
     }
 
+    /**
+     * Connects the connector to the backend: envelope upload (`ingestConnectorEvent`) and the
+     * outbox claim poller (`claimOutboxInstructions`). Null disconnects (envelopes stay queued,
+     * nothing is claimed). Auth comes from [api] itself; this class never handles tokens.
+     */
     @Synchronized
-    fun setUploader(newUploader: SmsEnvelopeUploader) {
-        uploader = newUploader
+    fun connectBackend(newApi: WingmanApi?) {
+        // Same client (e.g. MainActivity recreated): keep the connector. Rebuilding it would give a
+        // second SmsSender/SmsOutboxPoller, whose per-instance locks would not exclude a sync still
+        // running on the old one.
+        if (newApi === api) return
+        api = newApi
         connector = null
+    }
+
+    /** Serializes sync rounds process-wide, across connector rebuilds (one claim/send round at a time). */
+    private val syncLock = Any()
+
+    /**
+     * One upload + claim + execute round on a background thread (never the main thread: it does
+     * blocking network I/O). Returns immediately. Safe to call repeatedly: the connector's methods
+     * are synchronized and every step is idempotent.
+     */
+    fun syncInBackground(context: Context, onDone: ((SmsConnector.SyncReport?) -> Unit)? = null) {
+        val app = context.applicationContext
+        Thread {
+            val report = synchronized(syncLock) {
+                runCatching {
+                    get(app)?.sync(SmsRoleHelper.sendPreconditions(app))
+                }.getOrNull()
+            }
+            onDone?.invoke(report)
+        }.apply { name = "wingman-sms-sync" }.start()
     }
 
     /** The connector, or null while the user has not enabled/configured the SMS connection. */
@@ -71,7 +101,7 @@ object SmsConnectorRuntime {
         val user = s.get(KEY_USER) ?: return null
         val connection = s.get(KEY_CONNECTION) ?: return null
         val scope = runCatching { SmsConnectionScope(user, connection) }.getOrNull() ?: return null
-        return SmsConnector(scope, s, AndroidSmsTransport(context.applicationContext), uploader).also { connector = it }
+        return SmsConnector(scope, s, AndroidSmsTransport(context.applicationContext), api = api).also { connector = it }
     }
 
     // ------------------------------------------------------------ debug-only device test hooks

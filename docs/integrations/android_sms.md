@@ -1,8 +1,8 @@
 # Android SMS connector (WING-016)
 
 **Overall integration status: UNVERIFIED.** No physical device and no Android SDK were available
-to the authoring agent (I-001, I-003, I-008). The pure-Kotlin core is unit-tested and its envelopes
-validate against the frozen contract. The Android adapters have never been compiled or run.
+to the authoring agent (I-003, I-008). The pure-Kotlin core is unit-tested and its envelopes
+validate against the frozen contract. The Android adapters compile only in CI, and have never run.
 Every device claim in this document is **UNVERIFIED** unless it says otherwise. Section
 [Device test checklist](#device-test-checklist) lists the exact steps that move it to VERIFIED.
 
@@ -13,18 +13,21 @@ Every device claim in this document is **UNVERIFIED** unless it says otherwise. 
 | Send bookkeeping: one transport attempt per key (D-006), replay, key conflict, crash during submit | VERIFIED (JVM) | `SmsSenderTest` |
 | Sent / delivered result state machine, multipart, typed failure codes | VERIFIED (JVM) | `SmsSenderTest` |
 | Capabilities document (`read`/`send` UNVERIFIED, others UNSUPPORTED) | VERIFIED (JVM) | `SmsCapabilitiesTest`, schema validation |
-| Android adapters compile | **UNVERIFIED** | no SDK in sandbox |
+| Android adapters compile | VERIFIED (CI) | CI `android` job (`assembleDebug`) compiles them on GitHub runners (I-001 closed). Still never run on a device |
 | Real SMS received on a device | **UNVERIFIED** | checklist D3 |
 | Authorized SMS sent on a device | **UNVERIFIED** | checklist D4 |
 | No double reply on duplicate or restart, on a device | **UNVERIFIED** | checklist D5, D6 |
 | Failed send in airplane mode on a device | **UNVERIFIED** | checklist D7 |
 | Delivery reports from a real carrier | **UNVERIFIED** | checklist D4 |
-| Upload of envelopes to the backend | **BLOCKED** (I-010) | no contract route |
+| Envelope upload over `ingestConnectorEvent` (contract v1.1.0): key = `event_id`, status mapping, dead letter, backoff with `Retry-After`, restart, order | VERIFIED (JVM) | `SmsEnvelopeUploaderTest`, `DeviceConnectorEndpointsTest` (MockWebServer) |
+| Outbox claim poller (`claimOutboxInstructions`): stable `device_install_id`, persisted claim key and replay, lease deadline, one radio submit per instruction key | VERIFIED (JVM) | `SmsOutboxPollerTest` |
+| Outcome envelopes from claimed instructions validate against `connector_event.v1` | VERIFIED (JVM) | `SmsContractFixturesTest` + schema validation |
+| Round trip against a real backend | **UNVERIFIED** | backend routes not implemented yet (WING-011), no auth token on the device (I-011); checklist B1 to B6 |
 
 ## 1. What it does
 
 ```
- SMS_DELIVER broadcast                     authorized dispatch path (WING-011)
+ SMS_DELIVER broadcast                     backend dispatcher (WING-011) via the leased outbox (§8)
         │                                              │ SmsSendCommand(key, outbound_message_id, thread, text, authorized_by)
  SmsDeliverReceiver (android/)                         ▼
         │ IncomingSms (already-extracted fields)   SmsSender ── claim key durably ──► SmsTransport.submit (AndroidSmsTransport, SmsManager)
@@ -32,7 +35,10 @@ Every device claim in this document is **UNVERIFIED** unless it says otherwise. 
  SmsInboundProcessor ─ dedup claim (durable)           └──────── SmsResultReceiver ◄──────┘
         │                                              │
         ▼                                              ▼
-            SmsOutbox (durable, keyed by event_id) ──► SmsEnvelopeUploader (TODO I-010)
+            SmsOutbox (durable, keyed by event_id) ──► WingmanApiSmsEnvelopeUploader ──► POST /v1/connections/{id}/events
+
+ The SmsSendCommand above comes only from:
+ POST /v1/connections/{id}/outbox/claim ──► SmsOutboxPoller ──► OutboxInstruction ──► SmsSendCommand (+ lease deadline)
 ```
 
 * **Pure Kotlin** (`com.wingman.integrations.sms`, no `android.*` imports): models, envelope
@@ -42,9 +48,10 @@ Every device claim in this document is **UNVERIFIED** unless it says otherwise. 
   `SmsResultReceiver`, `AndroidSmsTransport`, `SmsProviderWriter`, `SmsRoleHelper`, the three
   role-qualifying components in `SmsRoleComponents.kt`, `SmsConnectorRuntime` (process holder),
   and the debug-only `SmsDemoActivity` harness.
-* **No autonomous sending.** The inbound path has no reference to the sender.
-  `SmsSender.send` is the only thing that calls the radio. The automation controller is its only
-  intended caller, and on a debug build the demo screen's explicit "Send" tap also calls it.
+* **No autonomous sending.** The inbound path has no reference to the sender or the poller.
+  `SmsSender.send` is the only thing that calls the radio. In production its only caller is
+  `SmsOutboxPoller`, which executes instructions the backend dispatcher (WING-011) leased to this
+  device (§8). On a debug build the demo screen's explicit "Send" tap also calls it.
   `RESPOND_VIA_MESSAGE` is declared only so the app qualifies for the role, and it refuses to send.
 
 ### Identities and dedup
@@ -249,19 +256,25 @@ ships in release (the activity also refuses to run when the build is not debugga
 
 ### Dependencies
 
-No new Gradle dependencies are required. The core uses only `kotlinx-serialization-json`
-(already declared) and the JDK. A periodic `SmsConnector.maintain()` needs a scheduler. The
-integrator can add `androidx.work:work-runtime-ktx` later, or call `maintain()` on app start and
-from the demo screen until then.
+No new Gradle dependencies are required. The core uses only `kotlinx-serialization-json`,
+`kotlinx-coroutines` and the existing `core/api` client (all already declared), and the JDK.
+A periodic `SmsConnector.sync()` needs a scheduler. **Requested:** `androidx.work:work-runtime-ktx`
+for a periodic worker (15 min minimum) with a network constraint. Until then the integrator calls
+`SmsConnectorRuntime.syncInBackground(context)` on app start, and the demo screen has a button.
+Nothing in the tests needs WorkManager.
 
 ### AppContainer wiring (integrator, after merge)
 
 * Call `SmsConnectorRuntime.configure(context, SmsConnectionScope(userId, connectionId))` when the
   user enables the SMS connection. Pairing isn't in the contract yet (D-004), so the demo screen
   uses the fixed IDs from `contracts/examples`.
-* Call `SmsConnectorRuntime.setUploader(...)` with an HTTP uploader once the I-010 route exists.
-  It lives in `core/api`, which WING-016 doesn't own.
-* Call `SmsConnectorRuntime.get(context)?.maintain()` on app start and periodically.
+* Call `SmsConnectorRuntime.connectBackend(container.api)` once the `AppContainer` exists. That
+  `WingmanApi` carries the bearer token from `AppContainer`'s `tokenProvider`, so the SMS code never
+  sees a credential. **There is no token provider yet (I-011)**: until one exists, every ingest and
+  claim answers `401`, which the uploader and poller treat as retry-later (nothing is dropped,
+  nothing is sent).
+* Call `SmsConnectorRuntime.syncInBackground(context)` on app start and periodically (WorkManager,
+  requested above). It uploads, claims, executes and uploads again on a background thread.
 * WING-013 onboarding launches `SmsRoleHelper.requestRoleIntent()` from an explicit user action.
 
 ## 4. Play Store policy constraints
@@ -363,6 +376,27 @@ adb logcat -s ActivityManager:I | grep -i wingman             # process kills / 
 D3 PASS makes `read` VERIFIED. D4 + D5 + D6 + D7 PASS make `send` VERIFIED. The
 acceptance criterion "no double reply on duplicate broadcast/restart" is D5 + D6.
 
+#### Backend round trip (contract v1.1.0)
+
+Prerequisites, which don't exist yet: a backend that implements `ingestConnectorEvent` and
+`claimOutboxInstructions` (WING-011), a debug build with `-Pwingman.useMockApi=false` pointing
+`API_BASE_URL` at it (cleartext HTTP to a LAN backend may need a debug network-security config,
+which is integrator-owned), an `AppContainer` token provider or the debug dev-stub token (I-011),
+and the SMS connection's real user and connection IDs in place of the demo scope. A
+`MockWingmanApi` build exercises the same buttons offline, but that is not evidence.
+
+| # | Step | Expected | Verifies |
+|---|---|---|---|
+| B1 | After D1 to D3, tap **7. Connect backend**, then **8. Sync** | The status line shows `backend: true` and a `device_install_id`. The sync report shows `uploadBefore.accepted >= 1`, and the outbox drops to 0. The backend has one inbound message for the `message.received` event. Tap **8** again: nothing is re-uploaded | uplink, `202` |
+| B2 | Receive a new SMS from the peer. Tap **8** and run `am force-stop $PKG` while it runs. Reopen and tap **8** | No envelope is lost: the outbox ends at 0. If the envelope was sent twice, the backend answered `200 duplicate_event` the second time and has exactly one message | crash safety, server dedup |
+| B3 | Have the backend dispatcher create one instruction for the peer number (approve a draft in the app). Tap **8** | The report shows `claimed=1, submitted=1`. The peer receives the text **once**. Within about 10 s, tap **8** again: the `message.send_acknowledged` envelope is accepted and the backend message becomes `sent` (not `delivered` until a receipt arrives) | **downlink**, authorization, ack |
+| B4 | Create a second instruction. Turn on airplane mode, tap **8** (the claim fails: `network`), turn airplane mode off, `am force-stop`, reopen, tap **8** | The status line showed a pending claim key before the restart. After it, the same key is replayed (backend log: same `Idempotency-Key`), and the peer receives the text **once** | claim replay after a lost response |
+| B5 | Set the backend lease to 30 s (the minimum). Create an instruction, tap **8** on a network throttled so that the claim response takes more than 15 s (for example a proxy with delay), or use a build with `SmsPollerConfig(deadlineMarginMillis = 30_000)` | No SMS goes out. A `message.send_failed` with `failure.code` `timeout` and `retryable: true` is uploaded. If the dispatcher creates attempt 2, that one sends once | lease deadline |
+| B6 | Point the backend at a wrong connection ID (or revoke the connection) and tap **8** | The envelope gets `404` and moves to dead letters (`dead letters: 1`). It is not retried. Restore it: the next envelopes upload normally | dead letter |
+
+B1 to B6 PASS, together with D3 to D7, make the SMS connector's backend path VERIFIED. Until then
+it stays UNVERIFIED, and so do the `read`/`send` capabilities (I-003).
+
 What the harness cannot do: send a **forged** `SMS_DELIVER` broadcast. It is protected by the
 `BROADCAST_SMS` signature permission, so `adb shell am broadcast` cannot imitate the radio.
 "Re-inject" re-runs the exact fields of the last real SMS through the same
@@ -401,88 +435,86 @@ EOF
 For D11, save each envelope from the device state file as `event.<n>.json` in `<dir>` and run the
 same command.
 
-## 8. Proposed ingest route (I-010, for a separate additive contract PR)
+## 8. Backend round trip (contract v1.1.0, ADR 0006)
 
-There is no contract route for device-side connectors to push `connector_event.v1` envelopes.
-`NoIngestRouteUploader` returns `RetryLater`, so envelopes wait in the durable outbox. No endpoint
-is invented in code. Proposal:
+Contract v1.1.0 (PR #15, D-012) added both directions. The device uses them through the shared
+`WingmanApi` (`ingestConnectorEvent`, `claimOutboxInstructions`), so auth and base URL come from
+`AppContainer`. All logic is pure Kotlin in `SmsBackendSync.kt`.
 
-```yaml
-  /v1/connections/{connection_id}/events:
-    parameters:
-      - $ref: "#/components/parameters/ConnectionId"   # new parameter, same shape as ConversationId
-    post:
-      tags: [connections]
-      operationId: ingestConnectorEvent
-      summary: Device-side connector reports one connector_event.v1 envelope
-      description: |
-        For connectors that run on the user's device (WING-016 SMS, WING-017 notifications).
-        The body is exactly one `connector_event.v1` envelope. The server rejects it with 404 if
-        `connection_id` (path and body must match) is not owned by the authenticated user, or if
-        `user_id` is not the caller. Dedup follows ADR 0004: a repeated `event_id`, or a repeated
-        `(user_id, platform, external_message_id)` for inbound messages, returns `200` with
-        `duplicate: true` and causes no second message or state transition. `mock.*` types and
-        `platform: mock` are rejected with 422 on this route. Send outcome events
-        (`message.send_acknowledged`, `message.send_failed`, `message.delivery_receipt`) must
-        reference an `outbound_message_id` and `idempotency_key` the dispatcher issued to this
-        connection; anything else is a 422.
-        Clients use the envelope's `event_id` as the `Idempotency-Key`.
-      parameters:
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "schemas/connector_event.v1.json"
-      responses:
-        "202":
-          description: Accepted (new event).
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ConnectorEventIngestResult"
-        "200":
-          description: Already seen (duplicate event or duplicate inbound message). No side effect.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ConnectorEventIngestResult"
-        "400":
-          $ref: "#/components/responses/BadRequest"
-        "401":
-          $ref: "#/components/responses/Unauthenticated"
-        "404":
-          $ref: "#/components/responses/NotFound"
-        "409":
-          $ref: "#/components/responses/Conflict"
-        "422":
-          $ref: "#/components/responses/Error"
-        default:
-          $ref: "#/components/responses/Error"
+### Uplink: `POST /v1/connections/{connection_id}/events`
 
-# components.schemas
-    ConnectorEventIngestResult:
-      type: object
-      additionalProperties: false
-      required: [event_id, duplicate]
-      properties:
-        event_id:
-          $ref: "#/components/schemas/Id"
-        duplicate:
-          type: boolean
-```
+`WingmanApiSmsEnvelopeUploader` drains `SmsOutbox` in enqueue order, one request per envelope.
+The path is the envelope's own `connection_id`, and `Idempotency-Key` is its `event_id`
+(`HttpWingmanApi` refuses any other key without sending a request).
 
-Device uploader mapping: `2xx` returns `Accepted`. `400`, `404` and `422` return `Rejected`
-(dead letter, never retried). Network errors, `409`, `429` and `5xx` return `RetryLater`.
+| Response | Device action |
+|---|---|
+| `202` `outcome: accepted` | remove from the outbox |
+| `200` `outcome: duplicate_event` / `duplicate_message` | remove from the outbox (the old `duplicate: true` proposal is gone) |
+| `400`, `404`, `422` | move to the dead-letter area (`outbox-dead:`), never retried; the next envelope continues |
+| network error, `409`, `429`, `5xx` | keep it and stop the drain; retry later with the same envelope and key |
+| `401` (no token, I-011) or any other status, or a 2xx with an unreadable body | keep it and retry later. An envelope is never dropped on an answer the contract does not call permanent |
 
-**The downlink is also missing.** No contract route delivers a dispatched send
-(`SmsSendCommand`) to the device. Polling `GET /v1/connections/{id}/dispatches?cursor=` or FCM are
-the options. It needs the same separate contract PR, coordinated with WING-011. Until then, sends
-on a device come only from the debug harness, where the user's explicit tap is the authorization.
+* **Order.** The drain stops at the first retryable answer, so nothing overtakes a waiting
+  envelope: per-thread order (and global order) is kept.
+* **Backoff.** `SmsBackoff` ("upload") is persisted in the state file: `Retry-After` when the server
+  sends it (capped at 1 h), otherwise exponential from 5 s to 15 min. While it waits, `maintain()`
+  makes no request. Any progress resets it.
+* **Never lost.** An envelope is removed only after the server answered for it, and a rejected one is
+  written to the dead-letter area before it is removed. A crash in between re-uploads the same
+  envelope, which the server answers `200 duplicate_event`.
+
+### Downlink: `POST /v1/connections/{connection_id}/outbox/claim`
+
+`SmsOutboxPoller.poll()` is the only production caller of `SmsSender.send`.
+
+1. **`device_install_id`**: a random UUID created once and stored in the state file
+   (`config:device_install_id`). Uninstalling deletes it, so a reinstall is a new lease holder.
+2. **Claim key**: a fresh `Idempotency-Key` plus the exact request body (`device_install_id`,
+   `max_instructions`, default 5) and the time of the first send are persisted **before** the
+   request. The same key is replayed until an answer has been fully processed, so a lost response
+   or a process death gets the original instructions back (`Idempotent-Replayed: true`), and nothing
+   new is leased. A `400`/`404`/`422` drops the key. A key older than 23 h is dropped as well,
+   because the server keeps keys for at least 24 h. Claim failures use their own persisted
+   `SmsBackoff` ("claim") with `Retry-After`.
+3. **Mapping**: each `OutboxInstruction` becomes
+   `SmsSendCommand(outbound_message_id, idempotency_key, external_thread_id, text, authorizedBy)`.
+   `authorizedBy` is `authorization.origin`, or `approved_draft/<approval_id>`. The poller never
+   executes an instruction that is for another connection, is not `leased`, or doesn't map to a
+   valid command. It is left to expire on the server.
+4. **Lease deadline**: `deadline = anchor + (lease_expires_at - server_time) - 15 s`. The anchor is
+   the local time just before this request was sent. For a replayed answer it is the time the key
+   was **first** sent. Either way it is never later than the server's lease instant, so the
+   deadline is never too late and an old replay can't extend it. `SmsSender` checks the deadline
+   last, right before calling the radio. If it has passed, the key is used up without a transport
+   call, and `message.send_failed` is emitted with `failure.code: timeout` and `retryable: true`
+   (nothing was sent, so the dispatcher may create attempt + 1).
+5. **One send per key** (D-006): the per-attempt `idempotency_key` (`send:<message_id>:<attempt>`)
+   is claimed in the durable ledger before the radio. A duplicate instruction in one response, a
+   replayed claim, or a re-claim after a crash is answered from the ledger (`replayed`), with no
+   second submit.
+6. **Results**: `message.send_acknowledged`, `message.send_failed` and `message.delivery_receipt`
+   envelopes go through the same outbox and uploader. They echo `outbound_message_id` and
+   `idempotency_key`, which the server matches against the leased instruction.
+
+`SmsConnector.sync(preconditions)` runs one round: upload, claim and execute, then upload again
+when something was refused. Acks arrive later through the sent PendingIntents and go out on the
+next round. Without a connected `WingmanApi`, `poller` is null and `NoBackendUploader` keeps
+everything queued.
+
+**Defense in depth** (ADR 0006): the server leases each instruction once, the device ledger allows
+one transport attempt per key, and the server accepts outcomes only for leased instructions.
+
+**Known limits (UNVERIFIED on a device).** A wall-clock jump between the claim and the send is not
+detected, because the deadline uses `System.currentTimeMillis()`. The 15 s margin covers rate drift
+and the time between the check and the submit. Polling is not scheduled yet (WorkManager is
+requested), and the backend routes are not implemented yet (WING-011).
 
 ## 9. Files
 
 * Pure Kotlin: `android/app/src/main/java/com/wingman/integrations/sms/*.kt`
 * Android adapters: `android/app/src/main/java/com/wingman/integrations/sms/android/*.kt`
 * Tests: `android/app/src/test/java/com/wingman/integrations/sms/*.kt`
+* Backend sync (v1.1.0): `integrations/sms/SmsBackendSync.kt` (uploader, poller), the
+  `SmsBackoff` in `SmsOutbox.kt`, and the core client operations in `core/api` and
+  `core/model/DeviceConnectorModels.kt`
