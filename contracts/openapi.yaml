@@ -437,9 +437,14 @@ paths:
 
         **What a claim does, atomically per instruction:**
 
-        * Re-checks, at claim time, global pause, the contact's pause/takeover state
-          and the connection's `send` capability. An instruction that no longer passes
-          becomes `canceled` (its message `canceled`) and is not returned.
+        * Re-checks, at claim time, the same policy the dispatcher applied, using the
+          message's `origin`. Global pause and the contact's pause/takeover state
+          cancel exactly what those actions themselves cancel: never a `user_manual`
+          send (`sendMessage` is allowed while paused or taken over). Any instruction
+          is canceled if the connection's `send` capability is now `UNSUPPORTED`, and
+          an `autopilot` instruction also if `send` is no longer `VERIFIED`
+          (ADR 0005). An instruction that no longer passes becomes `canceled` (its
+          message `canceled`) and is not returned.
         * Leases each returned `pending` instruction to the calling
           `device_install_id`: state `leased`, `leased_at` now, `lease_expires_at` set
           by the server (default 120 s, bounds 30 to 600 s). The message moves
