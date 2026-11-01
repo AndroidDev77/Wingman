@@ -2,7 +2,8 @@
 <!-- Integrator-owned (D-003). DEBUG builds only: the WING-016 device-test harness never ships in
      release. The activity also refuses to run when the build is not debuggable. -->
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application>
+    <!-- WING-025: debug-only cleartext to the emulator host loopback (res/xml, debug source set). -->
+    <application android:networkSecurityConfig="@xml/wingman_debug_network_security">
         <activity
             android:name="com.wingman.integrations.sms.android.SmsDemoActivity"
             android:exported="true"

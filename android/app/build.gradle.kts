@@ -15,6 +15,8 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "0.1.0"
+        // WING-025: instrumented E2E tests (src/androidTest), run on the CI emulator against a live backend.
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         // Emulator loopback to the host's local backend. Overridden per build type later.
         buildConfigField("String", "API_BASE_URL", "\"http://10.0.2.2:8000/\"")
         // Offline mock API by default so the app runs with no backend. Build with
@@ -85,6 +87,12 @@ dependencies {
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)
+    // WING-025: instrumented E2E tests on the emulator (.github/workflows/e2e.yml).
+    androidTestImplementation(platform(libs.androidx.compose.bom))
+    androidTestImplementation(libs.androidx.ui.test.junit4)
+    androidTestImplementation(libs.androidx.test.ext.junit)
+    androidTestImplementation(libs.androidx.test.runner)
+    androidTestImplementation(libs.androidx.test.espresso.core)
 }
 
 // I-011: the release source set replaces the debug-only dev-token sign-in with a stub. CI builds
