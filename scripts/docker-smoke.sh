@@ -31,6 +31,14 @@ if docker run --rm --entrypoint sh "$tag" -c 'command -v uv || command -v pytest
   exit 1
 fi
 
+# I-015: the same image runs the background worker (`python -m app.worker`). It needs a
+# database to tick, so here only check that the entry point is present and imports.
+if ! docker run --rm "$tag" python -m app.worker --help >/dev/null; then
+  echo "FAIL: python -m app.worker does not start in the image" >&2
+  exit 1
+fi
+echo "python -m app.worker --help: ok"
+
 docker run -d --name "$name" -p 127.0.0.1::8000 "$tag" >/dev/null
 port=$(docker port "$name" 8000/tcp | head -n1 | sed 's/.*://')
 

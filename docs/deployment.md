@@ -22,6 +22,8 @@ Each CI job runs the same script you run locally. Run them from the repo root.
 | `scripts/docker-smoke.sh [tag]` | Build `backend/Dockerfile`, check it runs non-root without uv/pytest, `GET /health`, demo routes absent (404), wait for the Docker `HEALTHCHECK` to report healthy | Docker daemon |
 | `scripts/android-build.sh` | Debug APK + JVM unit tests (exits 2 with `UNVERIFIED` if no SDK) | JDK 17, Android SDK 35 |
 | `scripts/backend-run.sh` | API with auto-reload on http://127.0.0.1:8000 | uv; Postgres for DB routes |
+| `scripts/worker-run.sh` | Background worker (`python -m app.worker`) against `WINGMAN_DATABASE_URL`; `--once` runs one tick of each job | uv; Postgres (migrated) |
+| `scripts/dev-run.sh` | **Dev only.** API and worker in one process (`app.worker.dev_server`), so the worker sees the API's in-memory mock connector (I-016) | uv; Postgres (migrated) |
 
 **Which Postgres the tests use.** The DB tests (`backend/tests/db/`) and
 `migration-check.sh` pick a server in this order:
@@ -98,11 +100,92 @@ docker run --rm -e WINGMAN_DATABASE_URL=postgresql+asyncpg://... wingman-backend
 docker run --rm -p 8000:8000 -e WINGMAN_DATABASE_URL=postgresql+asyncpg://... wingman-backend
 ```
 
-**Local Compose.** The root `docker-compose.yml` works unchanged with this image:
-`docker compose --profile backend up --build` builds it and runs it next to Postgres 16
-and Redis 7. Its `env_file: [.env]` sets `WINGMAN_ENV=dev` from `.env.example`, which
-overrides the image's `prod` default locally. Compose does not run migrations; run them
-once with `docker compose run --rm backend alembic upgrade head`.
+**Local Compose.** `docker compose --profile backend up --build` builds the image and
+runs, next to Postgres 16 and Redis 7:
+
+- `migrate`: one-shot `alembic upgrade head`, then exits;
+- `backend`: the API on port 8000, started after `migrate` completed successfully;
+- `worker`: `python -m app.worker` (see [Background worker](#background-worker)), also
+  after `migrate`, with its liveness endpoint on port 8081 inside the container (used by
+  the compose `healthcheck`, not published).
+
+Its `env_file: [.env]` sets `WINGMAN_ENV=dev` from `.env.example`, which overrides the
+image's `prod` default locally.
+
+## Background worker
+
+Owner: I-015. `python -m app.worker` (package `backend/app/worker/`) runs the periodic
+WING-011 jobs in one asyncio process, each on its own interval:
+
+| Job | Default interval | What it calls | Effect |
+|---|---|---|---|
+| `dispatch_due` | 2 s | `Dispatcher.dispatch` for each due message, **one transaction per message** | Queued outbound messages whose `send_after` has passed (reply delays, retry backoff) are sent (backend connector) or get their device outbox instruction |
+| `expire_leases` | 15 s | `app.services.outbox.expire_lapsed_leases` | Lapsed device leases become `expired`. The outcome is unknown: the message stays `sending` and is never retried (ADR 0006) |
+| `expire_approvals` | 60 s | `AutomationController.expire_approvals`, one transaction per user | Pending approvals past `expires_at` become `expired` (audit `approval_expired`) |
+
+`python -m app.worker --once` runs one tick of every job and exits.
+
+**Robustness.**
+- Each job runs in its own task, so a slow or failing job never delays the others. A
+  tick that raises is logged with its **error class only** and retried after a bounded
+  exponential backoff, `min(WINGMAN_WORKER_BACKOFF_MAX_S, interval * 2^failures)`; the
+  first successful tick resets it. A dispatch tick in which every message failed (for
+  example, the database is down) also backs off. One failing message never blocks the
+  rest of the batch: it stays `queued` and is retried next tick with the **same**
+  attempt key, so a transport that already sent replays its stored result (D-006).
+- **SIGTERM/SIGINT** finishes the current tick of each job and exits with code 0. A
+  tick is never cancelled, so no transaction is cut mid-send. The dispatch job checks
+  for a stop between messages, so shutdown waits for at most one transport call per
+  replica. Give the platform a grace period longer than one tick (Compose 30 s,
+  Container Apps 60 s).
+- **Logs** carry IDs, job names, counts and error classes, never message text or
+  exception messages (a database error's text can contain bound parameters). Each tick
+  writes one `DEBUG` heartbeat line, `worker tick job=<name> ok=<bool> duration_ms=<n>
+  <counts>`. SQLAlchemy's engine logger is held at `WARNING`.
+- **Liveness**: set `WINGMAN_WORKER_HEALTH_PORT` to serve `GET /health` (stdlib only,
+  no app data). It answers `200` while every job has made progress (a finished tick, or
+  a tick skipped because another replica holds the lock) within
+  `WINGMAN_WORKER_STALE_AFTER_S`, otherwise `503`, and `503` while stopping.
+
+**Several replicas: what keeps it safe.** Two layers, and the second is sufficient on
+its own (the tests run two workers concurrently both with and without the first):
+
+1. **Per-job Postgres advisory lock.** Each tick takes `pg_try_advisory_lock(<job key>)`
+   on a dedicated connection held for the tick and released with
+   `pg_advisory_unlock` (or by Postgres when the connection or process dies). A replica
+   that does not get the lock skips that tick. This makes one replica do each job's
+   work at a time; it is an efficiency measure. Session-level advisory locks need a
+   real session: behind a transaction-pooling proxy (PgBouncer `pool_mode=transaction`)
+   set `WINGMAN_WORKER_ADVISORY_LOCKS=false`.
+2. **The services' own row locks** (the correctness guarantee). `Dispatcher.dispatch`
+   locks the message row `FOR UPDATE`, acts only on `queued`, and makes a backend
+   transport call while holding that lock, so a concurrent dispatcher (another
+   replica, or the API) waits and then sees the new state and does nothing. Each
+   message is committed as `queued` before any transport call (PR #24), each attempt
+   has its own key (`send:<message_id>:<attempt>`, D-006), and a device instruction is
+   created once per attempt (live-instruction check plus a unique
+   `(outbound_message_id, attempt)`). Lease and approval expiry are single guarded
+   `UPDATE ... WHERE state = 'leased'|'pending'` statements: a concurrent run blocks on
+   the row lock, re-checks the predicate and matches nothing. Device claims already use
+   `FOR UPDATE SKIP LOCKED` (ADR 0006); the worker does not use `SKIP LOCKED` itself.
+
+**The mock connector and the worker (I-016).** `MockConnector` state (threads and the
+send ledger) lives in the memory of the process that created it. A separate worker
+process has its own, empty simulator and would dead-letter every mock send as
+"unknown mock thread". So:
+
+- **`python -m app.worker` skips `mock` connections by default**
+  (`WINGMAN_WORKER_DISPATCH_MOCK=false`). In Compose the API process still sends mock
+  messages that are due immediately; a delayed or backed-off **mock** send stays
+  `queued` there. Device connections (SMS, notifications) and lease/approval expiry are
+  unaffected, because they keep no in-process state.
+- **To exercise reply delays and retries end to end against the mock, run one process**:
+  `scripts/dev-run.sh` (`uvicorn app.worker.dev_server:app`). It serves the normal API
+  (`app.main.create_app()`) and runs the worker loop in the same event loop with the
+  same dispatcher, so the worker sees the simulator the API ingested into. It refuses
+  to start with `WINGMAN_ENV=prod`. Do not run a standalone worker with
+  `WINGMAN_WORKER_DISPATCH_MOCK=true` next to a separate API.
+- Real platforms are unaffected: their state lives in Postgres and on the device.
 
 ## Environment variable reference
 
@@ -143,6 +226,24 @@ environment, never from the repo, the image, or a plain env var in an IaC templa
 `.env.example` lists every `WINGMAN_LLM_*` key (commented); `MAX_OUTPUT_RETRIES`,
 `BACKOFF_BASE_S`, `BACKOFF_MAX_S` and `STRICT_JSON_SCHEMA` are optional tuning knobs.
 
+### Background worker (`WINGMAN_WORKER_*`, read by `python -m app.worker`)
+
+The worker also reads `WINGMAN_DATABASE_URL`, `WINGMAN_ENV` and `WINGMAN_LOG_LEVEL`
+(`DEBUG` shows the per-tick heartbeat). None of these are secrets.
+
+| Variable | Default | Description |
+|---|---|---|
+| `WINGMAN_WORKER_DISPATCH_INTERVAL_S` | `2` | Seconds between `dispatch_due` ticks (reply delays and retry backoff are honoured to about this granularity) |
+| `WINGMAN_WORKER_LEASE_EXPIRY_INTERVAL_S` | `15` | Seconds between lease-expiry ticks |
+| `WINGMAN_WORKER_APPROVAL_EXPIRY_INTERVAL_S` | `60` | Seconds between approval-expiry ticks |
+| `WINGMAN_WORKER_DISPATCH_BATCH` | `100` | Most due messages per dispatch tick, oldest first (1 to 1000) |
+| `WINGMAN_WORKER_BACKOFF_MAX_S` | `60` | Cap of the exponential backoff after failed ticks |
+| `WINGMAN_WORKER_ADVISORY_LOCKS` | `true` | Per-job Postgres advisory locks (one replica works at a time). `false` behind a transaction-pooling proxy; correctness does not depend on it |
+| `WINGMAN_WORKER_DISPATCH_MOCK` | `false` | Also dispatch messages on `mock` connections. Only for a process that owns the mock state (I-016); the dev server sets it itself |
+| `WINGMAN_WORKER_HEALTH_PORT` | unset (disabled) | Port for the worker's `GET /health` liveness endpoint (Compose and the Azure sample use `8081`) |
+| `WINGMAN_WORKER_HEALTH_HOST` | `0.0.0.0` | Bind address of that endpoint |
+| `WINGMAN_WORKER_STALE_AFTER_S` | `300` | `/health` answers 503 if any job made no progress for this long |
+
 ### Tests and tooling only (never set in a deployed environment)
 
 | Variable | Default | Description |
@@ -181,8 +282,8 @@ environment, never from the repo, the image, or a plain env var in an IaC templa
 > generates) and linted with shellcheck. Expect to adjust names, SKUs and CLI flags. Do not
 > treat any of this as a verified production deployment.
 
-Shape: one container app (the API) and one manual Container Apps job (migrations), both from
-the same image, plus Azure Database for PostgreSQL Flexible Server 16, Azure Container Registry
+Shape: two container apps (the API, and the background worker with no ingress) and one
+manual Container Apps job (migrations), all from the same image, plus Azure Database for PostgreSQL Flexible Server 16, Azure Container Registry
 and Key Vault. There is no Kubernetes, no Redis (unused so far), and no extra services.
 
 ```
@@ -191,6 +292,8 @@ and Key Vault. There is no Kubernetes, no Redis (unused so far), and no extra se
                     ┌────────────────┴───────────────┐
          Container Apps job                Container App "wingman-api"
          alembic upgrade head   ──then──►  uvicorn, ingress :8000 HTTPS
+                    │              ──then──►  Container App "wingman-worker"
+                    │                         python -m app.worker, no ingress, 1 replica
                     │  Key Vault refs (managed identity)  │
                     └───────────► Key Vault ◄────────────┘
                                      │ wingman-database-url
@@ -245,12 +348,27 @@ order.
    references. **Health probes**: Container Apps ignores the image's Docker `HEALTHCHECK`,
    so the app defines Startup (`/health`, every 3 s, up to 60 s), Liveness (every 30 s) and
    Readiness (every 10 s) probes.
-6. **Smoke test**: `curl -fsS https://<fqdn>/health` should return `{"status":"ok",...,"env":"prod"}`.
-   The demo routes under `/dev/connectors/mock/...` must return 404 in `prod`.
+6. **Worker rollout** (`deploy.sh worker`, I-015, **UNVERIFIED**): creates or updates
+   `wingman-worker` (`AZ_WORKER_NAME`) from the same image with command
+   `python -m app.worker`, the same Key Vault secret references, **no ingress**, single
+   revision, `minReplicas: 1` and `maxReplicas: 1` (it must always run; more replicas
+   are safe but only add a standby), and `terminationGracePeriodSeconds: 60` so SIGTERM
+   can finish the current tick. **Probes**: a non-HTTP process has nothing for the
+   API's `/health` probes to hit, so the worker serves its own liveness endpoint on
+   `WINGMAN_WORKER_HEALTH_PORT=8081` (container-internal; no ingress needed for probes):
+   Startup is a TCP probe on 8081, Liveness is `GET /health` on 8081 every 30 s, which
+   fails (503) if a job has made no progress for `WINGMAN_WORKER_STALE_AFTER_S`. No
+   Readiness probe: the worker receives no traffic. Roll it out after migrations, in the
+   same deploy as the API, so both run the same image.
+7. **Smoke test**: `curl -fsS https://<fqdn>/health` should return `{"status":"ok",...,"env":"prod"}`.
+   The demo routes under `/dev/connectors/mock/...` must return 404 in `prod`. For the
+   worker, `az containerapp logs show -n wingman-worker` should show `worker started`
+   (set `WINGMAN_LOG_LEVEL=DEBUG` briefly to see the per-tick heartbeat).
 
 ### Rollback
 
-- Image or app problem: redeploy the previous SHA (`IMAGE_TAG=<old sha> deploy.sh app`),
+- Image or app problem: redeploy the previous SHA (`IMAGE_TAG=<old sha> deploy.sh app`,
+  and `IMAGE_TAG=<old sha> deploy.sh worker`),
   or in multiple-revision mode shift traffic back to the previous revision.
 - Migration problem: migrations are written to be reversible (the `migrations` CI job runs
   `downgrade base`). To roll back one revision, run the job with
@@ -289,4 +407,6 @@ As of WING-023 (2026-11-01):
 | `.github/workflows/ci.yml` syntax | **VERIFIED** locally | `actionlint` (with shellcheck and pyflakes rules): 0 findings |
 | CI jobs on GitHub runners, including Android | See the WING-023 PR | Not observable from the authoring sandbox until the PR runs |
 | `infra/azure/deploy.sh` | **UNVERIFIED** | shellcheck clean; dry run against a stub `az` only |
+| Background worker (`python -m app.worker`), I-015 | **VERIFIED** locally | `tests/worker/` against real Postgres: reply delay, retry backoff, lease expiry, approval expiry, two concurrent workers (one send per key), job isolation, SIGTERM exit 0 of the real process, log sentinel |
+| `deploy.sh worker` (Azure worker app) | **UNVERIFIED** | shellcheck clean; generated YAML checked in a dry run against a stub `az` only |
 | Any Azure deployment | **UNVERIFIED**: none exists | |
