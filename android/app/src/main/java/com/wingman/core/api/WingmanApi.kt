@@ -10,6 +10,7 @@ import com.wingman.core.model.AutomationActionRequest
 import com.wingman.core.model.AutomationMode
 import com.wingman.core.model.Connection
 import com.wingman.core.model.ContactAutomationState
+import com.wingman.core.model.ContactPreferenceOverrideUpdate
 import com.wingman.core.model.ContactPreferences
 import com.wingman.core.model.Conversation
 import com.wingman.core.model.ConversationDetail
@@ -80,6 +81,19 @@ interface WingmanApi {
     suspend fun getPreferences(): ApiResult<Preferences>
     suspend fun putPreferences(body: PreferencesUpdate, ifMatchVersion: Int? = null): ApiResult<Preferences>
     suspend fun getContactPreferences(contactId: String): ApiResult<ContactPreferences>
+
+    /** `listPreferenceVersions`: user-wide history, newest first (contract `PreferencesPage`). */
+    suspend fun listPreferenceVersions(page: PageRequest = PageRequest.FIRST): ApiResult<Page<Preferences>>
+
+    /** `putContactPreferences`: replaces the per-contact override; never writes user-wide preferences. */
+    suspend fun putContactPreferences(
+        contactId: String,
+        body: ContactPreferenceOverrideUpdate,
+        ifMatchVersion: Int? = null,
+    ): ApiResult<ContactPreferences>
+
+    /** `deleteContactPreferences`: clears the override (204, also when none existed). */
+    suspend fun deleteContactPreferences(contactId: String): ApiResult<Unit>
 
     // connections
     suspend fun listConnections(page: PageRequest = PageRequest.FIRST): ApiResult<Page<Connection>>
