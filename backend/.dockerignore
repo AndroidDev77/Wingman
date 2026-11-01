@@ -1,0 +1,18 @@
+# Allow-list: the image needs only these. Everything else (including .env, .venv,
+# tests and caches) never reaches the build context.
+*
+!pyproject.toml
+!uv.lock
+!app/
+!alembic/
+!alembic.ini
+
+# Belt and braces inside the allowed paths.
+**/__pycache__
+**/*.py[cod]
+**/.env
+**/.env.*
+**/.venv
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache

@@ -900,6 +900,15 @@ def upgrade() -> None:
         sa.Column("superseded_by_id", sa.UUID(), nullable=True),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
+        # WING-008 provenance (folded into 0001 per D-010).
+        sa.Column(
+            "origin", sa.String(length=16), server_default=sa.text("'extracted'"), nullable=False
+        ),
+        sa.Column(
+            "basis", sa.String(length=16), server_default=sa.text("'stated'"), nullable=False
+        ),
+        sa.Column("fact_key", sa.String(length=64), nullable=True),
+        sa.Column("stated_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -911,6 +920,13 @@ def upgrade() -> None:
             sa.DateTime(timezone=True),
             server_default=sa.text("now()"),
             nullable=False,
+        ),
+        sa.CheckConstraint(
+            "origin IN ('extracted', 'user_correction')",
+            name=op.f("ck_conversation_memories_origin_values"),
+        ),
+        sa.CheckConstraint(
+            "basis IN ('stated', 'inferred')", name=op.f("ck_conversation_memories_basis_values")
         ),
         sa.CheckConstraint(
             "kind <> 'fact' OR cardinality(source_message_ids) >= 1",
@@ -957,6 +973,12 @@ def upgrade() -> None:
         op.f("ix_conversation_memories_user_id_contact_id_created_at_id"),
         "conversation_memories",
         ["user_id", "contact_id", "created_at", "id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_conversation_memories_user_id_contact_id_fact_key"),
+        "conversation_memories",
+        ["user_id", "contact_id", "fact_key"],
         unique=False,
     )
     op.create_table(
@@ -1410,6 +1432,10 @@ def downgrade() -> None:
         op.f("ix_date_proposals_user_id_conversation_id_created_at_id"), table_name="date_proposals"
     )
     op.drop_table("date_proposals")
+    op.drop_index(
+        op.f("ix_conversation_memories_user_id_contact_id_fact_key"),
+        table_name="conversation_memories",
+    )
     op.drop_index(
         op.f("ix_conversation_memories_user_id_contact_id_created_at_id"),
         table_name="conversation_memories",
