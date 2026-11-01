@@ -28,8 +28,10 @@ class E2eDevice(private val timeoutMs: Long = UI_TIMEOUT_MS) {
     fun has(sel: BySelector): Boolean = device.hasObject(sel)
 
     fun waitFor(sel: BySelector, what: String, timeoutMs: Long = this.timeoutMs): UiObject2 {
+        dismissSystemAnrDialog()
         if (!device.wait(Until.hasObject(sel), timeoutMs / 2)) {
             hideKeyboard() // the soft keyboard can cover bottom bars and buttons
+            dismissSystemAnrDialog()
             device.wait(Until.hasObject(sel), timeoutMs / 2)
         }
         return device.findObject(sel) ?: run {
@@ -52,6 +54,25 @@ class E2eDevice(private val timeoutMs: Long = UI_TIMEOUT_MS) {
                 val pkg = Regex("package=\"([^\"]*)\"").find(line)?.groupValues?.get(1).orEmpty()
                 println("WING025-UI   [$pkg] text='${text.take(80)}' desc='${desc.take(40)}' $b")
             }
+    }
+
+    /**
+     * A freshly booted CI emulator can show a system "<some app> isn't responding" dialog (seen:
+     * "Pixel Launcher isn't responding") over everything, hiding the app under test. Only a dialog
+     * owned by the system (`android` package) about ANOTHER app is dismissed, with "Wait" (never
+     * "Close app"). An ANR of Wingman itself is not hidden: the test fails on it.
+     */
+    fun dismissSystemAnrDialog() {
+        repeat(3) {
+            val title = device.findObject(By.pkg("android").textContains("isn't responding")) ?: return
+            if (title.text.startsWith("Wingman")) {
+                dumpHierarchy("Wingman ANR")
+                throw AssertionError("the app under test is not responding: ${title.text}")
+            }
+            println("WING025-UI dismissing system dialog: ${title.text} (Wait)")
+            device.findObject(By.pkg("android").text("Wait"))?.click() ?: return
+            device.wait(Until.gone(By.pkg("android").textContains("isn't responding")), 5_000)
+        }
     }
 
     /** Hides the soft keyboard if it is showing (it covers the bottom bar and bottom buttons). */
@@ -142,8 +163,16 @@ class E2eDevice(private val timeoutMs: Long = UI_TIMEOUT_MS) {
 
     /** Debug-only "Developer sign-in" panel: the only text field on the sign-in screen. */
     fun signInWithDevToken(token: String) {
+        dismissSystemAnrDialog()
         device.wait(Until.hasObject(By.text("Use dev token")), timeoutMs)
-        if (!has(By.text("Use dev token"))) return // already signed in
+        dismissSystemAnrDialog()
+        device.wait(Until.hasObject(By.text("Use dev token")), 5_000)
+        if (!has(By.text("Use dev token"))) {
+            // Every E2E phase starts with `pm clear`, so the app must be signed out. Never assume
+            // "already signed in" silently: say what is on screen.
+            dumpHierarchy("no dev sign-in screen")
+            throw AssertionError("the dev sign-in screen never showed (expected after pm clear)")
+        }
         // setText through accessibility (no tap): no soft keyboard pops up over the screen.
         val field = waitFor(By.clazz("android.widget.EditText"), "dev token field")
         field.text = token
