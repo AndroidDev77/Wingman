@@ -1,126 +1,129 @@
 package com.wingman.e2e
 
-import androidx.compose.ui.test.hasClickAction
-import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performClick
+import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.uiautomator.By
 import com.wingman.BuildConfig
 import com.wingman.MainActivity
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
-import org.junit.FixMethodOrder
-import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
-import org.junit.runners.MethodSorters
 
 /**
  * WING-025, ticket criterion "Android app drives backend and displays action logs".
  *
  * Runs on the CI emulator (.github/workflows/e2e.yml, job `emulator`) against the real backend
  * on the runner (scripts/dev-run.sh: API + worker, dev auth stub, labeled dev mock LLM, mock
- * connector), reached at http://10.0.2.2:8000/ from the emulator. The app is a debug build with
- * `-Pwingman.useMockApi=false`, so every screen below talks to that backend over HTTP.
+ * connector), reached at http://10.0.2.2:8000/ from the emulator. The app is the unmodified
+ * debug build with `-Pwingman.useMockApi=false`, launched normally and driven through the
+ * accessibility tree with UiAutomator (see [E2eDevice] for why not the Compose test rule).
  *
  * One test, in order, as a user would: sign in with a dev-stub token (debug panel) -> onboarding
  * (choose intent, assisted mode, save) -> a contact's message arrives (injected over the API, the
  * contact's side) -> it shows in the Inbox -> approve the draft in Approvals -> the Activity tab
- * shows "Queued, not sent yet" and then "Sent (delivery not confirmed)" from the server's audit
- * log -> take over the contact in Controls and see it confirmed. Each UI step is cross-checked
- * against the server's own state.
+ * shows "Queued, not sent yet" and "Sent (delivery not confirmed)" from the server's audit log ->
+ * take over the contact in Controls and see it confirmed. Each UI step is cross-checked against
+ * the server's own state.
  */
 @RunWith(AndroidJUnit4::class)
-@FixMethodOrder(MethodSorters.NAME_ASCENDING)
 class AppDrivesBackendE2eTest {
 
-    @get:Rule val compose = createAndroidComposeRule<MainActivity>()
-
     private val backend = E2eBackend()
+    private val ui = E2eDevice()
+
+    private fun log(msg: String) = println("WING025-APP $msg")
 
     @Test fun appDrivesBackendAndShowsActionLog() {
         assertFalse("must be built with -Pwingman.useMockApi=false", BuildConfig.USE_MOCK_API)
         assertTrue("dev sign-in exists only in debug builds", BuildConfig.DEBUG)
-        val me = backend.me()
-        val userId = me.getString("id")
+        val userId = backend.me().getString("id")
         assertEquals("the user must be new (never onboarded)", 0, backend.preferences().getInt("version"))
 
-        // 1. Sign in through the debug-only developer panel (token minted by the backend CLI).
-        compose.signInWithDevToken(E2eArgs.token)
+        ActivityScenario.launch(MainActivity::class.java).use {
+            // 1. Sign in through the debug-only developer panel (token minted by the backend CLI).
+            ui.signInWithDevToken(E2eArgs.token)
 
-        // 2. Onboarding opens on its own for a never-saved user (server version 0).
-        compose.waitForText("What are you looking for?")
-        compose.onNodeWithText("Serious relationship").performClick()
-        compose.onNodeWithText("Next").performClick()
-        compose.waitForText("How do you text?")
-        compose.onNodeWithText("Skip").performClick()
-        compose.waitForText("How much should Wingman do?")
-        compose.onNodeWithText("Assisted").performClick()
-        compose.waitForText("Turn on Assisted?")
-        compose.onNodeWithText("Turn on Assisted").performClick()
-        compose.onNodeWithText("Next").performClick()
-        compose.waitForText("Review and save")
-        compose.onNodeWithText("Save and finish").performClick()
-        compose.waitForText("Inbox") // the wizard hands over to the Inbox
-        val prefs = eventually(what = "saved preferences") { backend.preferences().takeIf { it.getInt("version") >= 1 } }
-        assertEquals("serious", prefs.getJSONObject("intent").getString("mode"))
-        assertEquals("assisted", prefs.getJSONObject("automation").getString("mode"))
+            // 2. Onboarding opens on its own for a never-saved user (server version 0).
+            ui.waitText("What are you looking for?")
+            log("signed in; onboarding opened")
+            ui.click(By.textStartsWith("Serious relationship"), "intent Serious relationship")
+            ui.clickText("Next")
+            ui.waitText("How do you text?")
+            ui.clickText("Skip")
+            ui.waitText("How much should Wingman do?")
+            ui.click(By.textStartsWith("Assisted"), "mode Assisted")
+            ui.waitText("Turn on Assisted?")
+            ui.clickText("Turn on Assisted")
+            ui.clickText("Next")
+            ui.waitText("Review and save")
+            ui.clickText("Save and finish")
+            ui.waitFor(By.textContains("Inbox"), "Inbox after onboarding")
+            val prefs = eventually(what = "saved preferences") { backend.preferences().takeIf { it.getInt("version") >= 1 } }
+            assertEquals("serious", prefs.getJSONObject("intent").getString("mode"))
+            assertEquals("assisted", prefs.getJSONObject("automation").getString("mode"))
+            log("onboarding saved: version=${prefs.getInt("version")} intent=serious mode=assisted")
 
-        // 3. A contact writes (the contact's side is simulated over the API).
-        val contact = "Emu${E2eArgs.runId}"
-        val conn = backend.pairMock("Android E2E simulator")
-        backend.injectInbound(conn, userId, contact, "Hi from the emulator test!")
-        val conv = eventually(what = "conversation on the server") { backend.conversationFor(contact) }
-        val conversationId = conv.getString("id")
-        val contactId = conv.getJSONObject("contact").getString("id")
-        eventually(what = "pending approval on the server") { backend.approvals("pending", conversationId).firstOrNull() }
+            // 3. A contact writes (the contact's side is simulated over the API).
+            val contact = "Emu${E2eArgs.runId.filter { it.isLetterOrDigit() }.takeLast(10)}"
+            val conn = backend.pairMock("Android E2E simulator")
+            backend.injectInbound(conn, userId, contact, "Hi from the emulator test!")
+            val conv = eventually(what = "conversation on the server") { backend.conversationFor(contact) }
+            val conversationId = conv.getString("id")
+            val contactId = conv.getJSONObject("contact").getString("id")
+            eventually(what = "pending approval on the server") { backend.approvals("pending", conversationId).firstOrNull() }
 
-        // 4. The Inbox shows it (Inbox re-reads the server on Refresh).
-        compose.onAllNodes(hasText("Inbox") and hasClickAction())[0].performClick()
-        compose.refreshUntil(contact)
-        compose.waitForText("Hi from the emulator test!")
+            // 4. The Inbox shows it (the Inbox re-reads the server on Refresh).
+            ui.openTab("Inbox")
+            ui.refreshUntil(By.textContains(contact), "inbox row for $contact")
+            ui.waitFor(By.textContains("Hi from the emulator test!"), "message preview in the inbox")
+            log("inbox shows $contact with the message preview")
 
-        // 5. Approvals: the draft is there; approve it.
-        compose.onAllNodes(hasText("Approvals") and hasClickAction())[0].performClick()
-        compose.refreshUntil(contact)
-        compose.waitForText("[dev mock]", substring = true)
-        compose.waitForText("Nothing is sent until you approve.")
-        compose.onNodeWithText("Approve").performClick()
-        compose.waitForText("Approved. It shows as sent only after the messaging app confirms it.")
-        val sent = eventually(what = "server reports the reply sent") {
-            backend.messages(conversationId).firstOrNull { it.getString("direction") == "outbound" && it.getString("delivery_state") == "sent" }
+            // 5. Approvals: the draft is there; approve it.
+            ui.openTab("Approvals")
+            ui.refreshUntil(By.textContains("[dev mock]"), "the draft in the approval queue")
+            ui.waitText("Nothing is sent until you approve.")
+            ui.clickText("Approve")
+            ui.waitText("Approved. It shows as sent only after the messaging app confirms it.")
+            val sent = eventually(what = "server reports the reply sent") {
+                backend.messages(conversationId).firstOrNull { it.getString("direction") == "outbound" && it.getString("delivery_state") == "sent" }
+            }
+            assertEquals("approved_draft", sent.getString("origin"))
+            log("approved in the app; server message ${sent.getString("id")} is sent")
+
+            // 6. Activity: the audit log FROM THE SERVER shows queued and then sent.
+            ui.openInnerTab("Activity")
+            ui.refreshUntil(By.text("Sent (delivery not confirmed)"), "audit row: sent")
+            for (row in listOf(
+                "Handed to the messaging app, not confirmed yet",
+                "Queued, not sent yet",
+                "Draft approved (not sent yet)",
+                "Draft proposed for your approval",
+                "Message received",
+            )) {
+                ui.scrollTo(By.text(row), "audit row \"$row\"")
+            }
+            val types = backend.actions(conversationId = conversationId).map { it.getString("type") }
+            assertTrue(types.containsAll(listOf("send_queued", "send_attempted", "send_acknowledged", "approval_approved")))
+            log("activity tab shows: message received, proposed, approved, queued, handed over, sent; server audit=$types")
+
+            // 7. Controls: take over the contact; the switch moves only after the server confirms.
+            ui.openInnerTab("Controls")
+            ui.scrollTo(By.text(contact), "controls card for $contact")
+            ui.scrollTo(By.text("I'm taking over"), "takeover switch")
+            ui.switchBeside("I'm taking over").click()
+            ui.waitText("Take over with $contact?")
+            ui.clickText("Take over")
+            ui.waitFor(By.textStartsWith("You've taken over."), "takeover confirmation")
+            ui.waitText("You're in control: Wingman is off for this person")
+            val state: JSONObject = eventually(what = "server reports taken_over") {
+                backend.contactAutomation(contactId).takeIf { it.getString("status") == "taken_over" }
+            }
+            assertEquals("taken_over", state.getString("status"))
+            assertTrue(backend.actions(contactId = contactId).any { it.getString("type") == "automation_takeover" })
+            log("takeover confirmed in the app and on the server (status=taken_over, audit automation_takeover)")
         }
-        assertEquals("approved_draft", sent.getString("origin"))
-
-        // 6. Activity: the audit log FROM THE SERVER shows queued, then sent.
-        compose.onNode(tab("Activity")).performClick()
-        compose.refreshUntil("Sent (delivery not confirmed)")
-        compose.seeInList("Sent (delivery not confirmed)")
-        compose.seeInList("Handed to the messaging app, not confirmed yet")
-        compose.seeInList("Queued, not sent yet")
-        compose.seeInList("Draft approved (not sent yet)")
-        compose.seeInList("Draft proposed for your approval")
-        compose.seeInList("Message received")
-        val types = backend.actions(conversationId = conversationId).map { it.getString("type") }
-        assertTrue(types.containsAll(listOf("send_queued", "send_acknowledged", "approval_approved")))
-
-        // 7. Controls: take over the contact; the switch moves only after the server confirms.
-        compose.onNode(tab("Controls")).performClick()
-        compose.seeInList("I'm taking over")
-        compose.seeInList(contact)
-        // The switch in the same row as "I'm taking over" (this user has exactly one contact).
-        compose.onNode(switchNear("I'm taking over")).performClick()
-        compose.waitForText("Take over with $contact?")
-        compose.onNode(hasText("Take over") and hasClickAction()).performClick() // dialog confirm
-        compose.waitForText("You've taken over.", substring = true)
-        compose.waitForText("You're in control: Wingman is off for this person")
-        val state: JSONObject = eventually(what = "server reports taken_over") {
-            backend.contactAutomation(contactId).takeIf { it.getString("status") == "taken_over" }
-        }
-        assertEquals("taken_over", state.getString("status"))
-        assertTrue(backend.actions(contactId = contactId).any { it.getString("type") == "automation_takeover" })
     }
 }

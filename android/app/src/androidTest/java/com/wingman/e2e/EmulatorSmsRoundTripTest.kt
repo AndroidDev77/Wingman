@@ -1,13 +1,10 @@
 package com.wingman.e2e
 
 import android.content.Context
-import androidx.compose.ui.test.hasClickAction
-import androidx.compose.ui.test.hasText
-import androidx.compose.ui.test.junit4.createAndroidComposeRule
-import androidx.compose.ui.test.onNodeWithText
-import androidx.compose.ui.test.performClick
+import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import androidx.test.uiautomator.By
 import com.wingman.BuildConfig
 import com.wingman.MainActivity
 import com.wingman.integrations.sms.SmsHostSyncReport
@@ -19,7 +16,6 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
-import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.io.File
@@ -49,9 +45,8 @@ import java.util.concurrent.TimeUnit
 @RunWith(AndroidJUnit4::class)
 class EmulatorSmsRoundTripTest {
 
-    @get:Rule val compose = createAndroidComposeRule<MainActivity>()
-
     private val backend = E2eBackend()
+    private val ui = E2eDevice()
     private val ctx: Context get() = InstrumentationRegistry.getInstrumentation().targetContext
     private val args get() = InstrumentationRegistry.getArguments()
 
@@ -71,23 +66,25 @@ class EmulatorSmsRoundTripTest {
         assumeTrue("set -e wingman.sms true to run the emulator SMS round trip", args.getString("wingman.sms") == "true")
         assertFalse(BuildConfig.USE_MOCK_API)
         val device = SmsRoleHelper.deviceState(ctx)
-        log("device state: telephony=${device.hasTelephony} role=${device.isDefaultSmsApp} receive=${device.receiveSmsGranted} send=${device.sendSmsGranted}")
+        log("device state: telephony=${device.hasTelephony} role=${device.isDefaultSmsApp} receive=${device.receiveSmsGranted} send=${device.sendSmsGranted} default_sms_package=${android.provider.Telephony.Sms.getDefaultSmsPackage(ctx)}")
         assertTrue("emulator must report telephony", device.hasTelephony)
         assertTrue("CI must grant the default-SMS role first (cmd role add-role-holder)", device.isDefaultSmsApp)
         assertTrue("CI must grant RECEIVE_SMS/SEND_SMS first (pm grant)", device.receiveSmsGranted && device.sendSmsGranted)
 
         backend.me()
         backend.putAssisted() // this test is about the SMS channel, not onboarding
-        compose.signInWithDevToken(E2eArgs.token)
+        ActivityScenario.launch(MainActivity::class.java).use { roundTrip() }
+    }
+
+    private fun roundTrip() {
+        ui.signInWithDevToken(E2eArgs.token)
 
         // 1. Pair from Settings > Connections > Phone SMS (the app's pairing flow).
-        compose.onAllNodes(hasText("Settings") and hasClickAction())[0].performClick()
-        compose.waitForText("Settings")
-        compose.scrollTo("Pair this phone's SMS")
-        compose.onNodeWithText("Pair this phone's SMS").performClick()
-        compose.waitForText("Status: Connected")
-        compose.waitForText("Send replies: UNVERIFIED (not yet tested on a device)")
-        compose.waitForText("Autopilot: not available for SMS")
+        ui.openTab("Settings")
+        ui.scrollTo(By.text("Pair this phone's SMS"), "pair button").click()
+        ui.scrollTo(By.text("Status: Connected"), "Status: Connected")
+        ui.scrollTo(By.text("Send replies: UNVERIFIED (not yet tested on a device)"), "send UNVERIFIED")
+        ui.scrollTo(By.text("Autopilot: not available for SMS"), "autopilot not available")
         val install = SmsInstallId.getOrCreate(SmsConnectorRuntime.host(ctx).store)
         val conn = eventually(what = "paired sms connection") {
             backend.connections().firstOrNull { it.getString("platform") == "sms" && it.isNull("unpaired_at") }
@@ -116,11 +113,11 @@ class EmulatorSmsRoundTripTest {
         val reasons = approval.getJSONArray("reasons").let { r -> (0 until r.length()).map { r.getString(it) } }
         log("approval reasons=$reasons")
         assertTrue("SMS send is UNVERIFIED, so approval is required", "capability_unverified" in reasons)
-        compose.onAllNodes(hasText("Approvals") and hasClickAction())[0].performClick()
-        compose.refreshUntil("[dev mock]", substring = true)
-        compose.waitForText("Nothing is sent until you approve.")
-        compose.onNodeWithText("Approve").performClick()
-        compose.waitForText("Approved. It shows as sent only after the messaging app confirms it.")
+        ui.openTab("Approvals")
+        ui.refreshUntil(By.textContains("[dev mock]"), "the draft in the approval queue")
+        ui.waitText("Nothing is sent until you approve.")
+        ui.clickText("Approve")
+        ui.waitText("Approved. It shows as sent only after the messaging app confirms it.")
 
         // Claim + SmsManager submit, then upload the "sent" result.
         val sent = eventually(timeoutMs = 120_000, intervalMs = 3_000, what = "server reports the SMS reply sent") {

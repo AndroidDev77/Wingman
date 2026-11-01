@@ -54,12 +54,15 @@ instrument() { # $1 class, $2 token, rest: extra -e pairs
 passed() { grep -q "^OK (" "$1" && ! grep -q "FAILURES!!!" "$1"; }
 
 # ----------------------------------------------------------------------- phase A
-log "phase A: AppDrivesBackendE2eTest (fresh user, fresh app data)"
+log "phase A: AppDrivesBackendE2eTest (fresh user, fresh app data; app driven with UiAutomator)"
 adb shell pm clear "$PKG" >/dev/null
 token_a="$(mint "android-e2e-$run_id-a" "Android A")"
 instrument AppDrivesBackendE2eTest "$token_a" | tee "$art/phaseA-instrument.txt"
 a_ok=0; passed "$art/phaseA-instrument.txt" && a_ok=1
 adb logcat -d > "$art/phaseA-logcat.txt" || true
+grep -h "WING025-APP" "$art/phaseA-logcat.txt" > "$art/phaseA-observations.txt" || true
+log "phase A observations (logcat lines prefixed WING025-APP):"
+cat "$art/phaseA-observations.txt"
 
 # ----------------------------------------------------------------------- phase B
 log "phase B: EmulatorSmsRoundTripTest (emulator SMS stack; NOT a physical device or carrier)"
@@ -67,8 +70,16 @@ adb shell pm clear "$PKG" >/dev/null
 adb logcat -c || true
 echo "telephony feature: $(adb shell pm list features | tr -d '\r' | grep -E 'android.hardware.telephony(\.messaging)?$' | tr '\n' ' ')" | tee "$art/phaseB-setup.txt"
 echo "default SMS role holder before: $(adb shell cmd role get-role-holders android.app.role.SMS | tr -d '\r')" | tee -a "$art/phaseB-setup.txt"
-adb shell cmd role add-role-holder android.app.role.SMS "$PKG" 2>&1 | tee -a "$art/phaseB-setup.txt"
 for p in RECEIVE_SMS SEND_SMS READ_SMS; do adb shell pm grant "$PKG" "android.permission.$p" 2>&1 | tee -a "$art/phaseB-setup.txt"; done
+# The role command can time out on a freshly booted emulator ("TimeoutException") while the
+# role service is still busy; retry, and wait until the holder actually is com.wingman.
+for attempt in 1 2 3 4 5 6; do
+  echo "add-role-holder attempt $attempt:" | tee -a "$art/phaseB-setup.txt"
+  adb shell cmd role add-role-holder android.app.role.SMS "$PKG" 2>&1 | tee -a "$art/phaseB-setup.txt"
+  holder="$(adb shell cmd role get-role-holders android.app.role.SMS | tr -d '\r')"
+  [[ "$holder" == "$PKG" ]] && break
+  sleep 5
+done
 echo "default SMS role holder after: $(adb shell cmd role get-role-holders android.app.role.SMS | tr -d '\r')" | tee -a "$art/phaseB-setup.txt"
 
 token_b="$(mint "android-e2e-$run_id-b" "Android B")"
@@ -93,7 +104,7 @@ wait "$inst_pid"
 cat "$art/phaseB-instrument.txt"
 b_ok=0; passed "$art/phaseB-instrument.txt" && b_ok=1
 adb logcat -d > "$art/phaseB-logcat.txt" || true
-grep -h "WING025-SMS" "$art/phaseB-logcat.txt" "$art/phaseB-instrument.txt" > "$art/phaseB-observations.txt" || true
+grep -h "WING025-SMS" "$art/phaseB-logcat.txt" > "$art/phaseB-observations.txt" || true
 log "phase B observations (logcat/instrumentation lines prefixed WING025-SMS):"
 cat "$art/phaseB-observations.txt"
 echo "system SMS provider (sent box, newest first; address and date only):"
