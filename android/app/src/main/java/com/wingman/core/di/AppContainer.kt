@@ -4,6 +4,8 @@ import com.wingman.AppInfo
 import com.wingman.core.api.WingmanApi
 import com.wingman.core.api.http.HttpWingmanApi
 import com.wingman.core.api.mock.MockWingmanApi
+import com.wingman.core.auth.AuthSession
+import com.wingman.core.auth.StaticTokenProvider
 
 /** Build-time configuration for the container. Populated from BuildConfig in MainActivity. */
 data class AppConfig(
@@ -22,15 +24,30 @@ data class AppConfig(
  */
 class AppContainer(
     val config: AppConfig,
-    /** Bearer token source (WING-004 replaces this with the real session store). */
+    /** Fixed bearer token for tests and previews; ignored when [authSession] is given. */
     tokenProvider: () -> String? = { null },
     apiOverride: WingmanApi? = null,
+    /**
+     * The signed-in session (I-011): the HTTP client takes its bearer token from here, refreshes it
+     * near expiry and on a 401, and signs out when that fails. Built by MainActivity from
+     * `AndroidAuth.session(context)` (Keystore-encrypted storage).
+     */
+    authSession: AuthSession? = null,
 ) {
     val api: WingmanApi = apiOverride ?: if (config.useMockApi) {
         MockWingmanApi()
     } else {
-        HttpWingmanApi(baseUrl = AppInfo.normalizeBaseUrl(config.apiBaseUrl), tokenProvider = tokenProvider)
+        HttpWingmanApi(
+            baseUrl = AppInfo.normalizeBaseUrl(config.apiBaseUrl),
+            tokenProvider = authSession ?: StaticTokenProvider(tokenProvider),
+        )
     }
+
+    /**
+     * The session that gates the UI, or null when no sign-in is needed: mock-API builds
+     * (`USE_MOCK_API=true`) run offline without one.
+     */
+    val auth: AuthSession? = authSession.takeIf { api !is MockWingmanApi }
 
     val isMock: Boolean get() = api is MockWingmanApi
 

@@ -10,6 +10,11 @@ import com.wingman.core.api.IdempotencyKey
 import com.wingman.core.api.PageRequest
 import com.wingman.core.api.WingmanApi
 import com.wingman.core.api.WingmanJson
+import com.wingman.core.auth.BearerTokenAuthenticator
+import com.wingman.core.auth.BearerTokenInterceptor
+import com.wingman.core.auth.StaticTokenProvider
+import com.wingman.core.auth.TokenProvider
+import com.wingman.core.auth.bearerAuth
 import com.wingman.core.model.AgentAction
 import com.wingman.core.model.Approval
 import com.wingman.core.model.ApprovalDecisionResult
@@ -54,14 +59,22 @@ import java.util.concurrent.TimeUnit
  * Retrofit + OkHttp implementation of [WingmanApi]. Pure JVM (no android.* imports), so it is
  * unit-tested against MockWebServer.
  *
+ * Auth (I-011): [BearerTokenInterceptor] adds `Authorization: Bearer` from [tokenProvider] when it
+ * has a token, and [BearerTokenAuthenticator] answers a `401` with one refresh and one retry
+ * (a second `401` signs the session out). See core/auth.
+ *
  * @param baseUrl normalized with [AppInfo.normalizeBaseUrl].
- * @param tokenProvider returns the current bearer JWT (WING-004), or null when signed out.
+ * @param tokenProvider the session's bearer token source; [StaticTokenProvider] for a fixed token.
  */
 class HttpWingmanApi(
     baseUrl: String,
-    tokenProvider: () -> String? = { null },
+    tokenProvider: TokenProvider,
     okHttpClient: OkHttpClient? = null,
 ) : WingmanApi {
+
+    /** Fixed token (or none): tests and previews. A 401 is returned unchanged. */
+    constructor(baseUrl: String, tokenProvider: () -> String? = { null }, okHttpClient: OkHttpClient? = null) :
+        this(baseUrl, StaticTokenProvider(tokenProvider), okHttpClient)
 
     private val service: WingmanService
 
@@ -69,7 +82,8 @@ class HttpWingmanApi(
         val client = (okHttpClient?.newBuilder() ?: OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS))
-            .addInterceptor(authInterceptor(tokenProvider))
+            .addInterceptor(acceptInterceptor)
+            .bearerAuth(tokenProvider)
             .build()
         service = Retrofit.Builder()
             .baseUrl(AppInfo.normalizeBaseUrl(baseUrl))
@@ -192,13 +206,8 @@ class HttpWingmanApi(
             return if (eventId == key.value) null else ApiResult.Failure(ApiError.Client("Idempotency-Key must equal the envelope's event_id"))
         }
 
-        internal fun authInterceptor(tokenProvider: () -> String?) = Interceptor { chain ->
-            val token = tokenProvider()
-            val request = chain.request().newBuilder()
-                .header("Accept", "application/json, application/problem+json")
-                .apply { if (!token.isNullOrBlank()) header("Authorization", "Bearer $token") }
-                .build()
-            chain.proceed(request)
+        private val acceptInterceptor = Interceptor { chain ->
+            chain.proceed(chain.request().newBuilder().header("Accept", "application/json, application/problem+json").build())
         }
 
         internal fun <T : Any> toResult(response: Response<T>): ApiResult<T> {
