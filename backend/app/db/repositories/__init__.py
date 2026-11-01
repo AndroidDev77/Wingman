@@ -1,0 +1,56 @@
+"""User-scoped repositories. Construct each with ``(session, UserScope)``."""
+
+from app.db.repositories.activity import (
+    AgentActionRepository,
+    AutomationRuleRepository,
+    DateProposalRepository,
+    MemoryRepository,
+)
+from app.db.repositories.base import ScopedRepository
+from app.db.repositories.billing import (
+    SubscriptionRepository,
+    UsageEventRepository,
+    UsageRecordResult,
+)
+from app.db.repositories.connections import (
+    ConnectionRepository,
+    ContactRepository,
+    capability_columns,
+)
+from app.db.repositories.conversations import (
+    ConversationRepository,
+    IngestResult,
+    MessageRepository,
+)
+from app.db.repositories.idempotency import (
+    Claim,
+    ClaimOutcome,
+    IdempotencyRepository,
+    fingerprint,
+)
+from app.db.repositories.preferences import PreferenceRepository, StyleProfileRepository
+from app.db.repositories.users import UserRepository
+
+__all__ = [
+    "AgentActionRepository",
+    "AutomationRuleRepository",
+    "Claim",
+    "ClaimOutcome",
+    "ConnectionRepository",
+    "ContactRepository",
+    "ConversationRepository",
+    "DateProposalRepository",
+    "IdempotencyRepository",
+    "IngestResult",
+    "MemoryRepository",
+    "MessageRepository",
+    "PreferenceRepository",
+    "ScopedRepository",
+    "StyleProfileRepository",
+    "SubscriptionRepository",
+    "UsageEventRepository",
+    "UsageRecordResult",
+    "UserRepository",
+    "capability_columns",
+    "fingerprint",
+]
