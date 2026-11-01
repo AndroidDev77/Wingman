@@ -102,7 +102,12 @@ done
 [[ $sent -eq 1 ]] || echo "never saw the ready marker; adb emu sms send NOT executed" | tee -a "$art/phaseB-setup.txt"
 wait "$inst_pid"
 cat "$art/phaseB-instrument.txt"
-b_ok=0; passed "$art/phaseB-instrument.txt" && b_ok=1
+# "OK (1 test)" alone is not enough: an assumption-skipped test (assumeTrue on wingman.sms)
+# also reports OK. Require the marker the test writes only after its last assertion (the
+# app data, and so any stale marker, was cleared with `pm clear` at the start of phase B).
+b_done=0; adb shell run-as "$PKG" ls files/wing025-done >/dev/null 2>&1 && b_done=1
+[[ $b_done -eq 1 ]] || echo "phase B: completion marker files/wing025-done missing (test skipped or did not finish)"
+b_ok=0; passed "$art/phaseB-instrument.txt" && [[ $b_done -eq 1 ]] && b_ok=1
 adb logcat -d > "$art/phaseB-logcat.txt" || true
 grep -h "WING025-SMS\|WING025-UI" "$art/phaseB-logcat.txt" > "$art/phaseB-observations.txt" || true
 log "phase B observations (logcat/instrumentation lines prefixed WING025-SMS):"
