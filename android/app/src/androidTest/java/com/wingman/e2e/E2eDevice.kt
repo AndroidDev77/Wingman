@@ -28,8 +28,40 @@ class E2eDevice(private val timeoutMs: Long = UI_TIMEOUT_MS) {
     fun has(sel: BySelector): Boolean = device.hasObject(sel)
 
     fun waitFor(sel: BySelector, what: String, timeoutMs: Long = this.timeoutMs): UiObject2 {
-        device.wait(Until.hasObject(sel), timeoutMs)
-        return device.findObject(sel) ?: throw AssertionError("UI never showed $what within ${timeoutMs}ms")
+        if (!device.wait(Until.hasObject(sel), timeoutMs / 2)) {
+            hideKeyboard() // the soft keyboard can cover bottom bars and buttons
+            device.wait(Until.hasObject(sel), timeoutMs / 2)
+        }
+        return device.findObject(sel) ?: run {
+            dumpHierarchy("missing $what")
+            throw AssertionError("UI never showed $what within ${timeoutMs}ms")
+        }
+    }
+
+    /** Prints the current window hierarchy (texts and bounds) to logcat, for a failed wait. */
+    fun dumpHierarchy(reason: String) {
+        val out = java.io.ByteArrayOutputStream()
+        runCatching { device.dumpWindowHierarchy(out) }
+        println("WING025-UI hierarchy ($reason):")
+        out.toString().lineSequence()
+            .filter { it.contains("text=\"") && !it.contains("text=\"\"") || it.contains("content-desc=\"") && !it.contains("content-desc=\"\"") }
+            .forEach { line ->
+                val text = Regex("text=\"([^\"]*)\"").find(line)?.groupValues?.get(1).orEmpty()
+                val desc = Regex("content-desc=\"([^\"]*)\"").find(line)?.groupValues?.get(1).orEmpty()
+                val b = Regex("bounds=\"([^\"]*)\"").find(line)?.groupValues?.get(1).orEmpty()
+                val pkg = Regex("package=\"([^\"]*)\"").find(line)?.groupValues?.get(1).orEmpty()
+                println("WING025-UI   [$pkg] text='${text.take(80)}' desc='${desc.take(40)}' $b")
+            }
+    }
+
+    /** Hides the soft keyboard if it is showing (it covers the bottom bar and bottom buttons). */
+    fun hideKeyboard() {
+        val shown = runCatching { device.executeShellCommand("dumpsys input_method") }.getOrDefault("")
+            .lineSequence().any { it.contains("mInputShown=true") }
+        if (shown) {
+            device.pressBack()
+            device.waitForIdle()
+        }
     }
 
     fun waitText(text: String, timeoutMs: Long = this.timeoutMs) = waitFor(By.text(text), "\"$text\"", timeoutMs)
@@ -97,9 +129,13 @@ class E2eDevice(private val timeoutMs: Long = UI_TIMEOUT_MS) {
     fun signInWithDevToken(token: String) {
         device.wait(Until.hasObject(By.text("Use dev token")), timeoutMs)
         if (!has(By.text("Use dev token"))) return // already signed in
+        // setText through accessibility (no tap): no soft keyboard pops up over the screen.
         val field = waitFor(By.clazz("android.widget.EditText"), "dev token field")
-        field.click()
         field.text = token
+        hideKeyboard()
         clickText("Use dev token")
+        // The shell (bottom navigation) replaces the sign-in screen once the token is stored.
+        device.wait(Until.gone(By.text("Use dev token")), timeoutMs)
+        hideKeyboard()
     }
 }

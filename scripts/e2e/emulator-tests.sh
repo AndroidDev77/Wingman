@@ -60,8 +60,8 @@ token_a="$(mint "android-e2e-$run_id-a" "Android A")"
 instrument AppDrivesBackendE2eTest "$token_a" | tee "$art/phaseA-instrument.txt"
 a_ok=0; passed "$art/phaseA-instrument.txt" && a_ok=1
 adb logcat -d > "$art/phaseA-logcat.txt" || true
-grep -h "WING025-APP" "$art/phaseA-logcat.txt" > "$art/phaseA-observations.txt" || true
-log "phase A observations (logcat lines prefixed WING025-APP):"
+grep -h "WING025-APP\|WING025-UI" "$art/phaseA-logcat.txt" > "$art/phaseA-observations.txt" || true
+log "phase A observations (logcat lines prefixed WING025-APP / WING025-UI):"
 cat "$art/phaseA-observations.txt"
 
 # ----------------------------------------------------------------------- phase B
@@ -104,7 +104,7 @@ wait "$inst_pid"
 cat "$art/phaseB-instrument.txt"
 b_ok=0; passed "$art/phaseB-instrument.txt" && b_ok=1
 adb logcat -d > "$art/phaseB-logcat.txt" || true
-grep -h "WING025-SMS" "$art/phaseB-logcat.txt" > "$art/phaseB-observations.txt" || true
+grep -h "WING025-SMS\|WING025-UI" "$art/phaseB-logcat.txt" > "$art/phaseB-observations.txt" || true
 log "phase B observations (logcat/instrumentation lines prefixed WING025-SMS):"
 cat "$art/phaseB-observations.txt"
 echo "system SMS provider (sent box, newest first; address and date only):"
