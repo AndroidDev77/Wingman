@@ -1,0 +1,43 @@
+// WING-026: Gradle init script used by scripts/release/build.sh. It sets the Android app's
+// versionName/versionCode for one build from the Gradle properties
+//   -Pwingman.versionName=0.1.0-beta.1 -Pwingman.versionCode=2
+// and, optionally, the backend URL baked into BuildConfig.API_BASE_URL:
+//   -Pwingman.apiBaseUrl=http://127.0.0.1:8000/
+// without editing any Gradle file (android/app/build.gradle.kts keeps its defaults:
+// versionName 0.1.0, versionCode 1, API_BASE_URL http://10.0.2.2:8000/).
+// Uses the AGP Variant API (androidComponents.onVariants -> VariantOutput), which overrides
+// the defaultConfig values for every variant output. Without the properties it changes nothing.
+allprojects {
+    plugins.withId('com.android.application') {
+        def name = providers.gradleProperty('wingman.versionName')
+        def code = providers.gradleProperty('wingman.versionCode')
+        def apiBaseUrl = providers.gradleProperty('wingman.apiBaseUrl')
+        def components = extensions.getByName('androidComponents')
+        components.onVariants(components.selector().all()) { variant ->
+            if (apiBaseUrl.present) {
+                def url = apiBaseUrl.get().trim()
+                if (!(url ==~ /https?:\/\/[A-Za-z0-9.\-]+(:[0-9]{1,5})?\/([A-Za-z0-9._~\-\/]*)?/)) {
+                    throw new GradleException("wingman.apiBaseUrl must look like http(s)://host[:port]/ (trailing slash), got '${url}'")
+                }
+                // AGP is not on the init script's compile classpath: load BuildConfigField from
+                // the plugin's class loader.
+                def fieldClass = components.getClass().classLoader.loadClass('com.android.build.api.variant.BuildConfigField')
+                def field = fieldClass.getConstructor(String, Serializable, String)
+                    .newInstance('String', '"' + url + '"', 'WING-026 release override')
+                variant.buildConfigFields.put('API_BASE_URL', field)
+            }
+            variant.outputs.each { output ->
+                if (name.present) {
+                    output.versionName.set(name.get())
+                }
+                if (code.present) {
+                    def parsed = code.get()
+                    if (!(parsed ==~ /[1-9][0-9]{0,9}/) || parsed.toLong() > 2100000000L) {
+                        throw new GradleException("wingman.versionCode must be an integer 1..2100000000, got '${parsed}'")
+                    }
+                    output.versionCode.set(parsed.toInteger())
+                }
+            }
+        }
+    }
+}
