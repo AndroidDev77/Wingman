@@ -13,7 +13,7 @@ import com.wingman.core.model.AgentAction
 import com.wingman.core.model.AgentActionType
 import com.wingman.core.model.Approval
 import com.wingman.core.model.ApprovalDecisionResult
-import com.wingman.core.model.ApprovalReason
+import com.wingman.core.model.wireName
 import com.wingman.core.model.ApprovalStatus
 import com.wingman.core.model.ApproveRequest
 import com.wingman.core.model.AutomationActionRequest
@@ -74,7 +74,12 @@ import java.time.Instant
  *  - problem errors: unknown IDs are `404 not_found`, deciding a non-pending approval is
  *    `409 approval_not_pending`, sending on an UNSUPPORTED connection is `422 capability_unsupported`;
  *  - delivery truth: sends and approvals return `queued` and are never advanced to `sent`;
- *  - takeover cancels the contact's pending approvals; pause/resume update state;
+ *  - D-014 pause/takeover: pause (global or per contact) cancels queued `autopilot` messages only and
+ *    keeps pending approvals; an approved draft and the user's own send still go while paused.
+ *    Takeover cancels the contact's pending approvals AND its queued automated messages
+ *    (`approved_draft` and `autopilot`); `user_manual` is never canceled. Each cancel is audited
+ *    (`approval_canceled` / `send_canceled` with reason `automation_paused|automation_takeover`);
+ *  - delivery advances only through [simulateDelivery] (the connector's role), forward only;
  *  - device connectors (v1.1.0): `ingestConnectorEvent` dedups by `event_id` (`duplicate_event`), refuses
  *    `mock.*` on a real connection and send outcomes without a leased instruction (422);
  *    `claimOutboxInstructions` leases instructions queued with [queueOutboxInstruction] at most once,
@@ -87,6 +92,8 @@ import java.time.Instant
  * Test hooks: [failNextWith] makes the next call fail, [failAllWith] makes every call fail,
  * [latencyMs] adds an artificial delay. [calls] records the operations invoked. [ingestedEvents]
  * holds accepted envelopes; [queueOutboxInstruction] plays the dispatcher (WING-011) for the outbox.
+ * [queueAutopilot] plays the policy engine queuing an autopilot reply; [simulateDelivery] plays the
+ * connector acknowledging a send. The audit log is seeded with the fixture approvals' history.
  */
 class MockWingmanApi(
     private val clock: () -> Instant = { MockFixtures.NOW },
@@ -110,6 +117,23 @@ class MockWingmanApi(
     private val ingested = LinkedHashMap<String, Pair<JsonObject, ConnectorEventIngestResult>>()
     private val inboundExternalIds = mutableMapOf<String, ConnectorEventIngestResult>()
     private val outbox = mutableListOf<MockOutboxEntry>()
+
+    init {
+        // Seed the audit timeline with the history behind the fixture approvals.
+        for (a in approvals) {
+            val msg = a.draft.grounding.messageIds.firstOrNull()
+            auditLog += AgentAction(
+                id = nextId(), type = AgentActionType.MESSAGE_RECEIVED, actor = Actor.CONNECTOR, conversationId = a.conversationId,
+                contactId = a.contactId, messageId = msg, approvalId = null, reasonCode = null,
+                occurredAt = a.createdAt.minusSeconds(10), details = JsonObject(emptyMap()),
+            )
+            auditLog += AgentAction(
+                id = nextId(), type = AgentActionType.APPROVAL_REQUESTED, actor = Actor.AGENT, conversationId = a.conversationId,
+                contactId = a.contactId, messageId = null, approvalId = a.id, reasonCode = a.reasons.firstOrNull()?.wireName(),
+                occurredAt = a.createdAt, details = JsonObject(emptyMap()),
+            )
+        }
+    }
 
     /** Accepted (not duplicate) ingest envelopes, oldest first. */
     val ingestedEvents: List<JsonObject> get() = ingested.values.map { it.first }
@@ -312,7 +336,10 @@ class MockWingmanApi(
             val updated = current.copy(status = ApprovalStatus.APPROVED, finalText = text, messageId = message.id, decidedAt = clock())
             approvals[index] = updated
             adjustPendingCount(current.conversationId, -1)
-            audit(AgentActionType.APPROVAL_APPROVED, Actor.USER, current.conversationId, current.contactId, approvalId = approvalId)
+            audit(
+                AgentActionType.APPROVAL_APPROVED, Actor.USER, current.conversationId, current.contactId, approvalId = approvalId,
+                details = details("edited" to (body.editedText != null && body.editedText != current.draft.text)),
+            )
             audit(AgentActionType.SEND_QUEUED, Actor.DISPATCHER, current.conversationId, current.contactId, message.id, approvalId)
             ok(ApprovalDecisionResult(updated, message))
         }
@@ -334,31 +361,37 @@ class MockWingmanApi(
 
     override suspend fun pauseAllAutomation(body: AutomationActionRequest, key: IdempotencyKey): ApiResult<GlobalAutomationState> =
         idempotent("pauseAllAutomation", "POST /v1/automation/pause", key, body) {
-            globalState = GlobalAutomationState(GlobalAutomationStatus.PAUSED, clock())
-            audit(AgentActionType.AUTOMATION_PAUSED, Actor.USER)
+            val changed = globalState.status != GlobalAutomationStatus.PAUSED
+            if (changed) globalState = GlobalAutomationState(GlobalAutomationStatus.PAUSED, clock())
+            syncGlobalStatus()
+            // D-014: a pause cancels queued AUTOPILOT sends only; approvals and approved drafts are kept.
+            val canceled = cancelQueued(contactId = null, origins = PAUSE_CANCELS, reason = "automation_paused")
+            audit(AgentActionType.AUTOMATION_PAUSED, Actor.USER, details = details("scope" to "global", "changed" to changed, "canceled_messages" to canceled))
             ok(globalState)
         }
 
     override suspend fun resumeAllAutomation(body: AutomationActionRequest, key: IdempotencyKey): ApiResult<GlobalAutomationState> =
         idempotent("resumeAllAutomation", "POST /v1/automation/resume", key, body) {
-            globalState = GlobalAutomationState(GlobalAutomationStatus.ACTIVE, clock())
-            audit(AgentActionType.AUTOMATION_RESUMED, Actor.USER)
+            val changed = globalState.status != GlobalAutomationStatus.ACTIVE
+            if (changed) globalState = GlobalAutomationState(GlobalAutomationStatus.ACTIVE, clock())
+            syncGlobalStatus()
+            audit(AgentActionType.AUTOMATION_RESUMED, Actor.USER, details = details("scope" to "global", "changed" to changed))
             ok(globalState)
         }
 
     override suspend fun pauseContactAutomation(contactId: String, body: AutomationActionRequest, key: IdempotencyKey): ApiResult<ContactAutomationState> =
         idempotent("pauseContactAutomation", "POST /v1/contacts/{id}/automation/pause", key, contactId to body) {
-            setContactStatus(contactId, ContactAutomationStatus.PAUSED, AgentActionType.AUTOMATION_PAUSED, cancelApprovals = false)
+            setContactStatus(contactId, ContactAutomationStatus.PAUSED)
         }
 
     override suspend fun resumeContactAutomation(contactId: String, body: AutomationActionRequest, key: IdempotencyKey): ApiResult<ContactAutomationState> =
         idempotent("resumeContactAutomation", "POST /v1/contacts/{id}/automation/resume", key, contactId to body) {
-            setContactStatus(contactId, ContactAutomationStatus.ACTIVE, AgentActionType.AUTOMATION_RESUMED, cancelApprovals = false)
+            setContactStatus(contactId, ContactAutomationStatus.ACTIVE)
         }
 
     override suspend fun takeoverContact(contactId: String, body: AutomationActionRequest, key: IdempotencyKey): ApiResult<ContactAutomationState> =
         idempotent("takeoverContact", "POST /v1/contacts/{id}/automation/takeover", key, contactId to body) {
-            setContactStatus(contactId, ContactAutomationStatus.TAKEN_OVER, AgentActionType.AUTOMATION_TAKEOVER, cancelApprovals = true)
+            setContactStatus(contactId, ContactAutomationStatus.TAKEN_OVER)
         }
 
     /* ------------------------------------------------------------ device connectors (v1.1.0) */
@@ -553,7 +586,7 @@ class MockWingmanApi(
     }
 
     private fun contactState(contactId: String): ContactAutomationState? {
-        contactStates[contactId]?.let { return it }
+        contactStates[contactId]?.let { return it.copy(globalStatus = globalState.status, canceledApprovalCount = 0, canceledMessageCount = 0) }
         val conv = conversations.find { it.contact.id == contactId } ?: return null
         return ContactAutomationState(
             contactId = contactId,
@@ -566,39 +599,120 @@ class MockWingmanApi(
         )
     }
 
-    private fun setContactStatus(
-        contactId: String,
-        status: ContactAutomationStatus,
-        auditType: AgentActionType,
-        cancelApprovals: Boolean,
-    ): ApiResult<ContactAutomationState> {
+    /** D-014, mirroring backend `AutomationController.set_contact_status`. */
+    private fun setContactStatus(contactId: String, status: ContactAutomationStatus): ApiResult<ContactAutomationState> {
         val base = contactState(contactId) ?: return notFound()
-        var canceled = 0
-        if (cancelApprovals) {
+        val changed = base.status != status
+        var canceledApprovals = 0
+        if (status == ContactAutomationStatus.TAKEN_OVER) {
             approvals.replaceAll { a ->
                 if (a.contactId == contactId && a.status == ApprovalStatus.PENDING) {
-                    canceled++
-                    audit(AgentActionType.APPROVAL_CANCELED, Actor.SYSTEM, a.conversationId, contactId, approvalId = a.id)
+                    canceledApprovals++
+                    audit(AgentActionType.APPROVAL_CANCELED, Actor.USER, a.conversationId, contactId, approvalId = a.id, reasonCode = "automation_takeover")
                     a.copy(status = ApprovalStatus.CANCELED, decidedAt = clock())
                 } else a
             }
         }
+        val canceledMessages = when (status) {
+            ContactAutomationStatus.TAKEN_OVER -> cancelQueued(contactId, AUTOMATED_ORIGINS, "automation_takeover")
+            ContactAutomationStatus.PAUSED -> cancelQueued(contactId, PAUSE_CANCELS, "automation_paused")
+            ContactAutomationStatus.ACTIVE -> 0
+        }
         conversations.replaceAll { c ->
             if (c.contact.id != contactId) c else c.copy(
                 automation = c.automation.copy(contactStatus = status, globalStatus = globalState.status),
-                pendingApprovalCount = if (cancelApprovals) 0 else c.pendingApprovalCount,
+                pendingApprovalCount = approvals.count { it.conversationId == c.id && it.status == ApprovalStatus.PENDING },
             )
         }
         val state = base.copy(
             status = status,
             globalStatus = globalState.status,
-            changedAt = clock(),
-            canceledApprovalCount = canceled,
-            canceledMessageCount = 0,
+            changedAt = if (changed) clock() else base.changedAt,
+            canceledApprovalCount = canceledApprovals,
+            canceledMessageCount = canceledMessages,
         )
         contactStates[contactId] = state
-        audit(auditType, Actor.USER, contactId = contactId)
+        val auditType = when (status) {
+            ContactAutomationStatus.ACTIVE -> AgentActionType.AUTOMATION_RESUMED
+            ContactAutomationStatus.PAUSED -> AgentActionType.AUTOMATION_PAUSED
+            ContactAutomationStatus.TAKEN_OVER -> AgentActionType.AUTOMATION_TAKEOVER
+        }
+        audit(
+            auditType, Actor.USER, contactId = contactId,
+            details = details("scope" to "contact", "changed" to changed, "canceled_approvals" to canceledApprovals, "canceled_messages" to canceledMessages),
+        )
         return ok(state)
+    }
+
+    /** Cancels QUEUED outbound messages with one of [origins] (never `user_manual`); `sending` can't be recalled. */
+    private fun cancelQueued(contactId: String?, origins: Set<MessageOrigin>, reason: String): Int {
+        var count = 0
+        for (conv in conversations.filter { contactId == null || it.contact.id == contactId }) {
+            val list = messages[conv.id] ?: continue
+            list.replaceAll { m ->
+                if (m.direction == MessageDirection.OUTBOUND && m.deliveryState == DeliveryState.QUEUED && m.origin in origins) {
+                    count++
+                    audit(AgentActionType.SEND_CANCELED, Actor.USER, conv.id, conv.contact.id, m.id, m.approvalId, reasonCode = reason)
+                    m.copy(deliveryState = DeliveryState.CANCELED)
+                } else m
+            }
+        }
+        return count
+    }
+
+    private fun syncGlobalStatus() {
+        conversations.replaceAll { it.copy(automation = it.automation.copy(globalStatus = globalState.status)) }
+    }
+
+    /* ------------------------------------------------------------ test hooks: policy engine and connector */
+
+    /**
+     * Plays the WING-011 policy engine queuing an AUTOPILOT reply (no approval). Returns null, and
+     * queues nothing, when the contact is paused or taken over or automation is globally paused.
+     */
+    suspend fun queueAutopilot(conversationId: String, text: String): Message? = mutex.withLock {
+        val conv = conversations.find { it.id == conversationId } ?: return@withLock null
+        if (globalState.status == GlobalAutomationStatus.PAUSED) return@withLock null
+        if ((contactState(conv.contact.id)?.status ?: ContactAutomationStatus.ACTIVE) != ContactAutomationStatus.ACTIVE) return@withLock null
+        queueOutbound(conversationId, text, MessageOrigin.AUTOPILOT, approvalId = null).also {
+            audit(AgentActionType.SEND_QUEUED, Actor.DISPATCHER, conversationId, conv.contact.id, it.id)
+        }
+    }
+
+    /**
+     * Plays the connector: moves an outbound message FORWARD one or more steps
+     * (`queued -> sending -> sent -> delivered`), auditing each step. Returns false (no change)
+     * for an unknown message, a backward or terminal transition, or a canceled message.
+     */
+    suspend fun simulateDelivery(messageId: String, target: DeliveryState): Boolean = mutex.withLock {
+        val order = listOf(DeliveryState.QUEUED, DeliveryState.SENDING, DeliveryState.SENT, DeliveryState.DELIVERED)
+        for ((convId, list) in messages) {
+            val i = list.indexOfFirst { it.id == messageId }
+            if (i < 0) continue
+            val m = list[i]
+            val from = order.indexOf(m.deliveryState)
+            val to = order.indexOf(target)
+            if (from < 0 || to <= from) return@withLock false
+            val contactId = conversations.find { it.id == convId }?.contact?.id
+            for (step in order.subList(from + 1, to + 1)) {
+                val type = when (step) {
+                    DeliveryState.SENDING -> AgentActionType.SEND_ATTEMPTED
+                    DeliveryState.SENT -> AgentActionType.SEND_ACKNOWLEDGED
+                    else -> AgentActionType.DELIVERY_CONFIRMED
+                }
+                audit(type, if (step == DeliveryState.SENDING) Actor.DISPATCHER else Actor.CONNECTOR, convId, contactId, m.id, m.approvalId)
+            }
+            val now = clock()
+            list[i] = m.copy(
+                deliveryState = target,
+                attemptCount = maxOf(m.attemptCount, 1),
+                sentAt = if (to >= 2) m.sentAt ?: now else null,
+                deliveredAt = if (to >= 3) now else null,
+                externalMessageId = if (to >= 2) m.externalMessageId ?: "mock-out-${m.id.takeLast(6)}" else m.externalMessageId,
+            )
+            return@withLock true
+        }
+        false
     }
 
     private fun audit(
@@ -608,17 +722,35 @@ class MockWingmanApi(
         contactId: String? = null,
         messageId: String? = null,
         approvalId: String? = null,
-        reasonCode: ApprovalReason? = null,
+        reasonCode: String? = null,
+        details: JsonObject = JsonObject(emptyMap()),
     ) {
         auditLog += AgentAction(
             id = nextId(), type = type, actor = actor, conversationId = conversationId, contactId = contactId,
-            messageId = messageId, approvalId = approvalId, reasonCode = reasonCode?.name?.lowercase(),
-            occurredAt = clock(), details = JsonObject(emptyMap()),
+            messageId = messageId, approvalId = approvalId, reasonCode = reasonCode,
+            occurredAt = clock(), details = details,
         )
     }
 
+    /** Redacted audit details: IDs, counts and codes only (never message text). */
+    private fun details(vararg pairs: Pair<String, Any>): JsonObject = JsonObject(
+        pairs.associate { (k, v) ->
+            k to when (v) {
+                is Boolean -> JsonPrimitive(v)
+                is Number -> JsonPrimitive(v)
+                else -> JsonPrimitive(v.toString())
+            }
+        },
+    )
+
     companion object {
         private const val CURSOR_PREFIX = "mock:"
+
+        /** D-014, as backend `PAUSE_CANCELS`: a pause cancels queued autopilot sends only. */
+        val PAUSE_CANCELS: Set<MessageOrigin> = setOf(MessageOrigin.AUTOPILOT)
+
+        /** D-014, as backend `AUTOMATED_ORIGINS`: takeover also cancels approved-but-unsent drafts. */
+        val AUTOMATED_ORIGINS: Set<MessageOrigin> = setOf(MessageOrigin.AUTOPILOT, MessageOrigin.APPROVED_DRAFT)
 
         private fun ContactPreferenceOverride.isEmpty() = intent == null && style == null && automationMode == null
 
