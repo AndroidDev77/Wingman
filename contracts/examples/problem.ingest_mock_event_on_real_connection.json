@@ -1,0 +1,13 @@
+{
+  "type": "https://wingman.invalid/problems/validation_error",
+  "title": "Request validation failed",
+  "status": 422,
+  "code": "validation_error",
+  "detail": "mock.* events are only accepted on a mock connection",
+  "errors": [
+    {
+      "pointer": "/type",
+      "message": "'mock.inbound_message_injected' is not allowed on platform 'sms'"
+    }
+  ]
+}

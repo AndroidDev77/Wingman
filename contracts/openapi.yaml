@@ -2,7 +2,7 @@ openapi: 3.1.0
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
   title: Wingman AI API
-  version: 1.0.0
+  version: 1.1.0
   summary: Canonical HTTP contract between the Wingman backend and its clients.
   description: |
     Source of truth for the Wingman backend <-> Android (and any other client) HTTP API.
@@ -43,6 +43,22 @@ info:
       reported as `delivered`.
     * **LLM output is advisory.** Drafts and analyses are suggestions. Only the
       automation controller's dispatcher sends, after policy and capability checks.
+    * **Device-side connectors** (ADR 0006). Connectors that run on the user's device
+      (SMS, notifications) report `connector_event.v1` envelopes through
+      `POST /v1/connections/{connection_id}/events` and execute only the send
+      instructions the dispatcher placed in the connection's outbox, which they lease
+      with `POST /v1/connections/{connection_id}/outbox/claim`. The backend never
+      transmits on a device-side transport itself, and no API client can create an
+      outbox instruction.
+
+    ## Changelog
+
+    * **1.1.0** (additive). Device event ingest (`ingestConnectorEvent`), device outbox
+      (`listOutboxInstructions`, `claimOutboxInstructions`), memory routes
+      (`listContactMemories`, `correctMemory`, `deleteMemory`). New schemas
+      `ConnectorEventIngestResult`, `OutboxInstruction*`, `OutboxClaim*`, `Memory*`.
+      No existing operation, schema or enum changed meaning. No new `ErrorCode` values.
+    * **1.0.0**. Initial frozen contract (WING-002, D-004).
   license:
     name: Proprietary
     identifier: LicenseRef-Proprietary
@@ -62,6 +78,7 @@ tags:
   - name: approvals
   - name: automation
   - name: audit
+  - name: memories
 
 paths:
   /health:
@@ -260,6 +277,233 @@ paths:
                 $ref: "#/components/schemas/ConnectionPage"
         "401":
           $ref: "#/components/responses/Unauthenticated"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/connections/{connection_id}/events:
+    parameters:
+      - $ref: "#/components/parameters/ConnectionId"
+    post:
+      tags: [connections]
+      operationId: ingestConnectorEvent
+      summary: A device-side connector reports one connector_event.v1 envelope
+      description: |
+        For connectors that run on the user's device (WING-016 SMS, WING-017
+        notifications). The body is exactly one `connector_event.v1` envelope. See
+        ADR 0006.
+
+        **Trust boundary (B1).** The device is authenticated as the user, but its
+        envelope is untrusted input. The server checks, in this order:
+
+        1. The connection exists and belongs to the caller, and the envelope's
+           `user_id` is the caller. Otherwise `404 not_found` (existence is not
+           leaked; the body is not inspected further).
+        2. The envelope validates against `connector_event.v1`, its `connection_id`
+           equals the path, its `platform` equals the connection's platform, and the
+           `Idempotency-Key` header equals the envelope's `event_id`. Otherwise
+           `422 validation_error`.
+        3. `mock.*` events (and `platform: mock`) are accepted only on a `mock`
+           connection (WING-006 simulator, WING-025 harness). On any real connection
+           they are `422 validation_error` with an error pointer `/type`, so simulated
+           success can never be recorded on a real channel.
+        4. Send outcome events (`message.send_acknowledged`, `message.send_failed`,
+           `message.delivery_receipt` and their `mock.*` counterparts) must name an
+           `(outbound_message_id, idempotency_key)` pair that the dispatcher issued to
+           **this connection** as an outbox instruction that was leased (claimed).
+           A pair that is unknown, belongs to another connection, or was never
+           claimed (`pending` or `canceled`) is `422 validation_error` with an error
+           pointer under `/payload`. `message.delivery_receipt` carries no
+           `idempotency_key`, so it must name an `outbound_message_id` with a leased
+           instruction on this connection. A device can only report outcomes of sends
+           it was authorized to perform; it can never create an outbound message.
+
+        **Dedup.** The first time an event is accepted the response is `202` with
+        `outcome: accepted`. A repeat returns `200` and causes no second message, no
+        second state transition and no second audit entry:
+        `duplicate_event` for an already-seen `event_id`, `duplicate_message` for an
+        inbound message whose `(user_id, platform, external_message_id)` is already
+        stored under a different `event_id`. Event dedup is permanent (not limited to
+        the 24-hour idempotency retention). This refines ADR 0004 for this route only:
+        a repeat answers `200 duplicate_event` instead of replaying the original `202`
+        body; a reused key with a different body is still
+        `422 idempotency_key_mismatch`.
+
+        **Results are the truth.** A result for an instruction whose lease has expired
+        is still accepted and recorded, because the device may really have sent. State
+        changes follow `DeliveryState`: acknowledged -> `sent`, failed -> `failed`,
+        receipt -> `delivered` (only after `sent`; an early receipt is stored and
+        applied once the acknowledgement arrives).
+
+        `connection.capabilities_changed` events update the connection's stored
+        capabilities as reported by the device; they cannot authorize anything by
+        themselves (ADR 0005 policy still applies at send time).
+
+        Device uploader mapping (WING-016): `2xx` accepted; `400`, `404`, `422`
+        rejected (dead letter, never retried); network errors, `409`, `429`, `5xx`
+        retry later with the same envelope and key.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "./schemas/connector_event.v1.json"
+      responses:
+        "202":
+          description: New event accepted and recorded. Downstream work (memory, analysis, drafts) runs asynchronously.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorEventIngestResult"
+        "200":
+          description: |
+            Already seen (`duplicate_event` or `duplicate_message`). No side effect.
+            `Idempotent-Replayed: true` is set for `duplicate_event`.
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorEventIngestResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/connections/{connection_id}/outbox:
+    parameters:
+      - $ref: "#/components/parameters/ConnectionId"
+    get:
+      tags: [connections]
+      operationId: listOutboxInstructions
+      summary: Read-only view of the connection's send instructions (no message text)
+      description: |
+        Lists the send instructions the dispatcher created for this connection,
+        oldest first (`created_at` ascending, then `id`). For reconciliation and
+        diagnostics only: items are `OutboxInstructionSummary` and carry **no text and
+        no destination**, so nothing here can be sent. Listing never leases, never
+        changes state, and is not an authorization. To obtain an instruction to
+        execute, a device must claim it (`claimOutboxInstructions`). See ADR 0006.
+        Defaults to `state=pending` when no state is given.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: state
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/OutboxInstructionState"
+      responses:
+        "200":
+          description: A page of instruction summaries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutboxInstructionPage"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/connections/{connection_id}/outbox/claim:
+    parameters:
+      - $ref: "#/components/parameters/ConnectionId"
+    post:
+      tags: [connections]
+      operationId: claimOutboxInstructions
+      summary: Lease authorized send instructions for this device to execute
+      description: |
+        The pull half of the device downlink (ADR 0006). The device polls this route;
+        the backend never pushes a send. Instructions are created **only by the
+        dispatcher (WING-011)** after the automation policy, approval and capability
+        checks; there is no API operation that creates one, and LLM output never
+        reaches this route except as text the dispatcher already authorized.
+
+        **What a claim does, atomically per instruction:**
+
+        * Re-checks, at claim time, global pause, the contact's pause/takeover state
+          and the connection's `send` capability. An instruction that no longer passes
+          becomes `canceled` (its message `canceled`) and is not returned.
+        * Leases each returned `pending` instruction to the calling
+          `device_install_id`: state `leased`, `leased_at` now, `lease_expires_at` set
+          by the server (default 120 s, bounds 30 to 600 s). The message moves
+          `queued` -> `sending`, audit `send_attempted`.
+        * Also returns instructions already leased to the **same**
+          `device_install_id` whose lease has not expired (same lease, not extended),
+          so a device that lost a response can recover them with a fresh key.
+
+        **Exclusivity.** An instruction is leased at most once, ever: two devices
+        polling concurrently can never both receive it (implement with row locks,
+        e.g. `FOR UPDATE SKIP LOCKED`). A lease is never renewed, transferred or
+        re-issued. If the lease expires without a result the instruction becomes
+        `expired` and the outcome is **unknown**: the message stays `sending`, is
+        never reported `sent`, and is never retried automatically (it may have gone
+        out). A retry is a **new** instruction with a new attempt number and a new
+        `idempotency_key` (D-006), created by the dispatcher only after a definitive
+        `send_failed` with `retryable: true`.
+
+        **Device obligations.** Start the transport attempt only before the lease
+        deadline, computed on the device clock as
+        `local_now + (lease_expires_at - server_time)` minus a safety margin. If it
+        cannot start in time, it must not send and reports `message.send_failed`
+        with `failure.code: timeout`, `retryable: true`. It performs at most one
+        transport attempt per `idempotency_key` (D-006), and reports exactly one
+        outcome event per instruction through `ingestConnectorEvent`, echoing
+        `outbound_message_id` and `idempotency_key`.
+
+        **Idempotency.** Replaying the same `Idempotency-Key` with the same body
+        returns the original response (the same instructions) with
+        `Idempotent-Replayed: true` and leases nothing new. Devices persist the key
+        before sending the request.
+
+        Connections whose connector runs inside the backend never have instructions:
+        the claim returns an empty list.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OutboxClaimRequest"
+      responses:
+        "200":
+          description: The leased instructions (possibly none).
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OutboxClaimResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
         default:
           $ref: "#/components/responses/Error"
 
@@ -749,6 +993,106 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /v1/contacts/{contact_id}/memories:
+    parameters:
+      - $ref: "#/components/parameters/ContactId"
+    get:
+      tags: [memories]
+      operationId: listContactMemories
+      summary: Remembered facts and summaries about a contact (WING-008)
+      description: |
+        Newest first (`created_at` descending, then `id`). Deleted memories are never
+        returned, with or without history. Without `include_history`, only active
+        memories: not superseded (`superseded_by_id` null) and not expired
+        (`expires_at` null or in the future). With `include_history=true`, superseded
+        and expired memories are included too. `include_history` is carried by the
+        cursor; changing it means starting again without a cursor (ADR 0003).
+        Facts with `basis: inferred` must be shown as unconfirmed. Memory content is
+        private and never logged.
+      parameters:
+        - name: include_history
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of memories.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryPage"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/memories/{memory_id}:
+    parameters:
+      - $ref: "#/components/parameters/MemoryId"
+    put:
+      tags: [memories]
+      operationId: correctMemory
+      summary: Correct a fact (a user correction supersedes it; history is kept)
+      description: |
+        Creates a new memory with `origin: user_correction`, `basis: stated`,
+        `confidence: 1`, the same `key` and the same `source_message_ids`. It
+        supersedes this fact and every other active fact with the same key, and is
+        returned (its `id` differs from `memory_id`). Repeating the same correction
+        (same content, compared case- and whitespace-insensitively) returns the
+        existing correction and creates nothing, so PUT stays idempotent and takes no
+        `Idempotency-Key` (ADR 0004). Correcting a summary, or content that is blank
+        after trimming, is `422 validation_error`. A deleted, missing or other user's
+        memory is `404 not_found`. A later message from the contact can supersede a
+        correction again.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemoryCorrection"
+      responses:
+        "200":
+          description: The correcting memory (new or the existing identical one).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Memory"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [memories]
+      operationId: deleteMemory
+      summary: Forget a memory
+      description: |
+        Soft delete. The memory is excluded from every later listing and from
+        retrieval for drafts, and re-extracting the same messages cannot bring it
+        back (only new evidence can). Deleting the active fact does not reactivate an
+        older superseded one. Idempotent: deleting an already-deleted memory is also
+        `204`. A missing or other user's memory is `404 not_found`.
+      responses:
+        "204":
+          description: Deleted (also when it was already deleted).
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
   /v1/agent-actions:
     get:
       tags: [audit]
@@ -855,6 +1199,19 @@ components:
         $ref: "#/components/schemas/Id"
     ApprovalId:
       name: approval_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Id"
+
+    ConnectionId:
+      name: connection_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Id"
+    MemoryId:
+      name: memory_id
       in: path
       required: true
       schema:
@@ -1965,6 +2322,405 @@ components:
             $ref: "#/components/schemas/AgentAction"
         next_cursor:
           $ref: "#/components/schemas/NextCursor"
+
+    # ---------------------------------------------------------------- device ingest (1.1.0)
+    ConnectorEventIngestOutcome:
+      description: |
+        `accepted`: first time this event was seen; recorded (HTTP 202).
+        `duplicate_event`: this `event_id` was already ingested; nothing changed (HTTP 200).
+        `duplicate_message`: an inbound message with the same
+        `(user_id, platform, external_message_id)` is already stored under another
+        `event_id`; nothing changed (HTTP 200).
+      type: string
+      enum: [accepted, duplicate_event, duplicate_message]
+    ConnectorEventIngestResult:
+      type: object
+      required: [event_id, outcome, message_id, recorded_at]
+      properties:
+        event_id:
+          $ref: "#/components/schemas/Id"
+        outcome:
+          $ref: "#/components/schemas/ConnectorEventIngestOutcome"
+        message_id:
+          description: |
+            Wingman message the event concerns: the stored inbound message, or the
+            outbound message a send outcome refers to. Null for connection events.
+          anyOf:
+            - $ref: "#/components/schemas/Id"
+            - type: "null"
+        recorded_at:
+          description: When the server first recorded this event (for duplicates, the original time).
+          $ref: "#/components/schemas/Timestamp"
+
+    # ---------------------------------------------------------------- device outbox (1.1.0)
+    OutboxInstructionState:
+      description: |
+        `pending`: created by the dispatcher, not yet claimed (message `queued`).
+        `leased`: claimed by one device install until `lease_expires_at` (message
+        `sending`). `completed`: an outcome event (acknowledged or failed) was
+        ingested. `expired`: the lease lapsed with no outcome; the outcome is unknown
+        and the instruction is never re-leased or retried automatically (a late
+        outcome event still moves it to `completed`). `canceled`: removed before any
+        lease (pause, takeover, capability change); never sent. `completed` and
+        `canceled` are terminal.
+      type: string
+      enum: [pending, leased, completed, expired, canceled]
+    OutboxAuthorization:
+      description: |
+        Why the dispatcher authorized this send, for the device's local audit
+        (WING-016 `SmsSendCommand.authorizedBy`). Informational: the device cannot
+        widen or change it.
+      type: object
+      required: [origin, approval_id]
+      properties:
+        origin:
+          description: The outbound `MessageOrigin` of the message.
+          type: string
+          enum: [user_manual, approved_draft, autopilot]
+        approval_id:
+          description: Set exactly when `origin` is `approved_draft`.
+          anyOf:
+            - $ref: "#/components/schemas/Id"
+            - type: "null"
+      if:
+        properties:
+          origin:
+            const: approved_draft
+      then:
+        properties:
+          approval_id:
+            $ref: "#/components/schemas/Id"
+      else:
+        properties:
+          approval_id:
+            type: "null"
+    OutboxInstructionSummary:
+      description: |
+        Listing view of a send instruction. Carries no message text and no
+        destination, so it cannot be executed.
+      type: object
+      required:
+        - id
+        - connection_id
+        - outbound_message_id
+        - idempotency_key
+        - attempt
+        - state
+        - created_at
+        - leased_at
+        - lease_expires_at
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        connection_id:
+          $ref: "#/components/schemas/Id"
+        outbound_message_id:
+          description: The Wingman outbound `Message.id` this instruction sends.
+          $ref: "#/components/schemas/Id"
+        idempotency_key:
+          description: |
+            Per-attempt connector send key (D-006), e.g. `send:<message_id>:<attempt>`.
+            Unique per instruction. The device performs at most one transport attempt
+            per key and echoes it in `send_acknowledged` / `send_failed` events.
+          $ref: "#/components/schemas/IdempotencyKey"
+        attempt:
+          description: 1 for the first attempt; each retry is a new instruction with attempt + 1 and a new key.
+          type: integer
+          minimum: 1
+        state:
+          $ref: "#/components/schemas/OutboxInstructionState"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        leased_at:
+          description: Null until claimed.
+          anyOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        lease_expires_at:
+          description: Null until claimed. No transport attempt may start at or after this instant.
+          anyOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+      if:
+        properties:
+          state:
+            enum: [pending, canceled]
+      then:
+        properties:
+          leased_at:
+            type: "null"
+          lease_expires_at:
+            type: "null"
+      else:
+        properties:
+          leased_at:
+            $ref: "#/components/schemas/Timestamp"
+          lease_expires_at:
+            $ref: "#/components/schemas/Timestamp"
+    OutboxInstruction:
+      description: |
+        A leased send instruction: everything the device needs to perform exactly one
+        transport attempt. Returned only by `claimOutboxInstructions`, only to the
+        lease holder, and always in state `leased`. The same fields as
+        `OutboxInstructionSummary` plus the payload. `text` and `external_thread_id`
+        are private: never log them.
+      type: object
+      required:
+        - id
+        - connection_id
+        - outbound_message_id
+        - idempotency_key
+        - attempt
+        - state
+        - created_at
+        - leased_at
+        - lease_expires_at
+        - conversation_id
+        - external_thread_id
+        - text
+        - authorization
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        connection_id:
+          $ref: "#/components/schemas/Id"
+        outbound_message_id:
+          description: The Wingman outbound `Message.id` this instruction sends.
+          $ref: "#/components/schemas/Id"
+        idempotency_key:
+          description: |
+            Per-attempt connector send key (D-006), e.g. `send:<message_id>:<attempt>`.
+            Unique per instruction. The device performs at most one transport attempt
+            per key and echoes it in `send_acknowledged` / `send_failed` events.
+          $ref: "#/components/schemas/IdempotencyKey"
+        attempt:
+          description: 1 for the first attempt; each retry is a new instruction with attempt + 1 and a new key.
+          type: integer
+          minimum: 1
+        state:
+          const: leased
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        leased_at:
+          $ref: "#/components/schemas/Timestamp"
+        lease_expires_at:
+          description: No transport attempt may start at or after this instant (see `OutboxClaimResult.server_time`).
+          $ref: "#/components/schemas/Timestamp"
+        conversation_id:
+          $ref: "#/components/schemas/Id"
+        external_thread_id:
+          description: Platform thread to send into (the destination). For SMS, `sms:<normalized address>`.
+          $ref: "#/components/schemas/ExternalId"
+        text:
+          description: Exact text the dispatcher authorized. The device sends it unchanged.
+          type: string
+          minLength: 1
+          maxLength: 4000
+        authorization:
+          $ref: "#/components/schemas/OutboxAuthorization"
+    OutboxInstructionPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/OutboxInstructionSummary"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
+    OutboxClaimRequest:
+      type: object
+      additionalProperties: false
+      required: [device_install_id]
+      properties:
+        device_install_id:
+          description: |
+            Random UUID the app generates once per installation and keeps in private
+            storage. Identifies the lease holder; a reinstall is a new holder.
+          $ref: "#/components/schemas/Id"
+        max_instructions:
+          description: |
+            Upper bound on instructions in this response, counting both newly leased
+            ones and still-valid leases this install already holds.
+          type: integer
+          minimum: 1
+          maximum: 20
+          default: 1
+    OutboxClaimResult:
+      type: object
+      required: [instructions, server_time]
+      properties:
+        instructions:
+          description: Leased to the caller, oldest first. Empty when there is nothing to send.
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/OutboxInstruction"
+        server_time:
+          description: Server clock at lease time, so the device can compute its local deadline despite clock skew.
+          $ref: "#/components/schemas/Timestamp"
+
+    # ---------------------------------------------------------------- memories (1.1.0)
+    MemoryKind:
+      type: string
+      enum: [fact, summary]
+    MemoryBasis:
+      description: |
+        `stated`: the contact said it explicitly in a cited message (or the user
+        corrected it). `inferred`: the model's reading; must be shown as unconfirmed.
+      type: string
+      enum: [stated, inferred]
+    MemoryOrigin:
+      type: string
+      enum: [extracted, user_correction]
+    Memory:
+      description: |
+        One remembered fact or rolling summary about a contact, attributed to the
+        messages it came from. Advisory context only. `content` is private: never log.
+        A memory is active when `superseded_by_id` is null and `expires_at` is null or
+        in the future.
+      type: object
+      required:
+        - id
+        - contact_id
+        - conversation_id
+        - kind
+        - key
+        - category
+        - content
+        - basis
+        - origin
+        - confidence
+        - sensitive
+        - source_message_ids
+        - stated_at
+        - expires_at
+        - superseded_by_id
+        - created_at
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        contact_id:
+          $ref: "#/components/schemas/Id"
+        conversation_id:
+          anyOf:
+            - $ref: "#/components/schemas/Id"
+            - type: "null"
+        kind:
+          $ref: "#/components/schemas/MemoryKind"
+        key:
+          description: Slot such as `work.job_title`; facts with the same key supersede each other. Null for summaries and unkeyed facts.
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 64
+        category:
+          description: |
+            Fact category; null for summaries. Known values (WING-008 `FactCategory`):
+            `identity`, `work`, `education`, `location`, `family`, `pets`, `interests`,
+            `preferences`, `plans`, `availability`, `relationship`, `communication`,
+            `other`, and the sensitive `health`, `sexuality`, `religion`, `politics`,
+            `ethnicity`, `finances`. Open string: new categories may appear, and
+            clients must display unknown values rather than fail.
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 64
+        content:
+          type: string
+          minLength: 1
+          maxLength: 2000
+        basis:
+          $ref: "#/components/schemas/MemoryBasis"
+        origin:
+          $ref: "#/components/schemas/MemoryOrigin"
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        sensitive:
+          description: True when the category or the key's first segment is a sensitive category.
+          type: boolean
+        source_message_ids:
+          description: Messages this memory is attributed to. At least one for a fact.
+          type: array
+          items:
+            $ref: "#/components/schemas/Id"
+        stated_at:
+          description: When the latest cited message was sent (or when the user corrected it).
+          anyOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        expires_at:
+          description: End of validity for time-bound facts (plans, availability). Null means no expiry.
+          anyOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        superseded_by_id:
+          description: The memory that replaced this one. Null when active (or expired but not replaced).
+          anyOf:
+            - $ref: "#/components/schemas/Id"
+            - type: "null"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+      allOf:
+        - if:
+            properties:
+              kind:
+                const: summary
+          then:
+            properties:
+              key:
+                type: "null"
+              category:
+                type: "null"
+              basis:
+                const: stated
+              origin:
+                const: extracted
+          else:
+            properties:
+              source_message_ids:
+                minItems: 1
+        - if:
+            properties:
+              origin:
+                const: user_correction
+          then:
+            properties:
+              kind:
+                const: fact
+              basis:
+                const: stated
+              confidence:
+                const: 1
+        - if:
+            properties:
+              basis:
+                const: inferred
+          then:
+            description: Inferred sensitive facts are never stored (WING-008).
+            properties:
+              sensitive:
+                const: false
+    MemoryPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Memory"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
+    MemoryCorrection:
+      type: object
+      additionalProperties: false
+      required: [content]
+      properties:
+        content:
+          description: The corrected fact, in the user's words. Blank after trimming is rejected.
+          type: string
+          minLength: 1
+          maxLength: 500
 
     # ---------------------------------------------------------------- dates (shape only)
     DateProposal:
