@@ -19,6 +19,7 @@ enum class Destination(
     Discovery("discovery", "Discovery", topLevel = true),
     Settings("settings", "Settings", topLevel = true),
     Conversation("conversation/{${Routes.ARG_CONVERSATION_ID}}", "Conversation", topLevel = false),
+    Onboarding("onboarding", "Welcome", topLevel = false),
     ;
 
     companion object {
@@ -48,12 +49,25 @@ object Routes {
     fun approvals() = Destination.Approvals.pattern
     fun discovery() = Destination.Discovery.pattern
     fun settings() = Destination.Settings.pattern
+    fun onboarding() = Destination.Onboarding.pattern
 
     /** `conversation/<id>`. Rejects non-contract IDs so a malformed deep link can't reach the screen. */
     fun conversation(conversationId: String): String {
         require(isValidId(conversationId)) { "conversationId must be a lowercase canonical UUID" }
         return "conversation/$conversationId"
     }
+}
+
+/**
+ * Back-stack rules for the first-launch onboarding flow (WING-013). Pure Kotlin so they are
+ * JVM-testable; [NavControllerNavigator] and `WingmanApp` apply them.
+ */
+object FirstLaunch {
+    /**
+     * Onboarding is opened with the start destination popped (Back must not return to an
+     * unconfigured home). Leaving it must pop it too, so Back never returns to a finished wizard.
+     */
+    fun popsOnLeave(current: Destination?): Boolean = current == Destination.Onboarding
 }
 
 /** Arguments handed to a screen. Only Conversation has one today. */
