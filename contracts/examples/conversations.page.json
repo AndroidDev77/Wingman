@@ -1,0 +1,27 @@
+{
+  "items": [
+    {
+      "id": "0192f3a0-0000-7000-8000-0000000000b1",
+      "contact": {
+        "id": "0192f3a0-0000-7000-8000-0000000000c1",
+        "display_name": "Sam"
+      },
+      "connection_id": "0192f3a0-0000-7000-8000-0000000000a2",
+      "platform": "mock",
+      "external_thread_id": "mock-thread-1",
+      "stage": "rapport",
+      "effective_intent": "custom",
+      "automation": {
+        "effective_mode": "assisted",
+        "contact_status": "active",
+        "global_status": "active"
+      },
+      "unread_count": 1,
+      "pending_approval_count": 1,
+      "last_message_preview": "Just got back from Lisbon!",
+      "last_activity_at": "2026-10-31T18:01:00Z",
+      "created_at": "2026-10-29T20:00:00Z"
+    }
+  ],
+  "next_cursor": "eyJrIjoiMjAyNi0xMC0zMVQxODowMTowMFoifQ"
+}

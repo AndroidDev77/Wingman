@@ -1,0 +1,275 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wingman.invalid/contracts/schemas/connector_event.v1.json",
+  "title": "ConnectorEvent",
+  "description": "Versioned envelope for every event a connector reports to the backend (inbound messages, send acknowledgements, failures, delivery receipts, connection changes). Simulated traffic from WING-006's MockConnector uses the explicit `mock.*` types, which are only valid with `platform: mock`, and live `message.*` types are never valid with `platform: mock`, so simulated success can never be mistaken for a real one. Deduplication: a message is identified by (platform, external_message_id) within the user scope (`user_id`); replaying an event with an already-seen key must not create a second message or a second state transition. Exact replays of the same envelope are also recognisable by `event_id`. The `text` field carries private content: it may be persisted but must never be written to application logs. See docs/architecture.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "event_id",
+    "type",
+    "platform",
+    "connection_id",
+    "user_id",
+    "external_message_id",
+    "occurred_at",
+    "payload"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "connector_event.v1"
+    },
+    "event_id": {
+      "description": "Unique per emitted event (UUID). A connector re-sending the same event must reuse the same event_id.",
+      "$ref": "#/$defs/id"
+    },
+    "type": {
+      "$ref": "#/$defs/event_type"
+    },
+    "platform": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{1,31}$"
+    },
+    "connection_id": {
+      "description": "Wingman connection that produced the event.",
+      "$ref": "#/$defs/id"
+    },
+    "user_id": {
+      "description": "User scope. Every event belongs to exactly one Wingman user; consumers must reject events whose connection does not belong to this user.",
+      "$ref": "#/$defs/id"
+    },
+    "external_message_id": {
+      "description": "Platform-assigned message ID. Required (non-null) for received, acknowledged and delivery events; null for send failures with no platform ID and for connection events.",
+      "anyOf": [{ "$ref": "#/$defs/external_id" }, { "type": "null" }]
+    },
+    "external_thread_id": {
+      "description": "Platform conversation/thread ID, when the platform has one.",
+      "anyOf": [{ "$ref": "#/$defs/external_id" }, { "type": "null" }]
+    },
+    "occurred_at": {
+      "description": "When the event happened at the source (UTC, Z).",
+      "$ref": "#/$defs/timestamp"
+    },
+    "observed_at": {
+      "description": "When the connector observed/emitted it (UTC, Z). Optional.",
+      "$ref": "#/$defs/timestamp"
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "pattern": "^mock\\." } } },
+      "then": { "properties": { "platform": { "const": "mock" } } }
+    },
+    {
+      "if": { "properties": { "type": { "pattern": "^message\\." } } },
+      "then": { "properties": { "platform": { "not": { "const": "mock" } } } }
+    },
+    {
+      "if": { "properties": { "type": { "enum": ["message.received", "mock.inbound_message_injected"] } } },
+      "then": {
+        "properties": {
+          "external_message_id": { "$ref": "#/$defs/external_id" },
+          "payload": { "$ref": "#/$defs/inbound_message_payload" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "enum": ["message.send_acknowledged", "mock.outbound_send_acknowledged"] } } },
+      "then": {
+        "properties": {
+          "external_message_id": { "$ref": "#/$defs/external_id" },
+          "payload": { "$ref": "#/$defs/send_acknowledged_payload" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "enum": ["message.send_failed", "mock.outbound_send_failed"] } } },
+      "then": { "properties": { "payload": { "$ref": "#/$defs/send_failed_payload" } } }
+    },
+    {
+      "if": { "properties": { "type": { "enum": ["message.delivery_receipt", "mock.delivery_receipt_simulated"] } } },
+      "then": {
+        "properties": {
+          "external_message_id": { "$ref": "#/$defs/external_id" },
+          "payload": { "$ref": "#/$defs/delivery_receipt_payload" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "connection.status_changed" } } },
+      "then": {
+        "properties": {
+          "external_message_id": { "type": "null" },
+          "payload": { "$ref": "#/$defs/connection_status_payload" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "connection.capabilities_changed" } } },
+      "then": {
+        "properties": {
+          "external_message_id": { "type": "null" },
+          "payload": { "$ref": "#/$defs/capabilities_changed_payload" }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "pattern": "^mock\\." } } },
+      "then": { "properties": { "payload": { "required": ["mock"] } } },
+      "else": { "properties": { "payload": { "not": { "required": ["mock"] } } } }
+    }
+  ],
+  "$defs": {
+    "event_type": {
+      "description": "Live types: `message.received` (inbound message observed), `message.send_acknowledged` (transport accepted our outbound message: drives `sent`), `message.send_failed` (attempt failed: drives `failed`), `message.delivery_receipt` (platform reported delivery: drives `delivered`), `connection.status_changed`, `connection.capabilities_changed`. Mock-transport types (platform `mock` only, payload carries a `mock` block): `mock.inbound_message_injected` (test harness injected an inbound message; ingested like message.received), `mock.outbound_send_acknowledged`, `mock.outbound_send_failed`, `mock.delivery_receipt_simulated` (simulated counterparts of the live send outcomes).",
+      "type": "string",
+      "enum": [
+        "message.received",
+        "message.send_acknowledged",
+        "message.send_failed",
+        "message.delivery_receipt",
+        "connection.status_changed",
+        "connection.capabilities_changed",
+        "mock.inbound_message_injected",
+        "mock.outbound_send_acknowledged",
+        "mock.outbound_send_failed",
+        "mock.delivery_receipt_simulated"
+      ]
+    },
+    "mock_block": {
+      "description": "Simulation metadata. Only on mock.* events.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scenario_id", "sequence"],
+      "properties": {
+        "scenario_id": {
+          "description": "Deterministic test scenario name.",
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "sequence": {
+          "description": "Monotonic step number inside the scenario, for deterministic ordering.",
+          "type": "integer",
+          "minimum": 0
+        },
+        "simulated_latency_ms": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "inbound_message_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sender", "text"],
+      "properties": {
+        "sender": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["external_contact_id"],
+          "properties": {
+            "external_contact_id": { "$ref": "#/$defs/external_id" },
+            "display_name": { "type": ["string", "null"], "maxLength": 200 }
+          }
+        },
+        "text": {
+          "description": "Message body. Private: never log.",
+          "type": "string",
+          "maxLength": 20000
+        },
+        "attachment_count": { "type": "integer", "minimum": 0 },
+        "mock": { "$ref": "#/$defs/mock_block" }
+      }
+    },
+    "send_acknowledged_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outbound_message_id", "idempotency_key"],
+      "properties": {
+        "outbound_message_id": {
+          "description": "Wingman message ID the dispatcher asked the connector to send.",
+          "$ref": "#/$defs/id"
+        },
+        "idempotency_key": {
+          "description": "Dispatcher send key. The connector performs at most one transport send per key.",
+          "$ref": "#/$defs/idempotency_key"
+        },
+        "mock": { "$ref": "#/$defs/mock_block" }
+      }
+    },
+    "send_failed_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outbound_message_id", "idempotency_key", "failure"],
+      "properties": {
+        "outbound_message_id": { "$ref": "#/$defs/id" },
+        "idempotency_key": { "$ref": "#/$defs/idempotency_key" },
+        "failure": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["code", "retryable"],
+          "properties": {
+            "code": {
+              "type": "string",
+              "enum": ["capability_unsupported", "transport_error", "timeout", "rejected_by_platform", "not_connected", "permission_denied"]
+            },
+            "detail": { "type": ["string", "null"], "maxLength": 500 },
+            "retryable": { "type": "boolean" }
+          }
+        },
+        "mock": { "$ref": "#/$defs/mock_block" }
+      }
+    },
+    "delivery_receipt_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["outbound_message_id"],
+      "properties": {
+        "outbound_message_id": { "$ref": "#/$defs/id" },
+        "mock": { "$ref": "#/$defs/mock_block" }
+      }
+    },
+    "connection_status_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "type": "string", "enum": ["connected", "disconnected", "error"] },
+        "detail": { "type": ["string", "null"], "maxLength": 500 }
+      }
+    },
+    "capabilities_changed_payload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capabilities"],
+      "properties": {
+        "capabilities": { "$ref": "connector_capabilities.v1.json" }
+      }
+    },
+    "id": {
+      "description": "Wingman ID: lowercase canonical UUID.",
+      "type": "string",
+      "format": "uuid",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+    },
+    "external_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256
+    },
+    "idempotency_key": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._:-]{8,128}$"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    }
+  }
+}

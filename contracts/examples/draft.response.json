@@ -1,0 +1,23 @@
+{
+  "id": "0192f3a0-0000-7000-8000-0000000000e1",
+  "conversation_id": "0192f3a0-0000-7000-8000-0000000000b1",
+  "decision": "send_candidate",
+  "text": "Welcome back! What was the highlight, the food or the views?",
+  "question_for_user": null,
+  "rationale": "Contact shared a trip; a specific follow-up question builds rapport.",
+  "confidence": 0.81,
+  "requires_approval": true,
+  "approval_reasons": [
+    "assisted_mode"
+  ],
+  "intent_mode": "custom",
+  "grounding": {
+    "memory_ids": [
+      "0192f3a0-0000-7000-8000-000000000101"
+    ],
+    "message_ids": [
+      "0192f3a0-0000-7000-8000-0000000000d1"
+    ]
+  },
+  "created_at": "2026-10-31T18:01:10Z"
+}

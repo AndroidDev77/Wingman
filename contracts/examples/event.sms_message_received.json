@@ -1,0 +1,19 @@
+{
+  "schema_version": "connector_event.v1",
+  "event_id": "0192f3a0-0000-7000-8000-000000000304",
+  "type": "message.received",
+  "platform": "sms",
+  "connection_id": "0192f3a0-0000-7000-8000-0000000000a1",
+  "user_id": "0192f3a0-0000-7000-8000-000000000001",
+  "external_message_id": "sms:content://sms/inbox/1842",
+  "external_thread_id": "sms-thread-42",
+  "occurred_at": "2026-10-31T19:00:00Z",
+  "observed_at": "2026-10-31T19:00:00Z",
+  "payload": {
+    "sender": {
+      "external_contact_id": "sms-contact-7f3a",
+      "display_name": null
+    },
+    "text": "Hey! Free tonight?"
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "items": [
+    {
+      "id": "0192f3a0-0000-7000-8000-000000000205",
+      "type": "send_acknowledged",
+      "actor": "connector",
+      "conversation_id": "0192f3a0-0000-7000-8000-0000000000b1",
+      "contact_id": "0192f3a0-0000-7000-8000-0000000000c1",
+      "message_id": "0192f3a0-0000-7000-8000-0000000000d3",
+      "approval_id": "0192f3a0-0000-7000-8000-0000000000f1",
+      "reason_code": null,
+      "details": {
+        "attempt": 1,
+        "latency_ms": 840
+      },
+      "occurred_at": "2026-10-31T18:03:02Z"
+    },
+    {
+      "id": "0192f3a0-0000-7000-8000-000000000204",
+      "type": "send_attempted",
+      "actor": "dispatcher",
+      "conversation_id": "0192f3a0-0000-7000-8000-0000000000b1",
+      "contact_id": "0192f3a0-0000-7000-8000-0000000000c1",
+      "message_id": "0192f3a0-0000-7000-8000-0000000000d3",
+      "approval_id": "0192f3a0-0000-7000-8000-0000000000f1",
+      "reason_code": null,
+      "details": {
+        "attempt": 1
+      },
+      "occurred_at": "2026-10-31T18:03:01Z"
+    },
+    {
+      "id": "0192f3a0-0000-7000-8000-000000000203",
+      "type": "send_queued",
+      "actor": "dispatcher",
+      "conversation_id": "0192f3a0-0000-7000-8000-0000000000b1",
+      "contact_id": "0192f3a0-0000-7000-8000-0000000000c1",
+      "message_id": "0192f3a0-0000-7000-8000-0000000000d3",
+      "approval_id": "0192f3a0-0000-7000-8000-0000000000f1",
+      "reason_code": null,
+      "details": {},
+      "occurred_at": "2026-10-31T18:03:00Z"
+    },
+    {
+      "id": "0192f3a0-0000-7000-8000-000000000202",
+      "type": "approval_approved",
+      "actor": "user",
+      "conversation_id": "0192f3a0-0000-7000-8000-0000000000b1",
+      "contact_id": "0192f3a0-0000-7000-8000-0000000000c1",
+      "message_id": null,
+      "approval_id": "0192f3a0-0000-7000-8000-0000000000f1",
+      "reason_code": null,
+      "details": {
+        "edited": true
+      },
+      "occurred_at": "2026-10-31T18:03:00Z"
+    },
+    {
+      "id": "0192f3a0-0000-7000-8000-000000000201",
+      "type": "approval_requested",
+      "actor": "agent",
+      "conversation_id": "0192f3a0-0000-7000-8000-0000000000b1",
+      "contact_id": "0192f3a0-0000-7000-8000-0000000000c1",
+      "message_id": null,
+      "approval_id": "0192f3a0-0000-7000-8000-0000000000f1",
+      "reason_code": "assisted_mode",
+      "details": {},
+      "occurred_at": "2026-10-31T18:01:10Z"
+    },
+    {
+      "id": "0192f3a0-0000-7000-8000-000000000200",
+      "type": "message_received",
+      "actor": "connector",
+      "conversation_id": "0192f3a0-0000-7000-8000-0000000000b1",
+      "contact_id": "0192f3a0-0000-7000-8000-0000000000c1",
+      "message_id": "0192f3a0-0000-7000-8000-0000000000d1",
+      "approval_id": null,
+      "reason_code": null,
+      "details": {
+        "platform": "mock"
+      },
+      "occurred_at": "2026-10-31T18:01:00Z"
+    }
+  ],
+  "next_cursor": null
+}

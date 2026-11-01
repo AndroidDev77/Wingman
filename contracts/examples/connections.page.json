@@ -1,0 +1,76 @@
+{
+  "items": [
+    {
+      "id": "0192f3a0-0000-7000-8000-0000000000a1",
+      "platform": "sms",
+      "display_name": "Android SMS",
+      "status": "connected",
+      "capabilities": {
+        "schema_version": "connector_capabilities.v1",
+        "platform": "sms",
+        "connector_version": "0.1.0",
+        "capabilities": {
+          "read": {
+            "status": "UNVERIFIED",
+            "notes": "Pending physical-device test (WING-016)."
+          },
+          "draft": {
+            "status": "UNSUPPORTED"
+          },
+          "send": {
+            "status": "UNVERIFIED",
+            "reports_delivery_receipts": true,
+            "notes": "Requires default-SMS-app role. Not yet device-tested."
+          },
+          "swipe": {
+            "status": "UNSUPPORTED"
+          },
+          "calendar_write": {
+            "status": "UNSUPPORTED"
+          }
+        },
+        "assessed_at": "2026-10-31T18:00:00Z"
+      },
+      "created_at": "2026-10-30T09:00:00Z",
+      "updated_at": "2026-10-31T18:00:00Z"
+    },
+    {
+      "id": "0192f3a0-0000-7000-8000-0000000000a2",
+      "platform": "mock",
+      "display_name": "Simulator",
+      "status": "connected",
+      "capabilities": {
+        "schema_version": "connector_capabilities.v1",
+        "platform": "mock",
+        "connector_version": "0.1.0",
+        "capabilities": {
+          "read": {
+            "status": "VERIFIED",
+            "evidence": "backend/tests/connectors (deterministic simulator)",
+            "verified_at": "2026-10-31T18:00:00Z"
+          },
+          "draft": {
+            "status": "UNSUPPORTED"
+          },
+          "send": {
+            "status": "VERIFIED",
+            "evidence": "backend/tests/connectors (deterministic simulator)",
+            "verified_at": "2026-10-31T18:00:00Z",
+            "reports_delivery_receipts": true,
+            "notes": "Simulated transport. VERIFIED means the simulator contract is tested, not a real platform."
+          },
+          "swipe": {
+            "status": "UNSUPPORTED"
+          },
+          "calendar_write": {
+            "status": "UNSUPPORTED"
+          }
+        },
+        "assessed_at": "2026-10-31T18:00:00Z"
+      },
+      "created_at": "2026-10-30T09:00:00Z",
+      "updated_at": "2026-10-31T18:00:00Z"
+    }
+  ],
+  "next_cursor": null
+}
