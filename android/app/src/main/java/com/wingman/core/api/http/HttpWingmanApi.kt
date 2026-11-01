@@ -17,6 +17,7 @@ import com.wingman.core.model.ApproveRequest
 import com.wingman.core.model.AutomationActionRequest
 import com.wingman.core.model.Connection
 import com.wingman.core.model.ContactAutomationState
+import com.wingman.core.model.ContactPreferenceOverrideUpdate
 import com.wingman.core.model.ContactPreferences
 import com.wingman.core.model.Conversation
 import com.wingman.core.model.ConversationDetail
@@ -81,6 +82,15 @@ class HttpWingmanApi(
         call { service.putPreferences(ifMatch(ifMatchVersion), body) }
     override suspend fun getContactPreferences(contactId: String): ApiResult<ContactPreferences> =
         call { service.getContactPreferences(contactId) }
+    override suspend fun listPreferenceVersions(page: PageRequest): ApiResult<Page<Preferences>> =
+        call { service.listPreferenceVersions(page.cursor, page.limit) }
+    override suspend fun putContactPreferences(
+        contactId: String,
+        body: ContactPreferenceOverrideUpdate,
+        ifMatchVersion: Int?,
+    ): ApiResult<ContactPreferences> = call { service.putContactPreferences(contactId, ifMatch(ifMatchVersion), body) }
+    override suspend fun deleteContactPreferences(contactId: String): ApiResult<Unit> =
+        callNoContent { service.deleteContactPreferences(contactId) }
 
     override suspend fun listConnections(page: PageRequest): ApiResult<Page<Connection>> =
         call { service.listConnections(page.cursor, page.limit) }
@@ -141,8 +151,16 @@ class HttpWingmanApi(
 
     private fun ifMatch(version: Int?): String? = version?.let { "\"$it\"" }
 
-    private suspend fun <T : Any> call(block: suspend () -> Response<T>): ApiResult<T> = try {
-        toResult(block())
+    private suspend fun <T : Any> call(block: suspend () -> Response<T>): ApiResult<T> = guard { toResult(block()) }
+
+    /** For 204 responses: Retrofit gives a null body, which [toResult] would treat as a decoding error. */
+    private suspend fun callNoContent(block: suspend () -> Response<Unit>): ApiResult<Unit> = guard {
+        val response = block()
+        if (response.isSuccessful) ApiResult.Success(Unit) else toResult(response)
+    }
+
+    private suspend fun <T> guard(block: suspend () -> ApiResult<T>): ApiResult<T> = try {
+        block()
     } catch (e: CancellationException) {
         throw e
     } catch (e: IOException) {

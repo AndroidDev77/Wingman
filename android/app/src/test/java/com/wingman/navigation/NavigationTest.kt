@@ -17,11 +17,12 @@ class NavigationTest {
 
     @Test fun allRequiredDestinationsExist() {
         assertEquals(
-            setOf("Dashboard", "Inbox", "Conversation", "Settings", "Approvals", "Discovery"),
+            setOf("Dashboard", "Inbox", "Conversation", "Settings", "Approvals", "Discovery", "Onboarding"),
             Destination.entries.map { it.name }.toSet(),
         )
         assertEquals(Destination.Dashboard, Destination.START)
         assertFalse(Destination.Conversation in Destination.topLevelDestinations)
+        assertFalse(Destination.Onboarding in Destination.topLevelDestinations)
         assertEquals(5, Destination.topLevelDestinations.size)
         assertEquals(Destination.entries.size, Destination.entries.map { it.pattern }.toSet().size)
     }
@@ -41,6 +42,14 @@ class NavigationTest {
         Destination.topLevelDestinations.forEach { assertEquals(it, Destination.fromRoute(it.pattern)) }
         assertNull(Destination.fromRoute("nope"))
         assertNull(Destination.fromRoute(null))
+    }
+
+    @Test fun onboardingRouteResolvesAndIsLeftWithoutReturn() {
+        assertEquals("onboarding", Routes.onboarding())
+        assertEquals(Destination.Onboarding, Destination.fromRoute(Routes.onboarding()))
+        assertTrue(FirstLaunch.popsOnLeave(Destination.Onboarding))
+        Destination.entries.filter { it != Destination.Onboarding }.forEach { assertFalse(FirstLaunch.popsOnLeave(it)) }
+        assertFalse(FirstLaunch.popsOnLeave(null))
     }
 
     @Test fun registryResolvesAndRejectsDuplicates() {

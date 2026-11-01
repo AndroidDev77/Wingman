@@ -14,8 +14,12 @@ import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.tooling.preview.Preview
@@ -29,7 +33,9 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.wingman.core.di.AppContainer
 import com.wingman.core.ui.compose.LocalAppContainer
+import com.wingman.features.onboarding.OnboardingGate
 import com.wingman.ui.theme.WingmanTheme
+import kotlinx.coroutines.flow.first
 
 /** App root: theme + DI + scaffold with bottom navigation + NavHost. */
 @Composable
@@ -58,6 +64,24 @@ fun WingmanApp(
                 },
             ) { padding ->
                 WingmanNavHost(navController, navigator, screens, Modifier.padding(padding))
+            }
+            // First-launch rule (WING-013): one GET /v1/preferences. Only a confirmed never-saved user
+            // (server version 0) is sent to onboarding; a failed or pending check returns false, so a
+            // network error never traps someone who already onboarded. Saveable so a configuration
+            // change doesn't re-run it.
+            var onboardingChecked by rememberSaveable { mutableStateOf(false) }
+            LaunchedEffect(Unit) {
+                if (onboardingChecked) return@LaunchedEffect
+                val needsOnboarding = OnboardingGate.check(container.api)
+                onboardingChecked = true // only once the check completed; a canceled check re-runs
+                if (needsOnboarding) {
+                    // The NavHost is in the Scaffold's subcomposition: wait until its graph is set.
+                    navController.currentBackStackEntryFlow.first()
+                    navController.navigate(Routes.onboarding()) {
+                        popUpTo(Destination.START.pattern) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                }
             }
         }
     }
@@ -94,10 +118,16 @@ fun WingmanNavHost(
 class NavControllerNavigator(private val nav: NavHostController) : Navigator {
     override fun navigateTo(destination: Destination) {
         if (destination == Destination.Conversation) return // needs an ID: use openConversation
+        val leaving = Destination.fromRoute(nav.currentDestination?.route)
         nav.navigate(destination.pattern) {
-            popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+            if (FirstLaunch.popsOnLeave(leaving)) {
+                // The start destination was popped when onboarding opened; drop onboarding too.
+                popUpTo(Destination.Onboarding.pattern) { inclusive = true }
+            } else {
+                popUpTo(nav.graph.findStartDestination().id) { saveState = true }
+                restoreState = true
+            }
             launchSingleTop = true
-            restoreState = true
         }
     }
 
@@ -118,6 +148,7 @@ private fun Destination.icon(): ImageVector = when (this) {
     Destination.Discovery -> Icons.Filled.Favorite
     Destination.Settings -> Icons.Filled.Settings
     Destination.Conversation -> Icons.Filled.Email
+    Destination.Onboarding -> Icons.Filled.Home
 }
 
 @Preview(name = "App shell (mock API)", showSystemUi = true)

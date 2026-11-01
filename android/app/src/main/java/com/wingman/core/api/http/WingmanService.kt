@@ -7,6 +7,7 @@ import com.wingman.core.model.ApproveRequest
 import com.wingman.core.model.AutomationActionRequest
 import com.wingman.core.model.Connection
 import com.wingman.core.model.ContactAutomationState
+import com.wingman.core.model.ContactPreferenceOverrideUpdate
 import com.wingman.core.model.ContactPreferences
 import com.wingman.core.model.Conversation
 import com.wingman.core.model.ConversationDetail
@@ -23,6 +24,7 @@ import com.wingman.core.model.SendMessageRequest
 import com.wingman.core.model.User
 import retrofit2.Response
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.POST
@@ -49,6 +51,22 @@ internal interface WingmanService {
 
     @GET("v1/contacts/{contact_id}/preferences")
     suspend fun getContactPreferences(@Path("contact_id") contactId: String): Response<ContactPreferences>
+
+    @GET("v1/preferences/versions")
+    suspend fun listPreferenceVersions(
+        @Query("cursor") cursor: String?,
+        @Query("limit") limit: Int?,
+    ): Response<Page<Preferences>>
+
+    @PUT("v1/contacts/{contact_id}/preferences")
+    suspend fun putContactPreferences(
+        @Path("contact_id") contactId: String,
+        @Header("If-Match") ifMatch: String?,
+        @Body body: ContactPreferenceOverrideUpdate,
+    ): Response<ContactPreferences>
+
+    @DELETE("v1/contacts/{contact_id}/preferences")
+    suspend fun deleteContactPreferences(@Path("contact_id") contactId: String): Response<Unit>
 
     @GET("v1/connections")
     suspend fun listConnections(

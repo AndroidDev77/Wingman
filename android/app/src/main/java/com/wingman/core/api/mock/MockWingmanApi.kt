@@ -21,6 +21,7 @@ import com.wingman.core.model.Connection
 import com.wingman.core.model.ContactAutomationState
 import com.wingman.core.model.ContactAutomationStatus
 import com.wingman.core.model.ContactPreferenceOverride
+import com.wingman.core.model.ContactPreferenceOverrideUpdate
 import com.wingman.core.model.ContactPreferences
 import com.wingman.core.model.Conversation
 import com.wingman.core.model.ConversationDetail
@@ -33,6 +34,8 @@ import com.wingman.core.model.ErrorCode
 import com.wingman.core.model.GlobalAutomationState
 import com.wingman.core.model.GlobalAutomationStatus
 import com.wingman.core.model.HealthResponse
+import com.wingman.core.model.Intent
+import com.wingman.core.model.IntentMode
 import com.wingman.core.model.Message
 import com.wingman.core.model.MessageDirection
 import com.wingman.core.model.MessageOrigin
@@ -42,6 +45,7 @@ import com.wingman.core.model.PreferencesUpdate
 import com.wingman.core.model.Problem
 import com.wingman.core.model.RejectRequest
 import com.wingman.core.model.SendMessageRequest
+import com.wingman.core.model.StyleProfile
 import com.wingman.core.model.User
 import com.wingman.core.model.Verification
 import kotlinx.coroutines.delay
@@ -61,7 +65,11 @@ import java.time.Instant
  *  - problem errors: unknown IDs are `404 not_found`, deciding a non-pending approval is
  *    `409 approval_not_pending`, sending on an UNSUPPORTED connection is `422 capability_unsupported`;
  *  - delivery truth: sends and approvals return `queued` and are never advanced to `sent`;
- *  - takeover cancels the contact's pending approvals; pause/resume update state.
+ *  - takeover cancels the contact's pending approvals; pause/resume update state;
+ *  - preferences: `If-Match` mismatch is `412 precondition_failed`; per-contact overrides have their
+ *    own version sequence, never touch user-wide preferences, and `effective` follows the
+ *    backend's `merge_effective` (override field when non-null > user-wide); `custom` intent
+ *    without a description is `422 validation_error`.
  *
  * Test hooks: [failNextWith] makes the next call fail, [failAllWith] makes every call fail,
  * [latencyMs] adds an artificial delay. [calls] records the operations invoked.
@@ -75,6 +83,8 @@ class MockWingmanApi(
     private var idCounter = 0
 
     private var preferences: Preferences = MockFixtures.defaultPreferences
+    private val preferenceHistory = mutableListOf<Preferences>()
+    private val contactOverrides = mutableMapOf<String, ContactPreferenceOverride>()
     private val connections = MockFixtures.connections.toMutableList()
     private val conversations = MockFixtures.conversations.toMutableList()
     private val messages = MockFixtures.messages.mapValues { it.value.toMutableList() }.toMutableMap()
@@ -106,6 +116,7 @@ class MockWingmanApi(
             if (ifMatchVersion != null && ifMatchVersion != preferences.version) {
                 return@op problem(412, ErrorCode.PRECONDITION_FAILED, "Preferences changed since version $ifMatchVersion")
             }
+            invalidIntent(body.intent)?.let { return@op it }
             preferences = Preferences(
                 version = preferences.version + 1,
                 intent = body.intent,
@@ -114,14 +125,52 @@ class MockWingmanApi(
                 automation = body.automation,
                 updatedAt = clock(),
             )
+            preferenceHistory += preferences
             audit(AgentActionType.PREFERENCES_UPDATED, Actor.USER)
             ok(preferences)
         }
 
+    override suspend fun listPreferenceVersions(page: PageRequest): ApiResult<Page<Preferences>> =
+        op("listPreferenceVersions") { paginate(preferenceHistory.reversed(), page) }
+
     override suspend fun getContactPreferences(contactId: String): ApiResult<ContactPreferences> =
         op("getContactPreferences") {
-            if (conversations.none { it.contact.id == contactId }) return@op notFound()
-            ok(ContactPreferences(contactId, ContactPreferenceOverride(version = 0), preferences))
+            if (!isKnownContact(contactId)) return@op notFound()
+            ok(contactPreferences(contactId))
+        }
+
+    override suspend fun putContactPreferences(
+        contactId: String,
+        body: ContactPreferenceOverrideUpdate,
+        ifMatchVersion: Int?,
+    ): ApiResult<ContactPreferences> = op("putContactPreferences") {
+        if (!isKnownContact(contactId)) return@op notFound()
+        val current = contactOverrides[contactId] ?: ContactPreferenceOverride(version = 0)
+        if (ifMatchVersion != null && ifMatchVersion != current.version) {
+            return@op problem(412, ErrorCode.PRECONDITION_FAILED, "Override changed since version $ifMatchVersion")
+        }
+        body.intent?.let { intent -> invalidIntent(intent)?.let { return@op it } }
+        contactOverrides[contactId] = ContactPreferenceOverride(
+            version = current.version + 1,
+            intent = body.intent,
+            style = body.style,
+            automationMode = body.automationMode,
+            updatedAt = clock(),
+        )
+        audit(AgentActionType.PREFERENCES_UPDATED, Actor.USER, contactId = contactId)
+        ok(contactPreferences(contactId))
+    }
+
+    override suspend fun deleteContactPreferences(contactId: String): ApiResult<Unit> =
+        op("deleteContactPreferences") {
+            if (!isKnownContact(contactId)) return@op notFound()
+            val current = contactOverrides[contactId]
+            // Like the backend: clearing appends an all-null version, and is a no-op when already empty.
+            if (current != null && !current.isEmpty()) {
+                contactOverrides[contactId] = ContactPreferenceOverride(version = current.version + 1, updatedAt = clock())
+                audit(AgentActionType.PREFERENCES_UPDATED, Actor.USER, contactId = contactId)
+            }
+            ok(Unit)
         }
 
     override suspend fun listConnections(page: PageRequest): ApiResult<Page<Connection>> =
@@ -318,6 +367,23 @@ class MockWingmanApi(
         }
     }
 
+    private fun isKnownContact(contactId: String): Boolean = conversations.any { it.contact.id == contactId }
+
+    private fun contactPreferences(contactId: String): ContactPreferences {
+        val override = contactOverrides[contactId] ?: ContactPreferenceOverride(version = 0)
+        return ContactPreferences(contactId, override, mergeEffective(preferences, override))
+    }
+
+    private fun invalidIntent(intent: Intent): ApiResult<Nothing>? = when {
+        intent.mode == IntentMode.CUSTOM && intent.customDescription.isNullOrEmpty() ->
+            problem(422, ErrorCode.VALIDATION_ERROR, "custom_description is required when mode is 'custom'")
+        intent.mode != IntentMode.CUSTOM && intent.customDescription != null ->
+            problem(422, ErrorCode.VALIDATION_ERROR, "custom_description must be null unless mode is 'custom'")
+        (intent.customDescription?.length ?: 0) > 500 ->
+            problem(422, ErrorCode.VALIDATION_ERROR, "custom_description must be at most 500 characters")
+        else -> null
+    }
+
     private fun nextId(): String = "0192f3a0-0000-7000-9000-" + (++idCounter).toString().padStart(12, '0')
 
     private fun <T> ok(value: T): ApiResult<T> = ApiResult.Success(value)
@@ -420,6 +486,34 @@ class MockWingmanApi(
 
     companion object {
         private const val CURSOR_PREFIX = "mock:"
+
+        private fun ContactPreferenceOverride.isEmpty() = intent == null && style == null && automationMode == null
+
+        /**
+         * Mirror of backend `merge_effective` (WING-007): intent replaced as a whole, style merged per
+         * attribute (samples replaced only when the override has some), `automation_mode` replaces
+         * only `automation.mode`. Version and timestamp stay the user-wide ones.
+         */
+        fun mergeEffective(userWide: Preferences, override: ContactPreferenceOverride?): Preferences {
+            if (override == null || override.isEmpty()) return userWide
+            val base = userWide.style
+            val style = override.style?.let { o ->
+                StyleProfile(
+                    punctuation = o.punctuation ?: base.punctuation,
+                    emojiFrequency = o.emojiFrequency ?: base.emojiFrequency,
+                    brevity = o.brevity ?: base.brevity,
+                    humor = o.humor ?: base.humor,
+                    tone = o.tone ?: base.tone,
+                    responsePace = o.responsePace ?: base.responsePace,
+                    styleSamples = o.styleSamples?.takeIf { it.isNotEmpty() } ?: base.styleSamples,
+                )
+            } ?: base
+            return userWide.copy(
+                intent = override.intent ?: userWide.intent,
+                style = style,
+                automation = override.automationMode?.let { userWide.automation.copy(mode = it) } ?: userWide.automation,
+            )
+        }
 
         fun networkError(): ApiError = ApiError.Network(IOException("Simulated network failure (MockWingmanApi)"))
 
