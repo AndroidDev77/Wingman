@@ -11,7 +11,10 @@
 #   infra/azure/deploy.sh image     # build + push the image in ACR (no local Docker needed)
 #   infra/azure/deploy.sh migrate   # run `alembic upgrade head` as a one-off Container Apps job
 #   infra/azure/deploy.sh app       # create/update the API container app (probes on /health)
+#   infra/azure/deploy.sh worker    # create/update the background worker app (no ingress)
 #   infra/azure/deploy.sh all       # all of the above, in order
+#
+#   The `worker` step (I-015) is UNVERIFIED too: it has never run against Azure.
 #
 # Secrets: the Postgres admin password is generated here and written straight to Key
 # Vault together with the full WINGMAN_DATABASE_URL; neither is printed. The container
@@ -34,6 +37,9 @@ require AZ_SUBSCRIPTION AZ_LOCATION AZ_RESOURCE_GROUP AZ_ACR_NAME AZ_KEYVAULT_NA
   AZ_PG_SERVER AZ_PG_ADMIN_USER AZ_PG_DATABASE AZ_PG_SKU AZ_PG_TIER AZ_CA_ENV \
   AZ_APP_NAME AZ_MIGRATE_JOB AZ_IDENTITY_NAME WINGMAN_ENV WINGMAN_LLM_PROVIDER \
   WINGMAN_LOG_LEVEL
+
+AZ_WORKER_NAME="${AZ_WORKER_NAME:-wingman-worker}"
+WORKER_HEALTH_PORT="${WINGMAN_WORKER_HEALTH_PORT:-8081}"
 
 IMAGE_TAG="${IMAGE_TAG:-$(git -C "$repo_root" rev-parse --short=12 HEAD)}"
 IMAGE="${AZ_ACR_NAME}.azurecr.io/wingman-backend:${IMAGE_TAG}"
@@ -294,10 +300,73 @@ EOF
   echo "smoke test: curl -fsS https://${fqdn}/health"
 }
 
+# ----------------------------------------------------------------------------- worker
+# I-015: `python -m app.worker` runs dispatch_due (reply delays, retry backoff), outbox
+# lease expiry and approval expiry. No ingress: it serves no traffic. One replica is the
+# intended shape; more are safe (per-job Postgres advisory locks plus the services' row
+# locks) but only add a standby. Probes use the worker's own tiny HTTP liveness endpoint
+# (WINGMAN_WORKER_HEALTH_PORT), which answers 503 when a job has made no progress for
+# WINGMAN_WORKER_STALE_AFTER_S. SIGTERM finishes the current tick; the grace period
+# covers the slowest tick (one dispatch batch).
+step_worker() {
+  local id yaml="$workdir/worker.yaml"
+  id=$(identity_id)
+  cat >"$yaml" <<EOF
+location: ${AZ_LOCATION}
+identity:
+  type: UserAssigned
+  userAssignedIdentities:
+    ${id}: {}
+properties:
+  environmentId: $(env_id)
+  configuration:
+    activeRevisionsMode: Single
+    registries:
+    - server: ${AZ_ACR_NAME}.azurecr.io
+      identity: ${id}
+    secrets:
+$(secrets_yaml)
+  template:
+    terminationGracePeriodSeconds: 60
+    scale:
+      minReplicas: 1
+      maxReplicas: 1
+    containers:
+    - name: worker
+      image: ${IMAGE}
+      command: ["python", "-m", "app.worker"]
+      resources:
+        cpu: 0.25
+        memory: 0.5Gi
+      env:
+$(env_yaml)
+        - name: WINGMAN_WORKER_HEALTH_PORT
+          value: "${WORKER_HEALTH_PORT}"
+      probes:
+      - type: Startup
+        tcpSocket: { port: ${WORKER_HEALTH_PORT} }
+        initialDelaySeconds: 2
+        periodSeconds: 3
+        failureThreshold: 20
+      - type: Liveness
+        httpGet: { path: /health, port: ${WORKER_HEALTH_PORT} }
+        periodSeconds: 30
+        timeoutSeconds: 5
+        failureThreshold: 3
+EOF
+  log "worker app $AZ_WORKER_NAME -> $IMAGE (no ingress, 1 replica)"
+  if az containerapp show "${RG[@]}" --name "$AZ_WORKER_NAME" -o none 2>/dev/null; then
+    az containerapp update "${RG[@]}" --name "$AZ_WORKER_NAME" --yaml "$yaml" -o none
+  else
+    az containerapp create "${RG[@]}" --name "$AZ_WORKER_NAME" --yaml "$yaml" -o none
+  fi
+  echo "logs: az containerapp logs show -g $AZ_RESOURCE_GROUP -n $AZ_WORKER_NAME --follow"
+}
+
 main() {
   case "${1:-}" in
-    infra | image | migrate | app | all) ;;
-    *) sed -n '2,20p' "$0"; exit 2 ;;
+    infra | image | migrate | app | worker | all) ;;
+    *) sed -n '2,24p' "$0"; exit 2 ;;
   esac
   az account set --subscription "$AZ_SUBSCRIPTION"
   case "$1" in
@@ -305,7 +374,8 @@ main() {
     image) step_image ;;
     migrate) step_migrate ;;
     app) step_app ;;
-    all) step_infra; step_image; step_migrate; step_app ;;
+    worker) step_worker ;;
+    all) step_infra; step_image; step_migrate; step_app; step_worker ;;
   esac
 }
 
