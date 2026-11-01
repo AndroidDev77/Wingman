@@ -114,11 +114,58 @@ def test_drafts_route_is_mounted_and_requires_a_token(
         assert resp.json()["code"] == "unauthenticated"
 
 
-def test_memory_routes_are_not_mounted(monkeypatch: pytest.MonkeyPatch) -> None:
-    # WING-008's router stays unmounted until the contract has memory routes.
-    with _client(monkeypatch, "dev") as client:
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/v1/contacts/00000000-0000-0000-0000-000000000001/memories"),
+        ("PUT", "/v1/memories/00000000-0000-0000-0000-000000000001"),
+        ("DELETE", "/v1/memories/00000000-0000-0000-0000-000000000001"),
+    ],
+)
+@pytest.mark.parametrize("env", ["dev", "prod"])
+def test_memory_routes_are_mounted_and_require_a_token(
+    monkeypatch: pytest.MonkeyPatch, env: str, method: str, path: str
+) -> None:
+    # WING-008 router, mounted once contract v1.1.0 added the memory routes (D-012).
+    with _client(monkeypatch, env) as client:
+        kwargs = {"json": {"content": "x"}} if method == "PUT" else {}
+        resp = client.request(method, path, **kwargs)
+        assert resp.status_code == 401, resp.text
+        assert resp.headers["content-type"].startswith("application/problem+json")
+        assert resp.headers["WWW-Authenticate"] == "Bearer"
+        assert resp.json()["code"] == "unauthenticated"
         paths = client.get("/openapi.json").json()["paths"]
-        assert not any("memor" in p for p in paths)
+        assert "/v1/contacts/{contact_id}/memories" in paths
+        assert "/v1/memories/{memory_id}" in paths
+
+
+def test_memory_service_is_built_once_per_app(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app import main
+
+    built: list[object] = []
+    real = main.build_gateway
+
+    def counting_build_gateway() -> object:
+        gw = real()
+        built.append(gw)
+        return gw
+
+    monkeypatch.setattr(main, "build_gateway", counting_build_gateway)
+    monkeypatch.setenv("WINGMAN_ENV", "dev")
+    get_settings.cache_clear()
+    app = create_app()
+
+    class _Req:
+        def __init__(self) -> None:
+            self.app = app
+
+    import asyncio
+
+    first = asyncio.run(main.get_memory_service(_Req()))  # type: ignore[arg-type]
+    second = asyncio.run(main.get_memory_service(_Req()))  # type: ignore[arg-type]
+    assert first is second
+    assert len(built) == 1
+    assert first.gateway is built[0]
 
 
 def test_unknown_route_is_problem_json(monkeypatch: pytest.MonkeyPatch) -> None:

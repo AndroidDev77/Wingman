@@ -11,6 +11,7 @@ Public API for WING-009/WING-010::
     ctx.render(); ctx.memory_ids; ctx.source_message_ids   # -> Draft.grounding
     await service.correct_fact(session, scope, memory_id, content="...")
     await service.delete_fact(session, scope, memory_id)
+    page = await service.list_page(session, scope, contact_id, cursor=None, limit=50)
 """
 
 from app.ai.memory.retrieval import (
