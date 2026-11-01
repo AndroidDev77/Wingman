@@ -96,6 +96,24 @@ def test_preferences_routes_are_mounted_and_require_a_token(
         assert resp.json()["code"] == "unauthenticated"
 
 
+@pytest.mark.parametrize("env", ["dev", "prod"])
+def test_drafts_route_is_mounted_and_requires_a_token(
+    monkeypatch: pytest.MonkeyPatch, env: str
+) -> None:
+    path = "/v1/conversations/00000000-0000-0000-0000-000000000001/drafts"
+    with _client(monkeypatch, env) as client:
+        assert (
+            "post"
+            in client.get("/openapi.json").json()["paths"][
+                path.replace("00000000-0000-0000-0000-000000000001", "{conversation_id}")
+            ]
+        )
+        resp = client.post(path, json={}, headers={"Idempotency-Key": "wiring-key-0001"})
+        assert resp.status_code == 401, resp.text
+        assert resp.headers["content-type"].startswith("application/problem+json")
+        assert resp.json()["code"] == "unauthenticated"
+
+
 @pytest.mark.parametrize(
     ("method", "path"),
     [

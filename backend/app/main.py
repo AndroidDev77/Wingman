@@ -17,6 +17,7 @@ from app.ai.llm_gateway import build_gateway
 from app.ai.memory import MemoryService
 from app.api.auth import create_auth_router
 from app.api.demo_connector import create_demo_connector_router
+from app.api.drafts import router as drafts_router
 from app.api.errors import register_error_handlers
 from app.api.memories import create_memories_router
 from app.api.preferences import router as preferences_router
@@ -70,6 +71,8 @@ def create_app() -> FastAPI:
     app.include_router(preferences_router)
     # WING-008 (contract v1.1.0, D-012): contact memories, correction, deletion.
     app.include_router(create_memories_router(get_memory_service))
+    # WING-010: POST /v1/conversations/{id}/drafts (suggestions only; never sends).
+    app.include_router(drafts_router)
 
     # WING-006 simulator: unauthenticated, in-memory, single demo user. Never in prod.
     if settings.env != "prod":
