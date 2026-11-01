@@ -120,3 +120,19 @@ def test_dev_server_runs_api_and_worker_in_one_process(committed_db_url: str) ->
     assert "worker tick job=dispatch_due ok=True" in out, out
     assert out.index("worker stopped") < out.index("Application shutdown complete"), out
     assert "Traceback" not in out
+
+
+def test_dev_server_refuses_to_start_in_prod() -> None:
+    """The single-process dev mode (I-016) must never run with ``WINGMAN_ENV=prod``."""
+    env = {**os.environ, "WINGMAN_ENV": "prod"}
+    proc = subprocess.run(  # noqa: S603
+        [sys.executable, "-c", "import app.worker.dev_server"],
+        cwd=BACKEND,
+        env=env,
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+    assert proc.returncode != 0
+    assert "for development only" in proc.stderr
