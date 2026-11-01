@@ -488,6 +488,10 @@ class ConversationMemory(UserOwnedMixin, Base):
         CheckConstraint(
             "kind <> 'fact' OR cardinality(source_message_ids) >= 1", name="fact_is_attributed"
         ),
+        # WING-008 provenance (D-010: folded into 0001).
+        CheckConstraint("origin IN ('extracted', 'user_correction')", name="origin_values"),
+        CheckConstraint("basis IN ('stated', 'inferred')", name="basis_values"),
+        Index(None, "user_id", "contact_id", "fact_key"),
     )
 
     contact_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
@@ -502,6 +506,15 @@ class ConversationMemory(UserOwnedMixin, Base):
     superseded_by_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
     deleted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # WING-008 provenance (D-010: in 0001): used for supersession and labeling.
+    origin: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="extracted", server_default=sql("'extracted'")
+    )
+    basis: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="stated", server_default=sql("'stated'")
+    )
+    fact_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    stated_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
 # --------------------------------------------------------------------------- audit

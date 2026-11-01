@@ -1,4 +1,7 @@
-"""The pre-WING-004 auth stub must fail closed."""
+"""With no identity provider configured, the WING-004 auth dependency fails closed.
+
+Also documents ``app.dependency_overrides`` as the testing seam (D-007).
+"""
 
 import uuid
 
