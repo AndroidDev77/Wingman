@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 import pytest
@@ -28,6 +28,7 @@ from app.connectors import (
     SendFailureCode,
     SendRequest,
     SendStatus,
+    SimulatedClock,
     SwipeDecision,
     SwipeRequest,
     UnsupportedCapability,
@@ -197,7 +198,9 @@ async def test_injected_inbound_message_can_be_retrieved(mock: MockConnector) ->
 
 async def test_injection_is_deterministic() -> None:
     async def run() -> list[str]:
-        m = MockConnector(user_id=USER_ID, connection_id=CONNECTION_ID, scenario_id="det")
+        m = MockConnector(
+            user_id=USER_ID, connection_id=CONNECTION_ID, scenario_id="det", clock=SimulatedClock()
+        )
         await m.inject_inbound(external_thread_id="t", sender_id="s", text="a")
         await m.inject_inbound(external_thread_id="t", sender_id="s", text="b")
         await m.send_message(_send(thread="t"))
@@ -436,3 +439,34 @@ async def test_message_pagination(mock: MockConnector) -> None:
         await mock.read_messages("other", cursor=page1.next_cursor)
     with pytest.raises(InvalidCursor):
         await mock.read_messages("t", cursor="!!garbage!!")
+
+
+# --------------------------------------------------------------------------- clock (I-021)
+
+
+async def test_default_clock_is_wall_clock_utc() -> None:
+    """No fixed simulated date: events (and so ``sent_at``/``delivered_at``) are stamped
+    with the current UTC time."""
+    m = MockConnector(user_id=USER_ID, connection_id=CONNECTION_ID, auto_delivery_receipts=True)
+    before = datetime.now(UTC)
+    await _with_thread(m)
+    result = await m.send_message(_send())
+    after = datetime.now(UTC)
+    assert result.acknowledged
+    stamps = [e.occurred_at for e in m.events] + [e.observed_at for e in m.events]
+    for at in stamps:
+        assert at.tzinfo is not None and at.utcoffset() == timedelta(0)
+        assert before <= at <= after
+    assert [e.type for e in m.events][-2:] == [
+        ConnectorEventType.MOCK_OUTBOUND_SEND_ACKNOWLEDGED,
+        ConnectorEventType.MOCK_DELIVERY_RECEIPT_SIMULATED,
+    ]
+
+
+async def test_injected_clock_is_used_for_every_event() -> None:
+    fixed = datetime(2030, 5, 6, 7, 8, 9, tzinfo=UTC)
+    m = MockConnector(user_id=USER_ID, connection_id=CONNECTION_ID, clock=lambda: fixed)
+    await _with_thread(m)
+    await m.send_message(_send())
+    assert {e.occurred_at for e in m.events} == {fixed}
+    assert {e.observed_at for e in m.events} == {fixed}

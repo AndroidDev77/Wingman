@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.enums import DeliveryState, MessageDirection, OutboxInstructionState
 from app.db.models import Message, OutboxInstruction
 from tests.automation.conftest import (
+    DEVICE_INSTALL,
     World,
     assert_contract,
     headers,
@@ -20,7 +21,7 @@ from tests.automation.conftest import (
     set_mode,
 )
 
-DEVICE = "00000000-0000-4000-8000-0000000000aa"
+DEVICE = str(DEVICE_INSTALL)  # the install the test connections are paired with
 OTHER_DEVICE = "00000000-0000-4000-8000-0000000000bb"
 
 
@@ -201,7 +202,13 @@ async def test_send_outcome_must_match_a_leased_instruction(
     )
     assert body["errors"][0]["pointer"] == "/payload/outbound_message_id"
     # Leased on another connection of the same user: still 422 here.
-    other_conn = await make_world(session, platform="sms", device_side=True, scope=world.scope)
+    other_conn = await make_world(
+        session,
+        platform="sms",
+        device_side=True,
+        scope=world.scope,
+        device_install=uuid.UUID(OTHER_DEVICE),
+    )
     c = (await claim(client, world)).json()["instructions"]
     assert len(c) == 1
     raw = other_conn.outcome("ack", message_id=queued.id, key=key)
@@ -283,8 +290,9 @@ async def test_claim_replay_and_own_leases(session: AsyncSession, make_client) -
         again.json()["instructions"][0]["lease_expires_at"]
         == first.json()["instructions"][0]["lease_expires_at"]
     )
-    # Another install gets nothing: leased at most once.
-    assert (await claim(client, world, device=OTHER_DEVICE)).json()["instructions"] == []
+    # Another install may not claim at all (I-018): 422, and it recovers nothing.
+    foreign = problem(await claim(client, world, device=OTHER_DEVICE), 422, "validation_error")
+    assert foreign["errors"][0]["pointer"] == "/device_install_id"
     # Same key, different body: mismatch.
     resp = await client.post(
         f"/v1/connections/{world.connection_id}/outbox/claim",
@@ -317,7 +325,7 @@ async def test_lease_expiry_is_expired_never_sent_never_retried(
     assert msg is not None and msg.delivery_state is DeliveryState.SENDING and msg.sent_at is None
     # Never re-leased and never retried automatically.
     assert (await claim(client, world)).json()["instructions"] == []
-    assert (await claim(client, world, device=OTHER_DEVICE)).json()["instructions"] == []
+    problem(await claim(client, world, device=OTHER_DEVICE), 422, "validation_error")
     page = await client.get(
         f"/v1/connections/{world.connection_id}/outbox",
         params={"state": "expired"},

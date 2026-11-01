@@ -67,6 +67,8 @@ from tests.db.conftest import (  # noqa: F401
 from tests.db.conftest import session as session  # noqa: F401
 
 NOW = datetime(2026, 11, 2, 15, 0, tzinfo=UTC)  # a Monday, 15:00 UTC
+# The app install a device-side test connection is paired with (I-018: only it may claim).
+DEVICE_INSTALL = uuid.UUID("00000000-0000-4000-8000-0000000000aa")
 OPENAPI = Path(__file__).resolve().parents[3] / "contracts" / "openapi.yaml"
 EVENT_SCHEMA = (
     Path(__file__).resolve().parents[3] / "contracts" / "schemas" / "connector_event.v1.json"
@@ -383,7 +385,10 @@ async def make_world(
     llm: ScriptedLLM | None = None,
     clock: Clock | None = None,
     retry: SendRetry | None = None,
+    device_install: uuid.UUID | None = DEVICE_INSTALL,
 ) -> World:
+    """``device_side`` connections are paired with ``device_install`` (I-018), as
+    ``createConnection`` would; pass ``None`` for a never-paired one."""
     scope = scope or await make_user(db)
     clock = clock or Clock()
     llm = llm or ScriptedLLM()
@@ -392,8 +397,13 @@ async def make_world(
         if platform == "mock"
         else capabilities_doc(platform, send=send)
     )
+    bound = device_install if device_side else None
     conn = await ConnectionRepository(db, scope).create(
-        platform=platform, display_name=f"{platform} test", capabilities=caps
+        platform=platform,
+        display_name=f"{platform} test",
+        capabilities=caps,
+        device_install_id=bound,
+        paired_at=clock.now if bound is not None else None,
     )
     registry = ConnectorRegistry(auto_mock=False)
     connector: MockConnector | None = None

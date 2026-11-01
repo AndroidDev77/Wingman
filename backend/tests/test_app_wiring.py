@@ -5,6 +5,7 @@ represents included routers differently across versions.
 """
 
 from collections.abc import Iterator
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -294,3 +295,59 @@ def test_connection_operation_ids_match_the_contract(monkeypatch: pytest.MonkeyP
                 assert served[path][method]["operationId"] == op["operationId"], (path, method)
                 found.add(op["operationId"])
     assert found == ops
+
+
+_I021_ROUTES = [
+    "/v1/conversations",
+    "/v1/conversations/00000000-0000-0000-0000-000000000001",
+    "/v1/conversations/00000000-0000-0000-0000-000000000001/messages",
+]
+
+
+@pytest.mark.parametrize("path", _I021_ROUTES)
+@pytest.mark.parametrize("env", ["dev", "prod"])
+def test_conversation_read_routes_are_mounted_and_require_a_token(
+    monkeypatch: pytest.MonkeyPatch, env: str, path: str
+) -> None:
+    # I-021: listConversations, getConversation, listMessages (GET; 405 before).
+    with _client(monkeypatch, env) as client:
+        resp = client.get(path)
+        assert resp.status_code == 401, resp.text
+        assert resp.headers["content-type"].startswith("application/problem+json")
+        assert resp.json()["code"] == "unauthenticated"
+
+
+# Routes served outside the contract on purpose: the WING-006 dev-only simulator (never
+# mounted in prod, see test_demo_connector_absent_in_prod). Nothing else may be extra.
+DEV_ONLY_PATH_PREFIXES = ("/dev/connectors/mock",)
+
+
+def _operations(paths: dict[str, Any]) -> dict[tuple[str, str], str]:
+    methods = {"get", "put", "post", "delete", "patch"}
+    return {
+        (path, method): op.get("operationId")
+        for path, item in paths.items()
+        for method, op in item.items()
+        if method in methods and isinstance(op, dict)
+    }
+
+
+@pytest.mark.parametrize("env", ["dev", "prod"])
+def test_every_contract_operation_is_mounted_with_its_operation_id(
+    monkeypatch: pytest.MonkeyPatch, env: str
+) -> None:
+    """The set of served (path, method, operationId) equals the contract's, apart from
+    the explicitly listed dev-only routes."""
+    import yaml
+
+    from tests.automation.conftest import OPENAPI
+
+    contract = _operations(yaml.safe_load(OPENAPI.read_text())["paths"])
+    with _client(monkeypatch, env) as client:
+        served_all = _operations(client.get("/openapi.json").json()["paths"])
+    served = {k: v for k, v in served_all.items() if not k[0].startswith(DEV_ONLY_PATH_PREFIXES)}
+    assert len(contract) == 35
+    assert served == contract
+    assert set(served.values()) == set(contract.values())
+    dev_only = set(served_all) - set(served)
+    assert (dev_only != set()) is (env != "prod")

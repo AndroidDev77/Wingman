@@ -45,6 +45,7 @@ from app.db.scope import UserScope
 from app.db.session import get_session, session_scope
 from app.security.deps import get_current_user_scope
 from app.services.ingest import IngestError, IngestOutcome
+from app.services.outbox import ClaimRejected
 
 __all__ = ["PipelineRunner", "get_pipeline_runner", "router"]
 
@@ -227,13 +228,20 @@ async def claim_outbox(
     ) as slot:
         if slot.replay is not None:
             return slot.replay
-        claimed, server_time = await services.outbox.claim(
-            session,
-            scope,
-            connection_id,
-            device_install_id=body.device_install_id,
-            max_instructions=body.max_instructions,
-        )
+        try:
+            claimed, server_time = await services.outbox.claim(
+                session,
+                scope,
+                connection_id,
+                device_install_id=body.device_install_id,
+                max_instructions=body.max_instructions,
+            )
+        except ClaimRejected as exc:  # I-018: only the paired install may claim
+            raise _invalid(
+                "This install may not claim instructions on this connection",
+                exc.pointer,
+                exc.message,
+            ) from None
         payload = {
             "instructions": [
                 instruction_summary_out(c.instruction)

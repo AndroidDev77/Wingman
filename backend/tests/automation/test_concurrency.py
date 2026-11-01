@@ -15,16 +15,18 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.connectors.events import ConnectorEvent
 from app.db.enums import (
     Actor,
+    AgentActionType,
     DeliveryState,
     MessageDirection,
     MessageOrigin,
     OutboxInstructionState,
 )
-from app.db.models import Approval, Message, OutboxInstruction
+from app.db.models import AgentAction, Approval, Message, OutboxInstruction
 from app.db.repositories import ConnectionRepository, ConversationRepository
 from app.services.automation import ApprovalNotPending
 from app.services.ingest import IngestOutcome
-from tests.automation.conftest import World, make_world, set_mode
+from app.services.outbox import ClaimRejected
+from tests.automation.conftest import DEVICE_INSTALL, World, make_world, set_mode
 
 Factory = async_sessionmaker[AsyncSession]
 
@@ -200,20 +202,25 @@ async def test_two_devices_claiming_get_one_lease(committed: Factory) -> None:
         return ids
 
     ids = await tx(committed, queue)
-    devices = [uuid.uuid4() for _ in range(6)]
+    foreign = [uuid.uuid4() for _ in range(3)]
 
-    async def claim(device: uuid.UUID) -> list[uuid.UUID]:
+    async def claim(device: uuid.UUID) -> list[uuid.UUID] | str:
         async def go(s: AsyncSession) -> list[uuid.UUID]:
             claimed, _ = await world.services.outbox.claim(
                 s, world.scope, world.connection_id, device_install_id=device, max_instructions=3
             )
             return [c.instruction.id for c in claimed]
 
-        return await tx(committed, go)
+        try:
+            return await tx(committed, go)
+        except ClaimRejected:
+            return "rejected"
 
-    results = await asyncio.gather(*(claim(d) for d in devices))
-    leased = [i for r in results for i in r]
-    assert len(leased) == 3 and len(set(leased)) == 3  # every instruction leased exactly once
+    # Six concurrent claims from the paired install and three from foreign installs.
+    results = await asyncio.gather(*(claim(d) for d in [DEVICE_INSTALL] * 6 + foreign))
+    assert results[6:] == ["rejected"] * 3  # I-018: never a lease for another install
+    leased = {i for r in results[:6] if isinstance(r, list) for i in r}
+    assert len(leased) == 3  # every instruction leased, each exactly once (same lease)
     async with committed() as s:
         rows = (
             await s.scalars(
@@ -221,7 +228,16 @@ async def test_two_devices_claiming_get_one_lease(committed: Factory) -> None:
             )
         ).all()
         assert {r.state for r in rows} == {OutboxInstructionState.LEASED}
-        assert len({r.device_install_id for r in rows if r.device_install_id}) >= 1
+        assert {r.device_install_id for r in rows} == {DEVICE_INSTALL}
+        attempts = await s.scalar(
+            select(func.count())
+            .select_from(AgentAction)
+            .where(
+                AgentAction.user_id == world.scope.user_id,
+                AgentAction.type == AgentActionType.SEND_ATTEMPTED,
+            )
+        )
+        assert attempts == 3  # leased once each, never re-leased
         msgs = (await s.scalars(select(Message).where(Message.id.in_(ids)))).all()
         assert {m.delivery_state for m in msgs} == {DeliveryState.SENDING}
 

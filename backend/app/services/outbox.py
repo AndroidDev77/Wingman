@@ -17,6 +17,14 @@ Claim, per instruction, atomically (one transaction, row locks):
 4. Also return this install's own unexpired leases (same lease, not extended), counting
    toward ``max_instructions``.
 
+Install binding (I-018, ADR 0007 ``device_install_id``): only the install a connection
+is paired with may claim. A claim from any other install, on an unpaired connection,
+or on a device-side connection that was never paired raises :class:`ClaimRejected`
+(``422 validation_error`` at ``/device_install_id``) before anything is leased,
+canceled or dispatched, so a foreign install can neither take nor recover a lease.
+A backend-side connection without a binding (``mock``) has no instructions and keeps
+answering with an empty list, as the contract says.
+
 Lease expiry (:func:`expire_lapsed_leases`, a periodic job): ``leased`` past
 ``lease_expires_at`` -> ``expired``, audited ``lease_expired`` (contract 1.2.0). The
 outcome is unknown, so the message stays ``sending``: never ``sent``, never retried
@@ -57,6 +65,7 @@ __all__ = [
     "DEFAULT_LEASE",
     "MAX_LEASE",
     "MIN_LEASE",
+    "ClaimRejected",
     "ClaimedInstruction",
     "OutboxService",
     "expire_lapsed_leases",
@@ -73,6 +82,16 @@ MAX_LEASE = timedelta(seconds=600)
 def lease_duration(configured: timedelta = DEFAULT_LEASE) -> timedelta:
     """The server-set lease, clamped to the contract bounds (30 to 600 s)."""
     return max(MIN_LEASE, min(MAX_LEASE, configured))
+
+
+class ClaimRejected(Exception):  # noqa: N818 - maps to 422 validation_error
+    """The calling install may not claim on this connection (I-018). Nothing was leased."""
+
+    pointer = "/device_install_id"
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
 
 
 @dataclass(frozen=True)
@@ -108,10 +127,17 @@ class OutboxService:
         instructions (oldest first) and the server time of the claim."""
         if not 1 <= max_instructions <= 20:
             raise ValueError("max_instructions must be between 1 and 20")
-        connection = await ConnectionRepository(session, scope).require(connection_id)
+        connections = ConnectionRepository(session, scope)
+        await connections.require(connection_id)
         users = UserRepository(session)
         if await users.lock(scope) is None:  # pragma: no cover
             raise NotFoundError("user not found")
+        # Re-read under the user lock: unpair takes the same lock first, so the binding
+        # checked here is the one in force for this whole claim.
+        connection = await connections.get_fresh(connection_id)
+        if connection is None:  # pragma: no cover - deleted concurrently
+            raise NotFoundError("connection not found")
+        self._check_binding(connection, device_install_id)
         # Due queued messages without an instruction (a retry after its backoff, a reply
         # delay that has passed) get one now, through the dispatcher and its re-check.
         await self.dispatcher.dispatch_due(session, scope, connection_id=connection_id)
@@ -138,6 +164,18 @@ class OutboxService:
                     room -= 1
         out.sort(key=lambda c: (c.instruction.created_at, c.instruction.id))
         return out, now
+
+    def _check_binding(self, connection: PlatformConnection, device_install_id: uuid.UUID) -> None:
+        """I-018: raise :class:`ClaimRejected` unless ``device_install_id`` is the
+        install this connection is currently paired with."""
+        if connection.unpaired_at is not None:
+            raise ClaimRejected("this connection is unpaired; no install may claim on it")
+        if connection.device_install_id is None:
+            if self.dispatcher.registry.is_device_side(connection):
+                raise ClaimRejected("this connection is not paired with any app install")
+            return  # backend-side connector (mock): never has instructions
+        if connection.device_install_id != device_install_id:
+            raise ClaimRejected("not the app install this connection is paired with")
 
     async def _try_lease(
         self,
