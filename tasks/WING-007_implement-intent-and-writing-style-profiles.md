@@ -1,0 +1,44 @@
+# WING-007: Implement intent and writing-style profiles
+
+**Project:** Wingman AI, Android-first AI dating assistant  
+**Phase:** 2  
+**Dependencies:** WING-003  
+**Ownership / expected edit paths:**
+- `backend/app/services/preferences.py`
+- `backend/app/api/preferences.py`
+- `backend/tests/preferences/`
+
+## Copyable agent task prompt
+
+You are a senior engineer implementing one isolated, production-quality task in the Wingman AI monorepo. The application is an Android-first AI dating assistant with user-selected dating intentions, personalized messaging, and automated sends only through verified, user-enabled connector capabilities.
+
+Read `AGENT_RULES.md`, `TASK_INDEX.md`, and relevant files in `contracts/` before coding. If dependencies are not present, report them and create only non-conflicting preparatory code. Do not rewrite unrelated modules. Work in a dedicated git branch/worktree and provide a pull request-style handoff.
+
+### Your specific mission
+Store user-wide and per-contact dating goals, communication preferences, dealbreakers, and automation preferences.
+
+### Required implementation
+- Five intent modes: serious, casual dating, casual physical, open, custom
+- Conversation-level override precedence
+- Style attributes: punctuation, emoji frequency, brevity, humor, tone, response pace
+- Create/update/read API with Pydantic validation
+- Safe defaults, version history, and tests
+
+### Acceptance tests / definition of done
+- Per-contact intent overrides user-wide intent without modifying defaults
+- Preferences survive service restart
+- Unexpected enum values and malformed configuration rejected
+- No user-specific style inferred unless data is provided or explicitly configured
+
+### Constraints and integration notes
+Allow any adult dating intent without inferring intent from other users.
+
+### Required work sequence
+1. Inspect the repository state and read applicable contracts.
+2. Identify exactly which files you own and list any dependency or integration blocker.
+3. Implement the smallest functional solution, not only documentation or pseudocode (except for explicitly designated feasibility spikes).
+4. Add tests for core behavior, including negative/error paths.
+5. Run tests, lint, and build steps that your environment supports. Clearly mark unrun tests.
+6. Update relevant documentation and provide a concise handoff report with files changed, commands/results, limitations, and next integration steps.
+
+**Do not claim a dating-platform send, swipe, or device integration was verified without actually performing the test.**
