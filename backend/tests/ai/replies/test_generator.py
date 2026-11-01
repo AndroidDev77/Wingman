@@ -183,6 +183,46 @@ async def test_casual_physical_escalation_with_matching_interest_needs_approval(
     assert flirt in draft.grounding.message_ids
 
 
+async def test_escalation_citing_an_unrelated_contact_message_is_refused(
+    session: AsyncSession, harness: Harness
+) -> None:
+    # Integrator: the cited contact message must itself show matching interest.
+    scope = await make_user(session)
+    await set_preferences(session, scope, preferences(mode="casual_physical"))
+    thread = await make_thread(session, scope)
+    await user_says(session, thread, "had fun chatting last night")
+    await contact_says(session, thread, "me too, it was nice")
+    harness.provider.push(
+        reply(
+            "I keep thinking about kissing you",
+            message_refs=["m2"],
+            escalation=True,
+            interest_evidence_refs=["m2"],
+        )
+    )
+    draft = await harness.generator.generate_draft(session, scope, thread.conversation_id)
+    assert draft.decision is DraftDecision.NO_SEND
+    assert draft.reason is DraftReason.UNSUPPORTED_ESCALATION
+    assert draft.text is None
+
+
+async def test_undeclared_escalation_is_detected_in_code(
+    session: AsyncSession, harness: Harness
+) -> None:
+    # Integrator: the model's own escalation flag is not trusted; the text is checked too.
+    scope = await make_user(session)
+    await set_preferences(session, scope, preferences(mode="casual_physical"))
+    thread = await make_thread(session, scope)
+    await user_says(session, thread, "had fun chatting last night")
+    await contact_says(session, thread, "me too, it was nice")
+    harness.provider.push(
+        reply("Want to spend the night at my place?", message_refs=["m2"], escalation=False)
+    )
+    draft = await harness.generator.generate_draft(session, scope, thread.conversation_id)
+    assert draft.decision is DraftDecision.NO_SEND
+    assert draft.reason is DraftReason.UNSUPPORTED_ESCALATION
+
+
 @pytest.mark.parametrize(
     "text",
     [

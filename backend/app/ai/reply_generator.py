@@ -107,6 +107,7 @@ __all__ = [
     "ReplyOutput",
     "UserClaim",
     "detect_commitment",
+    "detect_escalation",
     "detect_personal_claims",
     "detect_unsafe_content",
     "generate_draft",
@@ -432,6 +433,28 @@ _UNSAFE_PATTERNS = (
         re.IGNORECASE,
     ),
 )
+
+
+# Physical or romantic escalation (not explicit: that is refused above). Used on the draft
+# (an undeclared escalation still counts) and on the contact's cited messages (the
+# evidence must itself show matching interest, not just be any message from them).
+_ESCALATION_PATTERNS = (
+    re.compile(
+        r"\b(?:kiss(?:es|ed|ing)?|make out|making out|cuddl(?:e|es|ed|ing|y)|"
+        r"come over|coming over|my place|your place|back to mine|back to yours|"
+        r"sleep ?over|spend the night|stay the night|in bed|bedroom|"
+        r"sexy|so hot|you're hot|youre hot|turns? me on|turned me on|"
+        r"touch(?:ing)? you|get physical|undress(?:ing)?|lingerie|naughty|steamy|"
+        r"can't stop thinking about you|cant stop thinking about you|"
+        r"(?:can't|cant) keep my hands off)\b",
+        re.IGNORECASE,
+    ),
+)
+
+
+def detect_escalation(text: str) -> bool:
+    """Romantic or physical escalation wording (conservative; false positives stop a send)."""
+    return any(p.search(text) for p in _ESCALATION_PATTERNS)
 
 
 def detect_personal_claims(text: str) -> set[ClaimKind]:
@@ -832,11 +855,16 @@ class ReplyGenerator:
                 message_ids=message_ids,
             )
 
-        # 3. Escalation must be backed by the contact's own messages.
-        if out.escalation:
+        # 3. Escalation (declared by the model or detected in the text) must be backed by
+        #    the contact's own messages, and at least one cited message must itself show
+        #    matching interest: citing any contact message is not enough.
+        escalation = out.escalation or detect_escalation(text)
+        if escalation:
             evidence = [ctx.message_refs.get(r) for r in out.interest_evidence_refs]
-            if not evidence or any(
-                m is None or m.direction is not MessageDirection.INBOUND for m in evidence
+            if (
+                not evidence
+                or any(m is None or m.direction is not MessageDirection.INBOUND for m in evidence)
+                or not any(m is not None and detect_escalation(m.text) for m in evidence)
             ):
                 return self._no_send(
                     ctx,
@@ -923,7 +951,7 @@ class ReplyGenerator:
         if commitment is not Commitment.NONE:
             approval.append(ApprovalReason.DATE_OR_COMMITMENT)
         cited_facts = [ctx.fact_refs[r] for r in out.memory_refs if r in ctx.fact_refs]
-        if out.escalation or any(f.sensitive for f in cited_facts):
+        if escalation or any(f.sensitive for f in cited_facts):
             approval.append(ApprovalReason.SENSITIVE_CONTENT)
         if out.confidence < self.limits.low_confidence or any(
             v.code == "style_too_long" for v in style_issues
