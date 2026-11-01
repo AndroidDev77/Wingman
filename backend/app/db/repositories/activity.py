@@ -27,6 +27,12 @@ class MemoryRepository(ScopedRepository[ConversationMemory]):
         category: str | None = None,
         conversation_id: uuid.UUID | None = None,
         expires_at: datetime | None = None,
+        # WING-008 provenance columns (D-010: in 0001).
+        origin: str = "extracted",
+        basis: str = "stated",
+        fact_key: str | None = None,
+        stated_at: datetime | None = None,
+        superseded_by_id: uuid.UUID | None = None,
     ) -> ConversationMemory:
         return await self._add(
             contact_id=contact_id,
@@ -37,6 +43,11 @@ class MemoryRepository(ScopedRepository[ConversationMemory]):
             confidence=confidence,
             source_message_ids=list(source_message_ids),
             expires_at=expires_at,
+            origin=origin,
+            basis=basis,
+            fact_key=fact_key,
+            stated_at=stated_at,
+            superseded_by_id=superseded_by_id,
         )
 
     async def active_for_contact(
