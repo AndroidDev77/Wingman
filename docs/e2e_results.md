@@ -42,8 +42,9 @@ means a test that ran and passed in the run linked next to it; nothing here was 
 
 ## Results per scenario
 
-CI runs (PR #34): see [Evidence](#evidence) for the job links of the final head commit.
-Local run: `scripts/e2e/run.sh` on the final commit, 17 passed in 192 s.
+CI runs (PR #34): see [Evidence](#evidence). Integrator-verified: every result below was re-read
+from the CI job logs of commit `863ce0a` (the first commit with both product fixes on which all
+seven jobs passed), and the integrator reproduced the backend suite locally (17 passed in 195 s).
 
 ### Backend flows (`tests/e2e/test_flows.py`)
 
@@ -112,8 +113,10 @@ Each UI step is cross-checked against the server:
 | A6 Takeover | Controls: flip "I'm taking over", confirm "Take over with ...?", see "You've taken over." and "You're in control: Wingman is off for this person" | contact `taken_over`, audit `automation_takeover` |
 
 **Observed: PASS** in CI job
+[124946258804](https://github.com/AndroidDev77/Wingman/actions/runs/41339483882/job/124946258804)
+(commit `863ce0a`, `OK (1 test)`, 44 s), and before the integrator's fixes in
 [124930492429](https://github.com/AndroidDev77/Wingman/actions/runs/41334216255/job/124930492429)
-(commit `5c6feea`, `OK (1 test)`, 29 s). Logcat (`WING025-APP`):
+(commit `5c6feea`, 29 s). Logcat (`WING025-APP`) of the `5c6feea` run:
 
 ```
 18:03:12.243 WING025-APP signed in; onboarding opened
@@ -132,6 +135,7 @@ commit on the PR):
 | 2 (`0b1ebd5`) | FAIL | "UI never showed Next" after onboarding opened. Suspected the soft keyboard (opened by tapping the token field) covering the bottom; not confirmed, run 3 shows the real cause was the selector below | Set the token without a tap; hide the keyboard if shown; dump the UI hierarchy on a failed wait (kept: it is what diagnosed run 3) |
 | 3 (`ed89a86`) | FAIL | The hierarchy dump showed the app in the expected state (onboarding saved, Inbox open, bottom bar visible). The bottom-nav label is a plain Text node and its clickable parent has no text, so `textContains(..).clickable(true)` matched nothing (the same selector style explains run 2's "Next") | Match the exact label; tap the takeover dialog's button below its title |
 | 4 (`5c6feea`) | PASS | | |
+| 5 (`6f4f9cf`, integrator) | FAIL | Both phases: the hierarchy dump showed the system dialog "Pixel Launcher isn't responding" (Close app / Wait) over the screen on the freshly booted emulator; the app was hidden behind it | `E2eDevice` taps "Wait" on a system ANR dialog of another app (never "Close app"; an ANR of Wingman fails the test). The sign-in helper now fails loudly instead of assuming "already signed in" |
 
 
 ### Real channel: SMS on the CI emulator ("emulator SMS stack exercised")
@@ -152,10 +156,14 @@ commit on the PR):
    reports the reply sent.
 
 **Observed: PASS** in CI job
+[124946258804](https://github.com/AndroidDev77/Wingman/actions/runs/41339483882/job/124946258804)
+(commit `863ce0a`, with the completion-marker check: `OK (1 test)`, the `RESULT` line, outbound
+`delivered` from the emulator modem, `attempt=1`), in
 [124930492429](https://github.com/AndroidDev77/Wingman/actions/runs/41334216255/job/124930492429)
 (commit `5c6feea`), and earlier also in the first run
 ([124922334161](https://github.com/AndroidDev77/Wingman/actions/runs/41331480134/job/124922334161),
-commit `3d2d78e`). Script and logcat lines from the passing run (`WING025-SMS`, timestamps kept):
+commit `3d2d78e`). Script and logcat lines from the `5c6feea` run (`WING025-SMS`, timestamps kept; the `863ce0a` run
+prints the same sequence):
 
 ```
 default SMS role holder before: com.google.android.apps.messaging
@@ -228,7 +236,9 @@ Only after D3, D4 and B3 pass on a physical device may an operator run
 `python -m app.services.connections verify --user-id U --connection-id C --capability send --evidence <link to the device run section>`
 (and `read`). Until then G5 stays ⛔ and autopilot stays unavailable for SMS.
 
-## Product bug found and fixed
+## Product bugs found and fixed
+
+### 1. MockConnector outbound IDs collided
 
 **MockConnector outbound IDs collided (dev/test simulator, `backend/app/connectors/mock.py`).**
 Found by the first local E2E run (X5 and a probe with two mock connections). The simulator
@@ -245,6 +255,24 @@ attempt and stable across a replay. Regression test:
 "timed out after 20s waiting for message ... in {'sent'}") and passes with it. No real platform is
 affected; `MockConnector` is never used in prod.
 
+### 2. Request transactions committed after the response was sent (integrator, during review)
+
+**Found by the CI E2E run on the integrator's commit `6f4f9cf`**
+([job 124942090473](https://github.com/AndroidDev77/Wingman/actions/runs/41338088423/job/124942090473)):
+X2 failed with `assert 'queued' == 'sending'` right after a claim had returned the instruction
+(`200`). The other 16 tests passed; earlier runs of the same test passed. Cause: `get_session`
+(`backend/app/db/session.py`) is a `yield` dependency that commits on exit, and with FastAPI
+0.162's default `request` scope that exit code runs only **after the response has been sent**
+(shown under uvicorn with a minimal probe app: the client had the response before the dependency
+exited; with `scope="function"` the order reverses). So any client could read its own write
+before it was committed, and a failed commit could follow a success response. Fix: every
+`Depends(get_session)` is now `Depends(get_session, scope="function")` (12 lines, no behavior
+change besides the order). Regression test:
+`backend/tests/test_app_wiring.py::test_request_sessions_commit_before_the_response_is_sent`
+(fails on the previous code, passes after). Effect on earlier results: none of them depended on
+the race except by luck of timing; every result in this document is from runs that include the
+fix or that passed regardless (see [Evidence](#evidence)).
+
 ## Unresolved blockers and limits
 
 | ID | Blocker | Effect on this ticket |
@@ -255,30 +283,37 @@ affected; `MockConnector` is never used in prod.
 | I-024 | No periodic Android SMS sync | The emulator test triggers sync rounds itself (`SmsConnectorRuntime.syncInBackground`); on a real phone claims and uploads wait until the app opens |
 | (new) | Compose UI tests under `createAndroidComposeRule` cannot launch `MainActivity` | The test rule's effect dispatcher made the first-launch onboarding `LaunchedEffect` call `NavController.navigate` off the main thread ("setCurrentState must be called on the main thread"). A test-environment artifact (the app launched normally does not run effects that way), so the instrumented tests use UiAutomator. Worth a follow-up if Compose-rule tests of the shell are wanted |
 | (limit) | Content guardrails are not E2E-testable with the dev mock | The dev mock never writes unsafe, ungrounded or escalating text; those guardrails are covered at unit level (`backend/tests/ai/replies`) |
+| (limit) | CI emulator noise | A freshly booted emulator can show a system ANR dialog for another app ("Pixel Launcher isn't responding", run 5); the helper taps Wait. Not an app failure; a Wingman ANR still fails the test |
 | (limit) | Delivery receipts | Only the emulator's simulated modem produced one; carrier delivery reports are D4 on a physical device |
 
 ## Evidence
 
-CI on PR [#34](https://github.com/AndroidDev77/Wingman/pull/34). Run links for the commit that
-first passed every job (`5c6feea`); the PR description lists the conclusion of every job on the
-final head commit.
+CI on PR [#34](https://github.com/AndroidDev77/Wingman/pull/34). Each job below was read in its log
+by the integrator. Commit `863ce0a` is the first with both product fixes on which all seven jobs
+passed; the PR description lists every job on the final head commit.
 
-| Job | Run (commit `5c6feea`) | Result |
+| Job | Commit `863ce0a` (with integrator fixes) | Commit `5c6feea` (author) |
 |---|---|---|
-| E2E backend (HTTP flows + failure injection) | [job 124930492384](https://github.com/AndroidDev77/Wingman/actions/runs/41334216255/job/124930492384) | success: 17 passed in 189 s, zero-duplicate summary identical to the local run |
-| E2E Android emulator (app drives backend + emulator SMS) | [job 124930492429](https://github.com/AndroidDev77/Wingman/actions/runs/41334216255/job/124930492429) | success: phase A PASS, phase B (emulator SMS stack exercised) PASS |
-| Backend, Migrations, Contracts, Docker, Android (`ci.yml`) | same commit, workflow CI | success (all five) |
+| E2E backend (HTTP flows + failure injection) | [job 124946258567](https://github.com/AndroidDev77/Wingman/actions/runs/41339483882/job/124946258567): 17 passed in 186 s, zero-duplicate summary as above | [job 124930492384](https://github.com/AndroidDev77/Wingman/actions/runs/41334216255/job/124930492384): 17 passed in 189 s |
+| E2E Android emulator (app drives backend + emulator SMS) | [job 124946258804](https://github.com/AndroidDev77/Wingman/actions/runs/41339483882/job/124946258804): phase A PASS, phase B (emulator SMS stack exercised) PASS | [job 124930492429](https://github.com/AndroidDev77/Wingman/actions/runs/41334216255/job/124930492429): both PASS |
+| Backend (ruff, mypy, pytest) | [job 124946258153](https://github.com/AndroidDev77/Wingman/actions/runs/41339483728/job/124946258153): 954 passed | success (953 passed) |
+| Migrations, Contracts, Backend image, Android (`ci.yml`) | success (all four) | success (all four) |
+
+Failed runs on this PR, all explained above: emulator runs 1 to 3 (author, test harness) and 5
+(`6f4f9cf`, system ANR dialog); E2E backend on `6f4f9cf`
+([job 124942090473](https://github.com/AndroidDev77/Wingman/actions/runs/41338088423/job/124942090473),
+X2, the commit-after-response race, product bug 2).
 
 Artifacts uploaded by each E2E job (14 days): `e2e-backend` (`server.log`, `junit.xml`,
 `zero_duplicate_sends.json`) and `e2e-emulator` (instrumentation output, logcat, observations,
 server log).
 
-Local runs in the agent sandbox, final code:
+Local runs in the sandbox (author's runs on `2f02717` unless marked integrator):
 
 | Command | Result |
 |---|---|
-| `scripts/e2e/run.sh` | 17 passed in 192 s, `E2E SUITE PASSED`, zero-duplicate summary as above |
-| `scripts/backend-check.sh` | ruff, format, mypy clean; 953 passed (952 before + 1 regression test) |
+| `scripts/e2e/run.sh` | 17 passed in 192 s, `E2E SUITE PASSED`, zero-duplicate summary as above. Integrator: 17 passed in 191 s on `2f02717` and 195 s with the session fix, same counts |
+| `scripts/backend-check.sh` | ruff, format, mypy clean; 953 passed (952 before + 1 regression test). Integrator, with the session fix: 954 passed |
 | `contracts/validate.sh` | `CONTRACT VALIDATION PASSED` (63 valid + 34 invalid examples) |
 | `scripts/migration-check.sh` | `MIGRATION CHECK PASSED (18 tables at head)` |
 | `./gradlew :app:assembleDebug :app:testDebugUnitTest :app:assembleDebugAndroidTest -Pwingman.useMockApi=false` | BUILD SUCCESSFUL, 398 JVM tests, 0 failures; the merged release manifest has no network-security config |
