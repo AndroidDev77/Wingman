@@ -9,6 +9,9 @@ import com.wingman.core.model.ApproveRequest
 import com.wingman.core.model.AutomationActionRequest
 import com.wingman.core.model.AutomationMode
 import com.wingman.core.model.Connection
+import com.wingman.core.model.ConnectionCreateRequest
+import com.wingman.core.model.ConnectionUnpairRequest
+import com.wingman.core.model.ConnectionUnpairResult
 import com.wingman.core.model.ConnectorEventIngestResult
 import com.wingman.core.model.ContactAutomationState
 import com.wingman.core.model.ContactPreferenceOverrideUpdate
@@ -66,7 +69,8 @@ data class AgentActionFilter(
 
 /**
  * Typed client for `contracts/openapi.yaml` (v1.0.0, plus the two v1.1.0 device-connector operations
- * `ingestConnectorEvent` and `claimOutboxInstructions`). One method per `operationId`.
+ * `ingestConnectorEvent` and `claimOutboxInstructions`, and the 1.2.0 pairing operations
+ * `createConnection`, `getConnection` and `unpairConnection`). One method per `operationId`.
  *
  * Rules every implementation follows:
  *  - Never throws for HTTP, network or decoding failures: they come back as [ApiResult.Failure].
@@ -102,6 +106,28 @@ interface WingmanApi {
 
     // connections
     suspend fun listConnections(page: PageRequest = PageRequest.FIRST): ApiResult<Page<Connection>>
+
+    /**
+     * `createConnection` (1.2.0, ADR 0007): pairs a connector with the caller's account. `201` (new)
+     * and `200` (this install is already paired for the platform) are both [ApiResult.Success] with
+     * the connection AS STORED: a client-claimed `VERIFIED` comes back `UNVERIFIED`. Persist [key]
+     * before calling and reuse it if the response is lost, so a retry never creates a duplicate.
+     */
+    suspend fun createConnection(body: ConnectionCreateRequest, key: IdempotencyKey): ApiResult<Connection>
+
+    /** `getConnection` (1.2.0): one connection, paired or unpaired. Another user's is `404`. */
+    suspend fun getConnection(connectionId: String): ApiResult<Connection>
+
+    /**
+     * `unpairConnection` (1.2.0): effective before the response. The connection becomes
+     * `disconnected`, its queued sends, unclaimed instructions and pending approvals are canceled; an
+     * instruction already leased to a device cannot be recalled (`in_flight_message_count`).
+     */
+    suspend fun unpairConnection(
+        connectionId: String,
+        key: IdempotencyKey,
+        body: ConnectionUnpairRequest = ConnectionUnpairRequest,
+    ): ApiResult<ConnectionUnpairResult>
 
     // conversations and messages (WING-014)
     suspend fun listConversations(

@@ -26,7 +26,8 @@ class SmsResultReceiver : BroadcastReceiver() {
         val pending = goAsync()
         Thread {
             try {
-                val sender = SmsConnectorRuntime.get(context)?.sender ?: return@Thread
+                // I-020: also after an unpair, so the result of an SMS already on the radio is still recorded.
+                val sender = SmsConnectorRuntime.resultSender(context) ?: return@Thread
                 when (intent.action) {
                     ACTION_SENT -> sender.onPartSent(key, part, mapSentResult(code))
                     ACTION_DELIVERED -> sender.onPartDelivered(key, part, deliveryStatus(intent))

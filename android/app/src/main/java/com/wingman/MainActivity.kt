@@ -28,10 +28,12 @@ class MainActivity : ComponentActivity() {
         // WING-016 (ADR 0006): the SMS connector uploads its events and claims leased send
         // instructions through the app's API client, which authenticates through the session above
         // (I-011): bearer token, refresh near expiry, one refresh + retry on 401. While signed out
-        // its calls answer 401 and envelopes stay queued for the next round. Does nothing until
-        // the user has configured the SMS connection. Runs off the main thread.
+        // its calls answer 401 and envelopes stay queued for the next round.
+        // I-020: it does nothing until the user pairs this phone (Settings > Phone SMS). On start the
+        // stored connection is checked with getConnection; unpaired elsewhere (404, unpaired_at) or
+        // disconnected stops sync and asks the user to pair again. Runs off the main thread.
         SmsConnectorRuntime.connectBackend(container.api)
-        SmsConnectorRuntime.syncInBackground(this)
+        SmsConnectorRuntime.startInBackground(this)
         setContent { WingmanApp(container) }
     }
 }

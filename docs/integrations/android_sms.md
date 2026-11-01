@@ -22,7 +22,12 @@ Every device claim in this document is **UNVERIFIED** unless it says otherwise. 
 | Envelope upload over `ingestConnectorEvent` (contract v1.1.0): key = `event_id`, status mapping, dead letter, backoff with `Retry-After`, restart, order | VERIFIED (JVM) | `SmsEnvelopeUploaderTest`, `DeviceConnectorEndpointsTest` (MockWebServer) |
 | Outbox claim poller (`claimOutboxInstructions`): stable `device_install_id`, persisted claim key and replay, lease deadline, one radio submit per instruction key | VERIFIED (JVM) | `SmsOutboxPollerTest` |
 | Outcome envelopes from claimed instructions validate against `connector_event.v1` | VERIFIED (JVM) | `SmsContractFixturesTest` + schema validation |
-| Round trip against a real backend | **UNVERIFIED** | backend routes not implemented yet (WING-011), no auth token on the device (I-011); checklist B1 to B6 |
+| Round trip against a real backend | **UNVERIFIED** | backend routes exist (PR #24) and the app authenticates (I-011), but the two have never run together on a phone (I-003); checklist B1 to B6 |
+| Pairing (I-020): `createConnection` with the poller's `device_install_id` and the capability document, a persisted `Idempotency-Key` reused after a lost response, `201` and `200` both stored | VERIFIED (JVM) | `SmsPairingTest`, `PairingEndpointsTest` (MockWebServer), `MockPairingTest` |
+| Capabilities shown as the server stored them; a client-claimed `VERIFIED` comes back `UNVERIFIED`; autopilot never offered for SMS while `send` is not `VERIFIED` | VERIFIED (JVM) | `SmsPairingTest`, `SmsConnectionStateTest`, `MockPairingTest` |
+| Runtime inert until paired; unpair stops claims and inbound recording, clears the ID, keeps queued envelopes (`422` dead-letter), reports late send results to the old connection | VERIFIED (JVM) | `SmsConnectorHostTest` |
+| Startup check (`getConnection`): `404`, `unpaired_at` or `disconnected` stop sync and ask to pair again; offline keeps the ID | VERIFIED (JVM) | `SmsPairingTest`, `SmsConnectionStateTest` |
+| Pairing screen (Settings > Connections > Phone SMS), role and permission requests from it | **UNVERIFIED** | compiled by CI only; checklist P1 to P8 |
 
 ## 1. What it does
 
@@ -263,19 +268,21 @@ for a periodic worker (15 min minimum) with a network constraint. Until then the
 `SmsConnectorRuntime.syncInBackground(context)` on app start, and the demo screen has a button.
 Nothing in the tests needs WorkManager.
 
-### AppContainer wiring (integrator, after merge)
+### App wiring (I-020)
 
-* Call `SmsConnectorRuntime.configure(context, SmsConnectionScope(userId, connectionId))` when the
-  user enables the SMS connection. Pairing isn't in the contract yet (D-004), so the demo screen
-  uses the fixed IDs from `contracts/examples`.
-* Call `SmsConnectorRuntime.connectBackend(container.api)` once the `AppContainer` exists. That
-  `WingmanApi` carries the bearer token from `AppContainer`'s `tokenProvider`, so the SMS code never
-  sees a credential. **There is no token provider yet (I-011)**: until one exists, every ingest and
-  claim answers `401`, which the uploader and poller treat as retry-later (nothing is dropped,
-  nothing is sent).
-* Call `SmsConnectorRuntime.syncInBackground(context)` on app start and periodically (WorkManager,
-  requested above). It uploads, claims, executes and uploads again on a background thread.
-* WING-013 onboarding launches `SmsRoleHelper.requestRoleIntent()` from an explicit user action.
+* `MainActivity` calls `SmsConnectorRuntime.connectBackend(container.api)` and then
+  `SmsConnectorRuntime.startInBackground(context)`. The client carries the bearer token from the
+  I-011 session, so the SMS code never sees a credential; while signed out, calls answer `401` and
+  are retried later.
+* **Nothing runs until the user pairs.** The scope (user and connection IDs) comes only from pairing
+  (§9). `startInBackground` first checks the stored connection with `getConnection`, then runs one
+  sync round. `syncInBackground` runs again after every pair or unpair. Periodic sync still needs
+  WorkManager (requested above).
+* Pairing, the role request and the permission request live in Settings > Connections > Phone SMS
+  (`features/connections/SmsConnectionScreen.kt`), started only by the user's taps.
+* `SmsConnectorRuntime.configure(...)` remains for the debug harness only (fixed demo IDs, offline
+  `MockWingmanApi` builds). Against a real backend, a demo scope fails the startup check (`404`) and
+  is cleared.
 
 ## 4. Play Store policy constraints
 
@@ -397,6 +404,27 @@ and the SMS connection's real user and connection IDs in place of the demo scope
 B1 to B6 PASS, together with D3 to D7, make the SMS connector's backend path VERIFIED. Until then
 it stays UNVERIFIED, and so do the `read`/`send` capabilities (I-003).
 
+#### Pairing and unpairing (I-020, contract 1.2.0)
+
+Prerequisites: the same backend and signed-in debug build as B1 to B6, and the phone **not**
+yet paired (fresh install, or after P6). Use the app's Settings tab, section **Connections > Phone
+SMS**, not the harness. Backend checks use `psql` on `platform_connections`, `outbox_instructions`,
+`messages`, `approvals` and `agent_actions` (IDs only).
+
+| # | Step | Expected | Verifies |
+|---|---|---|---|
+| P1 | Open Settings > Phone SMS with Wingman NOT the default SMS app | Status `Not paired`. The role explanation is shown with **Make Wingman the default SMS app**. Tap it and accept the system dialog. The section moves to the permission step (or straight to pairing if permissions were granted). No SMS is recorded for Wingman yet: receive one from the peer and check the harness shows `paired (scope configured): false` and an empty outbox | role request from the screen, runtime inert while unpaired |
+| P2 | Tap **Allow SMS access** and grant all three | The section shows the pairing explanation and **Pair this phone's SMS** | permissions from the screen |
+| P3 | Turn on airplane mode, tap **Pair**. Turn it off, tap **Pair** again | First tap: "Pairing failed ... Try again; it won't create a duplicate." Second tap: `Status: Connected`. Backend: exactly ONE `platform_connections` row for this user with `platform = sms` and `device_install_id` equal to the harness's `device_install_id`; the backend log shows both `createConnection` requests with the SAME `Idempotency-Key` if the first reached the server | pairing, idempotent retry after a lost response, same install ID as the poller |
+| P4 | Read the section | `Send replies: UNVERIFIED (not yet tested on a device)`, the note that every SMS reply needs approval until a Wingman operator verifies sending, and `Autopilot: not available for SMS`. `Draft`, `Swipe` and `Add to calendar` show `Not supported`. In Settings > Automation, the SMS channel says `sending UNVERIFIED (not used for automatic sends)` | honest capability display (D-016) |
+| P5 | Receive an SMS from the peer, wait for or trigger a sync (reopen the app). Approve a reply for it in Approvals and sync again | The inbound envelope is accepted for the PAIRED connection ID (backend message under that connection). The approved reply is claimed and sent once (as B3). The section's last-sync line updates and `couldn't be delivered to Wingman` stays 0 | ingest and claims use the stored ID |
+| P6 | Approve a second reply but do NOT sync. Tap **Disconnect**, read the dialog, tap **Keep connected**, then **Disconnect** again and confirm | The dialog says queued automated messages and pending approvals will be canceled and an already-started send can't be recalled. After confirming: "Disconnected. ..." with the canceled counts, `Status: Not paired`. Backend: the connection has `unpaired_at` set and `status = disconnected`, the queued message and any pending approval are `canceled` with reason `connection_unavailable`, one `connection_unpaired` audit row. The peer receives nothing more. The harness shows `paired (scope configured): false` | unpair, cancellation, runtime stopped |
+| P7 | Receive an SMS from the peer while unpaired. Then pair again (P3 without airplane mode) | While unpaired nothing new is queued for Wingman (the message still lands in the system inbox). Pairing again creates a NEW connection ID (backend: second row), and later SMS go to it | re-pair after unpair |
+| P8 | With the phone paired, unpair the connection from the backend side (`POST /v1/connections/{id}/unpair` with the same user's token, e.g. `curl`). Force-stop and reopen the app, open Settings | The section shows "This phone's SMS connection was disconnected elsewhere. Pair again ...", `Status: Not paired`, and the harness shows no scope. No claim requests appear in the backend log after the restart | startup check, unpaired elsewhere |
+
+P1 to P8 PASS make the pairing flow VERIFIED on that device. They do not change any capability:
+`send` becomes `VERIFIED` only through the operator CLI with evidence (ADR 0007).
+
 What the harness cannot do: send a **forged** `SMS_DELIVER` broadcast. It is protected by the
 `BROADCAST_SMS` signature permission, so `adb shell am broadcast` cannot imitate the radio.
 "Re-inject" re-runs the exact fields of the last real SMS through the same
@@ -510,7 +538,60 @@ detected, because the deadline uses `System.currentTimeMillis()`. The 15 s margi
 and the time between the check and the submit. Polling is not scheduled yet (WorkManager is
 requested), and the backend routes are not implemented yet (WING-011).
 
-## 9. Files
+## 9. Pairing (I-020, contract 1.2.0, ADR 0007)
+
+The phone becomes a Wingman connection only when the user pairs it from Settings > Connections >
+Phone SMS. Until then `SmsConnectorRuntime.get()` is null: the SMS receiver still writes the system
+inbox (a default SMS app must), but nothing is recorded for Wingman and nothing is claimed.
+
+**Pair** (`SmsPairingManager.pair`, pure Kotlin in `SmsPairing.kt`):
+
+1. The screen first asks for the default-SMS-app role and the SMS permissions, each with a plain
+   explanation and from the user's own tap. The pair button appears only when both are in place.
+2. `getMe` gives the `user_id` that every envelope carries.
+3. `createConnection` with `platform: sms`, a display name from the device model (e.g. "Pixel 8
+   SMS"), the SAME `device_install_id` the outbox poller sends to `claimOutboxInstructions`
+   (`config:device_install_id`, `SmsInstallId`), and the `SmsCapabilities` document.
+4. **Idempotency.** The key and the exact body are persisted (`pairing:pending`) BEFORE the request
+   and reused until a final answer, also across a process restart, so a lost response is replayed
+   instead of pairing twice. `400`/`404`/`422` drop the attempt; anything else keeps it.
+5. `201` (new) and `200` (this install was already paired, e.g. local state lost) both store the
+   returned ID (`config:connection_id`, `config:user_id`) and a snapshot of the connection AS THE
+   SERVER STORED IT. The runtime rebuilds for that scope at once and a sync round starts.
+
+**What the screen shows.** Status, each capability with the server's status and notes, last sync,
+envelopes waiting for upload and the dead-letter count. `send` is `UNVERIFIED` after pairing, even
+if a client claimed `VERIFIED` (the server stores the claim as `UNVERIFIED`, D-016). The screen says
+that every SMS reply needs approval until a Wingman operator verifies sending with device evidence,
+and shows "Autopilot: not available for SMS". Autopilot is shown as available only for a connected
+connection whose stored `send` is `VERIFIED`.
+
+**Unpair** (`SmsPairingManager.unpair`), behind a confirmation dialog: `unpairConnection` with a
+persisted key (a lost response is retried with the same key; the phone stays paired until the server
+confirms; a `404` counts as done). Afterwards the stored ID is cleared, the claim key and claim
+backoff are reset, and the runtime stops (no claims, no inbound recording). Envelopes not yet uploaded
+are KEPT and still drained against the old connection: the server rejects inbound ones with `422`,
+which moves them to the dead-letter area by the existing rules, and accepts late send outcomes. Every
+send record now stores its own connection, so a "sent"/"delivered" result for an SMS that was already
+on the radio is reported to the connection that leased it.
+
+**App start** (`SmsConnectorRuntime.startInBackground`): `getConnection` on the stored ID.
+
+| Answer | Action |
+|---|---|
+| `200`, connected, not unpaired | keep it, refresh the snapshot, sync |
+| `404` | stop (scope retired), notice: no longer exists, pair again |
+| `200` with `unpaired_at` | stop, notice: disconnected elsewhere, pair again |
+| `200`, `disconnected` but not unpaired | stop, notice; the ID is kept as "stale" so the user can unpair it (it still blocks re-pairing on the server: `200` with a disconnected connection) |
+| network, `401`, `5xx` | keep the ID and run as before |
+
+Pair, verify and unpair hold the same lock as a sync round (`SmsConnectorHost.exclusive`), so the
+scope never changes in the middle of an upload/claim/send round.
+
+**Not covered (follow-ups).** The server does not yet reject claims from another install (I-018).
+Pairing for `android_notification` is WING-017's. Periodic sync still needs WorkManager.
+
+## 10. Files
 
 * Pure Kotlin: `android/app/src/main/java/com/wingman/integrations/sms/*.kt`
 * Android adapters: `android/app/src/main/java/com/wingman/integrations/sms/android/*.kt`
@@ -518,3 +599,7 @@ requested), and the backend routes are not implemented yet (WING-011).
 * Backend sync (v1.1.0): `integrations/sms/SmsBackendSync.kt` (uploader, poller), the
   `SmsBackoff` in `SmsOutbox.kt`, and the core client operations in `core/api` and
   `core/model/DeviceConnectorModels.kt`
+* Pairing (I-020): `integrations/sms/SmsPairing.kt` (`SmsPairingManager`, `SmsInstallId`),
+  `integrations/sms/SmsConnectorHost.kt` (lifecycle), `features/connections/` (screen state and the
+  Settings section), the `createConnection` / `getConnection` / `unpairConnection` client operations
+  in `core/api`, and the pairing semantics of `MockWingmanApi`

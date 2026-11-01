@@ -51,6 +51,9 @@ object MockFixtures {
 
     const val USER_ID = "0192f3a0-0000-7000-8000-000000000001"
     val CONNECTION_SMS = id("a1")
+
+    /** The app install the fixture SMS connection is paired with (ADR 0007). Only it may claim (I-018, D-017). */
+    const val SMS_DEVICE_INSTALL_ID = "0192f3a0-0000-4000-8000-0000000005f1"
     val CONNECTION_MOCK = id("a2")
     val CONNECTION_NOTIFICATION = id("a3")
 
@@ -117,6 +120,7 @@ object MockFixtures {
                 ),
             ),
             createdAt = t("2026-10-30T09:00:00Z"), updatedAt = t("2026-10-31T18:00:00Z"),
+            deviceInstallId = SMS_DEVICE_INSTALL_ID, pairedAt = t("2026-10-30T09:00:00Z"),
         ),
         Connection(
             id = CONNECTION_MOCK, platform = "mock", displayName = "Simulator", status = ConnectionStatus.CONNECTED,

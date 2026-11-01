@@ -3,8 +3,8 @@ package com.wingman.integrations.sms
 import com.wingman.core.api.WingmanApi
 
 /**
- * Pure-Kotlin facade the Android adapters and (later) the AppContainer use. One instance per
- * process; all state lives in [store], so a new instance over the same store after a process
+ * Pure-Kotlin facade for ONE paired connection ([scope]); built by [SmsConnectorHost] only while
+ * this install is paired (I-020). One instance per process and scope; all state lives in [store], so a new instance over the same store after a process
  * restart behaves exactly like the old one (no double upload, no second transport attempt).
  *
  * Inbound and outbound are separate objects on purpose: [inbound] has no path to [sender].

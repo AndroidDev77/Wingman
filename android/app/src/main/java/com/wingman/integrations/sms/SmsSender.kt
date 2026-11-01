@@ -61,6 +61,13 @@ data class SmsSendRecord(
     @SerialName("updated_at") val updatedAtMillis: Long = claimedAtMillis,
     /** True once the transport's submit was called for this key (the one attempt is spent on the radio). */
     @SerialName("transport_called") val transportCalled: Boolean = false,
+    /**
+     * I-020: the scope the send was made for. A result that arrives after the connection was unpaired
+     * (or re-paired as a new connection) is still reported to the connection that leased it, which
+     * accepts late outcomes (ADR 0007). Null in records written before I-020: the current scope is used.
+     */
+    @SerialName("user_id") val userId: String? = null,
+    @SerialName("connection_id") val connectionId: String? = null,
 ) {
     val failure: SmsSendFailure?
         get() = failureCode?.let { SmsSendFailure(SmsFailureCode.fromWire(it), failureRetryable ?: false, failureDetail ?: "") }
@@ -127,6 +134,14 @@ class SmsSender(
 
     private fun key(idempotencyKey: String) = "$PREFIX$idempotencyKey"
 
+    /** Envelopes for a send go to the connection the send was made for (see [SmsSendRecord.connectionId]). */
+    private fun factoryFor(r: SmsSendRecord): SmsEnvelopeFactory {
+        val u = r.userId
+        val c = r.connectionId
+        if (u == null || c == null || (u == scope.userId && c == scope.connectionId)) return factory
+        return runCatching { SmsEnvelopeFactory(SmsConnectionScope(u, c)) }.getOrDefault(factory)
+    }
+
     fun record(idempotencyKey: String): SmsSendRecord? =
         store.get(key(idempotencyKey))?.let { json.decodeFromString(SmsSendRecord.serializer(), it) }
 
@@ -164,6 +179,8 @@ class SmsSender(
             authorizedBy = command.authorizedBy,
             state = SmsSendState.CLAIMED,
             claimedAtMillis = now,
+            userId = scope.userId,
+            connectionId = scope.connectionId,
         )
 
         // Preconditions are checked after claiming, so a refused key is also "used" (one attempt per key).
@@ -227,7 +244,7 @@ class SmsSender(
             failureDetail = failure.detail,
             updatedAtMillis = now,
         )
-        outbox.enqueue(factory.sendFailed(failed, failure, now))
+        outbox.enqueue(factoryFor(failed).sendFailed(failed, failure, now))
         save(failed)
         return SmsSendOutcome.Failed(failed, failure, replayed = false)
     }
@@ -266,7 +283,7 @@ class SmsSender(
         }
         val now = clock.nowMillis()
         var acked = updated.copy(state = SmsSendState.ACKNOWLEDGED, updatedAtMillis = now)
-        outbox.enqueue(factory.sendAcknowledged(acked, now))
+        outbox.enqueue(factoryFor(acked).sendAcknowledged(acked, now))
         // Status reports can race ahead of the last sent result; apply them now.
         acked = promoteDelivery(acked)
         save(acked)
@@ -278,7 +295,7 @@ class SmsSender(
         r.partDelivery.any { it == FAILED_DELIVERY } -> r.copy(state = SmsSendState.DELIVERY_FAILED)
         r.partDelivery.isNotEmpty() && r.partDelivery.all { it == DELIVERED } -> {
             val delivered = r.copy(state = SmsSendState.DELIVERED)
-            outbox.enqueue(factory.deliveryReceipt(delivered, delivered.updatedAtMillis))
+            outbox.enqueue(factoryFor(delivered).deliveryReceipt(delivered, delivered.updatedAtMillis))
             delivered
         }
         else -> r

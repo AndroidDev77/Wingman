@@ -17,7 +17,15 @@ import com.wingman.core.model.wireName
 import com.wingman.core.model.ApprovalStatus
 import com.wingman.core.model.ApproveRequest
 import com.wingman.core.model.AutomationActionRequest
+import com.wingman.core.model.Capability
+import com.wingman.core.model.CapabilitySet
 import com.wingman.core.model.Connection
+import com.wingman.core.model.ConnectionCreateRequest
+import com.wingman.core.model.FieldError
+import com.wingman.core.model.ConnectionStatus
+import com.wingman.core.model.ConnectionUnpairRequest
+import com.wingman.core.model.ConnectionUnpairResult
+import com.wingman.core.model.ConnectorCapabilities
 import com.wingman.core.model.ConnectorEventIngestOutcome
 import com.wingman.core.model.ConnectorEventIngestResult
 import com.wingman.core.model.ContactAutomationState
@@ -83,7 +91,17 @@ import java.time.Instant
  *  - device connectors (v1.1.0): `ingestConnectorEvent` dedups by `event_id` (`duplicate_event`), refuses
  *    `mock.*` on a real connection and send outcomes without a leased instruction (422);
  *    `claimOutboxInstructions` leases instructions queued with [queueOutboxInstruction] at most once,
- *    returns the caller's own unexpired leases, and replays the same key;
+ *    returns the caller's own unexpired leases, and replays the same key. Only the install a device-side
+ *    connection is paired with may claim (I-018, D-017): another install, an unpaired connection or a
+ *    never-paired device-side connection is `422 validation_error` at `/device_install_id`;
+ *  - pairing (v1.2.0, ADR 0007): `createConnection` answers a new connection, or the existing one when
+ *    this `device_install_id` is already paired for the platform (the HTTP 200 case); a replay of the
+ *    same key returns the original. A client-claimed `VERIFIED` is stored as `UNVERIFIED` (with the
+ *    backend's note), `evidence`/`verified_at` are dropped, and nothing the client sends can make a
+ *    capability `VERIFIED`. `unpairConnection` disconnects, marks every capability `UNSUPPORTED`,
+ *    cancels the connection's pending instructions, queued outbound messages (any origin) and pending
+ *    approvals, counts leased instructions as in flight, and is a zero-count no-op the second time.
+ *    An unpaired connection accepts only send outcomes on ingest (422 otherwise);
  *  - preferences: `If-Match` mismatch is `412 precondition_failed`; per-contact overrides have their
  *    own version sequence, never touch user-wide preferences, and `effective` follows the
  *    backend's `merge_effective` (override field when non-null > user-wide); `custom` intent
@@ -228,6 +246,108 @@ class MockWingmanApi(
 
     override suspend fun listConnections(page: PageRequest): ApiResult<Page<Connection>> =
         op("listConnections") { paginate(connections, page) }
+
+    /* ------------------------------------------------------------ pairing (v1.2.0, ADR 0007) */
+
+    override suspend fun createConnection(body: ConnectionCreateRequest, key: IdempotencyKey): ApiResult<Connection> =
+        idempotent("createConnection", "POST /v1/connections", key, body) {
+            val device = body.platform in ConnectionCreateRequest.DEVICE_PLATFORMS
+            if (body.platform == "mock") {
+                if (body.deviceInstallId != null) return@idempotent problem(422, ErrorCode.VALIDATION_ERROR, "device_install_id must be absent for platform 'mock'")
+                if (body.capabilities != null) return@idempotent problem(422, ErrorCode.VALIDATION_ERROR, "capabilities must be absent for platform 'mock'")
+            }
+            if (device) {
+                val install = body.deviceInstallId ?: return@idempotent problem(422, ErrorCode.VALIDATION_ERROR, "device-side platforms need device_install_id")
+                if (!ID_PATTERN.matches(install)) return@idempotent problem(422, ErrorCode.VALIDATION_ERROR, "device_install_id must be a lowercase UUID")
+                val caps = body.capabilities ?: return@idempotent problem(422, ErrorCode.VALIDATION_ERROR, "device-side platforms need capabilities")
+                if (caps.platform != body.platform) return@idempotent problem(422, ErrorCode.VALIDATION_ERROR, "capabilities platform does not match")
+                // One paired connection per (platform, install): pairing again returns it unchanged (HTTP 200).
+                connections.firstOrNull { it.platform == body.platform && it.deviceInstallId == install && it.unpairedAt == null }
+                    ?.let { return@idempotent ok(it) }
+            }
+            val now = clock()
+            val stored = if (device) trustClaimedCapabilities(body.capabilities!!) else mockSimulatorCapabilities(now)
+            val created = Connection(
+                id = nextId(), platform = body.platform, displayName = body.displayName, status = ConnectionStatus.CONNECTED,
+                capabilities = stored, createdAt = now, updatedAt = now,
+                deviceInstallId = body.deviceInstallId, pairedAt = now, unpairedAt = null,
+            )
+            connections += created
+            val claimed = body.capabilities?.capabilities?.let(::verifiedNames).orEmpty()
+            audit(
+                AgentActionType.CONNECTION_PAIRED, Actor.USER,
+                details = details("connection_id" to created.id, "platform" to created.platform, "claimed_verified" to claimed.joinToString(",")),
+            )
+            ok(created)
+        }
+
+    override suspend fun getConnection(connectionId: String): ApiResult<Connection> =
+        op("getConnection") { connections.find { it.id == connectionId }?.let(::ok) ?: notFound() }
+
+    override suspend fun unpairConnection(
+        connectionId: String,
+        key: IdempotencyKey,
+        body: ConnectionUnpairRequest,
+    ): ApiResult<ConnectionUnpairResult> {
+        // Ownership first, like the backend: an unknown connection is 404 before any key is stored.
+        if (mutex.withLock { connections.none { it.id == connectionId } }) return op("unpairConnection") { notFound() }
+        return idempotent("unpairConnection", "POST /v1/connections/{id}/unpair", key, connectionId to body) {
+            val index = connections.indexOfFirst { it.id == connectionId }
+            val current = connections[index]
+            if (current.unpairedAt != null) {
+                return@idempotent ok(ConnectionUnpairResult(current, 0, 0, 0, 0))
+            }
+            val now = clock()
+            var canceledInstructions = 0
+            var inFlight = 0
+            for (e in outbox.filter { it.instruction.connectionId == connectionId }) {
+                when (e.state) {
+                    OutboxInstructionState.PENDING -> { e.state = OutboxInstructionState.CANCELED; canceledInstructions++ }
+                    OutboxInstructionState.LEASED -> inFlight++
+                    else -> Unit
+                }
+            }
+            val convs = conversations.filter { it.connectionId == connectionId }
+            var canceledMessages = 0
+            for (conv in convs) {
+                messages[conv.id]?.replaceAll { m ->
+                    if (m.direction == MessageDirection.OUTBOUND && m.deliveryState == DeliveryState.QUEUED) {
+                        canceledMessages++
+                        audit(AgentActionType.SEND_CANCELED, Actor.USER, conv.id, conv.contact.id, m.id, m.approvalId, reasonCode = "connection_unavailable")
+                        m.copy(deliveryState = DeliveryState.CANCELED)
+                    } else m
+                }
+            }
+            var canceledApprovals = 0
+            val convIds = convs.map { it.id }.toSet()
+            approvals.replaceAll { a ->
+                if (a.conversationId in convIds && a.status == ApprovalStatus.PENDING) {
+                    canceledApprovals++
+                    audit(AgentActionType.APPROVAL_CANCELED, Actor.USER, a.conversationId, a.contactId, approvalId = a.id, reasonCode = "connection_unavailable")
+                    adjustPendingCount(a.conversationId, -1)
+                    a.copy(status = ApprovalStatus.CANCELED, decidedAt = now)
+                } else a
+            }
+            val unsupported = Capability(Verification.UNSUPPORTED, notes = UNPAIRED_NOTE)
+            val unpaired = current.copy(
+                status = ConnectionStatus.DISCONNECTED,
+                capabilities = current.capabilities.copy(
+                    capabilities = CapabilitySet(unsupported, unsupported, unsupported, unsupported, unsupported),
+                ),
+                updatedAt = now,
+                unpairedAt = now,
+            )
+            connections[index] = unpaired
+            audit(
+                AgentActionType.CONNECTION_UNPAIRED, Actor.USER,
+                details = details(
+                    "connection_id" to connectionId, "canceled_messages" to canceledMessages,
+                    "canceled_instructions" to canceledInstructions, "canceled_approvals" to canceledApprovals, "in_flight" to inFlight,
+                ),
+            )
+            ok(ConnectionUnpairResult(unpaired, canceledMessages, canceledInstructions, canceledApprovals, inFlight))
+        }
+    }
 
     override suspend fun listConversations(page: PageRequest, filter: ConversationFilter): ApiResult<Page<Conversation>> =
         op("listConversations") {
@@ -446,6 +566,11 @@ class MockWingmanApi(
             if (type.startsWith("mock.") && connection.platform != "mock") {
                 return@op problem(422, ErrorCode.VALIDATION_ERROR, "mock.* events are only accepted on a mock connection")
             }
+            val isSendOutcome = type.endsWith("send_acknowledged") || type.endsWith("send_failed") || type.endsWith("delivery_receipt")
+            if (connection.unpairedAt != null && !isSendOutcome) {
+                // ADR 0007: an unpaired connection accepts only late outcomes of already-leased sends.
+                return@op problem(422, ErrorCode.VALIDATION_ERROR, "connection is unpaired; only send outcomes are accepted")
+            }
             val payload = (envelope["payload"] as? JsonObject) ?: JsonObject(emptyMap())
             fun payloadField(name: String) = (payload[name] as? JsonPrimitive)?.takeIf { it.isString }?.content
             var messageId: String? = null
@@ -476,7 +601,8 @@ class MockWingmanApi(
 
     override suspend fun claimOutboxInstructions(connectionId: String, body: OutboxClaimRequest, key: IdempotencyKey): ApiResult<OutboxClaimResult> =
         idempotent("claimOutboxInstructions", "POST /v1/connections/{id}/outbox/claim", key, connectionId to body) {
-            if (connections.none { it.id == connectionId }) return@idempotent notFound()
+            val connection = connections.firstOrNull { it.id == connectionId } ?: return@idempotent notFound()
+            installBindingProblem(connection, body.deviceInstallId)?.let { return@idempotent it }
             val now = clock()
             val max = body.maxInstructions ?: 1
             outbox.filter { it.state == OutboxInstructionState.LEASED && it.leaseExpiresAt!! <= now }
@@ -553,6 +679,34 @@ class MockWingmanApi(
     private fun nextId(): String = "0192f3a0-0000-7000-9000-" + (++idCounter).toString().padStart(12, '0')
 
     private fun <T> ok(value: T): ApiResult<T> = ApiResult.Success(value)
+
+    /**
+     * I-018 / D-017, as the backend's `OutboxService._check_binding`: only the install a device-side
+     * connection is paired with may claim. An unpaired connection, a never-paired device-side
+     * connection or another install gets `422 validation_error` at `/device_install_id`, and nothing
+     * is leased or recovered. A backend-side connection (`mock`, no binding) answers normally.
+     */
+    private fun installBindingProblem(connection: Connection, deviceInstallId: String): ApiResult<Nothing>? {
+        val reason = when {
+            connection.unpairedAt != null -> "this connection is unpaired; no install may claim on it"
+            connection.deviceInstallId == null ->
+                if (connection.platform in ConnectionCreateRequest.DEVICE_PLATFORMS) "this connection is not paired with any app install" else null
+            connection.deviceInstallId != deviceInstallId -> "not the app install this connection is paired with"
+            else -> null
+        } ?: return null
+        return ApiResult.Failure(
+            ApiError.Http(
+                status = 422,
+                problem = Problem(
+                    type = "https://wingman.invalid/problems/${ErrorCode.VALIDATION_ERROR.wire}",
+                    title = "This install may not claim instructions on this connection",
+                    status = 422,
+                    code = ErrorCode.VALIDATION_ERROR.wire,
+                    errors = listOf(FieldError(pointer = "/device_install_id", message = reason)),
+                ),
+            ),
+        )
+    }
 
     private fun notFound(): ApiResult<Nothing> = problem(404, ErrorCode.NOT_FOUND, "Not found")
 
@@ -745,6 +899,54 @@ class MockWingmanApi(
 
     companion object {
         private const val CURSOR_PREFIX = "mock:"
+        private val ID_PATTERN = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+        /** Backend `CLIENT_VERIFIED_NOTE` (app.services.connections). */
+        const val CLIENT_VERIFIED_NOTE: String =
+            "Claimed VERIFIED by the client; stored as UNVERIFIED until server-side evidence " +
+                "of a reproduced device run is recorded (ADR 0005, ADR 0007)."
+
+        /** Backend `UNPAIRED_NOTE`. */
+        const val UNPAIRED_NOTE: String = "Connection unpaired (ADR 0007)."
+
+        private fun verifiedNames(set: CapabilitySet): List<String> = listOfNotNull(
+            "read".takeIf { set.read.status == Verification.VERIFIED },
+            "draft".takeIf { set.draft.status == Verification.VERIFIED },
+            "send".takeIf { set.send.status == Verification.VERIFIED },
+            "swipe".takeIf { set.swipe.status == Verification.VERIFIED },
+            "calendar_write".takeIf { set.calendarWrite.status == Verification.VERIFIED },
+        )
+
+        /**
+         * Mirror of backend `trust_claimed_capabilities` for a NEW pairing (no server-held document):
+         * a claimed `VERIFIED` becomes `UNVERIFIED` with [CLIENT_VERIFIED_NOTE] (keeping only
+         * `reports_delivery_receipts`); otherwise client `evidence`/`verified_at` are dropped.
+         */
+        fun trustClaimedCapabilities(claimed: ConnectorCapabilities): ConnectorCapabilities {
+            fun trust(c: Capability): Capability = when (c.status) {
+                Verification.VERIFIED -> Capability(Verification.UNVERIFIED, notes = CLIENT_VERIFIED_NOTE, reportsDeliveryReceipts = c.reportsDeliveryReceipts)
+                else -> c.copy(evidence = null, verifiedAt = null)
+            }
+            val s = claimed.capabilities
+            return claimed.copy(
+                capabilities = CapabilitySet(trust(s.read), trust(s.draft), trust(s.send), trust(s.swipe), trust(s.calendarWrite)),
+            )
+        }
+
+        private fun mockSimulatorCapabilities(now: Instant): ConnectorCapabilities {
+            val unsupported = Capability(Verification.UNSUPPORTED)
+            fun simulated(receipts: Boolean? = null) = Capability(
+                Verification.VERIFIED,
+                evidence = "backend/tests/connectors (deterministic simulator)",
+                verifiedAt = now,
+                notes = "Simulated transport. VERIFIED means the simulator contract is tested, not a real platform.",
+                reportsDeliveryReceipts = receipts,
+            )
+            return ConnectorCapabilities(
+                "connector_capabilities.v1", "mock", "0.1.0",
+                CapabilitySet(simulated(), unsupported, simulated(receipts = true), unsupported, unsupported), now,
+            )
+        }
 
         /** D-014, as backend `PAUSE_CANCELS`: a pause cancels queued autopilot sends only. */
         val PAUSE_CANCELS: Set<MessageOrigin> = setOf(MessageOrigin.AUTOPILOT)

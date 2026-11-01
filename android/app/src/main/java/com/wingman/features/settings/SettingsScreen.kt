@@ -94,6 +94,10 @@ fun SettingsScreen() {
         // builds, which have no session.
         footer = {
             HorizontalDivider()
+            // I-020: pair / unpair this phone's SMS as a Wingman connection.
+            SectionTitle("Connections")
+            com.wingman.features.connections.SmsConnectionSection()
+            HorizontalDivider()
             SectionTitle("Account")
             SignOutButton()
         },

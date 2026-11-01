@@ -53,6 +53,25 @@ class DeviceConnectorContractTest {
         assertEquals(0, roundTrip("outbox.claim.empty.response.json", OutboxClaimResult.serializer()).instructions.size)
     }
 
+    /** Contract 1.2.0 pairing examples (I-020). */
+    @Test fun pairingExamples() {
+        val req = roundTrip("connection.create.sms.request.json", ConnectionCreateRequest.serializer())
+        assertEquals("sms", req.platform)
+        assertEquals("0192f3a0-0000-4000-8000-0000000000aa", req.deviceInstallId)
+        val mock = roundTrip("connection.create.mock.request.json", ConnectionCreateRequest.serializer())
+        assertNull(mock.deviceInstallId)
+        assertNull(mock.capabilities)
+        val created = roundTrip("connection.create.sms.response.json", Connection.serializer())
+        assertEquals(true, created.isPaired)
+        assertNull(created.unpairedAt)
+        val claimed = roundTrip("connection.create.claimed_verified.response.json", Connection.serializer())
+        assertEquals(Verification.UNVERIFIED, claimed.capabilities.capabilities.send.status)
+        roundTrip("connection.unpair.request.json", ConnectionUnpairRequest.serializer())
+        val unpaired = roundTrip("connection.unpair.response.json", ConnectionUnpairResult.serializer())
+        assertEquals(false, unpaired.connection.isPaired)
+        assertEquals(1, unpaired.canceledApprovalCount)
+    }
+
     @Test fun nullApprovalIdAndUnknownOutcome() {
         val auth = WingmanJson.decodeFromString(OutboxAuthorization.serializer(), """{"origin":"autopilot","approval_id":null}""")
         assertNull(auth.approvalId)
