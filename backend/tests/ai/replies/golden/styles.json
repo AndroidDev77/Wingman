@@ -1,0 +1,105 @@
+{
+  "description": "Golden fixtures for WING-010 style controls. Every case uses the same conversation. 'raw_model_text' cases feed one identical model draft through different style profiles and record the text after the generator's deterministic style caps. 'style_following' cases use a deterministic mock model keyed on the style directives it finds in the prompt (standing in for a model that follows them), and record the prompt directives and the resulting draft.",
+  "conversation": [
+    {"from": "contact", "text": "Just got back from a hike up Mount Tam, my legs are dead"}
+  ],
+  "raw_model_text": "Haha that's amazing!! 😂🔥🙌 Was the view worth the climb?",
+  "raw_cases": [
+    {
+      "name": "unset_style_changes_nothing",
+      "style": {},
+      "expected_text": "Haha that's amazing!! 😂🔥🙌 Was the view worth the climb?",
+      "expected_violations": [],
+      "expected_low_confidence": false
+    },
+    {
+      "name": "no_emoji",
+      "style": {"emoji_frequency": "none"},
+      "expected_text": "Haha that's amazing!! Was the view worth the climb?",
+      "expected_violations": ["style_emoji_trimmed"],
+      "expected_low_confidence": false
+    },
+    {
+      "name": "rare_emoji",
+      "style": {"emoji_frequency": "rare"},
+      "expected_text": "Haha that's amazing!! 😂 Was the view worth the climb?",
+      "expected_violations": ["style_emoji_trimmed"],
+      "expected_low_confidence": false
+    },
+    {
+      "name": "frequent_emoji",
+      "style": {"emoji_frequency": "frequent"},
+      "expected_text": "Haha that's amazing!! 😂🔥🙌 Was the view worth the climb?",
+      "expected_violations": [],
+      "expected_low_confidence": false
+    },
+    {
+      "name": "minimal_punctuation_no_emoji",
+      "style": {"punctuation": "minimal", "emoji_frequency": "none"},
+      "expected_text": "Haha that's amazing Was the view worth the climb?",
+      "expected_violations": ["style_emoji_trimmed", "style_punctuation_trimmed"],
+      "expected_low_confidence": false
+    },
+    {
+      "name": "very_short_within_cap",
+      "style": {"brevity": "very_short"},
+      "expected_text": "Haha that's amazing!! 😂🔥🙌 Was the view worth the climb?",
+      "expected_violations": [],
+      "expected_low_confidence": false
+    }
+  ],
+  "style_following_cases": [
+    {
+      "name": "neutral_default",
+      "style": {},
+      "expected_directives": [],
+      "expected_text": "That sounds like a great hike. Was the view worth the climb?"
+    },
+    {
+      "name": "lowercase_minimal_very_short",
+      "style": {"punctuation": "minimal", "emoji_frequency": "none", "brevity": "very_short", "tone": "direct"},
+      "expected_directives": [
+        "Punctuation: minimal. Lowercase is fine, skip most periods, no exclamation marks.",
+        "Emoji: none. Do not use any emoji.",
+        "Length: very short. One short line, under 60 characters.",
+        "Tone: direct and to the point."
+      ],
+      "expected_text": "worth the climb?"
+    },
+    {
+      "name": "expressive_playful_emoji",
+      "style": {"punctuation": "expressive", "emoji_frequency": "frequent", "humor": "playful", "tone": "playful", "brevity": "short"},
+      "expected_directives": [
+        "Punctuation: expressive. Exclamation marks and '...' are welcome where they fit.",
+        "Emoji: frequent. Use emoji freely where they fit naturally.",
+        "Length: short. One or two sentences, under 160 characters.",
+        "Humor: playful. Kind, gentle teasing is fine.",
+        "Tone: playful and light."
+      ],
+      "expected_text": "Dead legs means you earned it! 😂🥾 Was the view worth the climb?!"
+    },
+    {
+      "name": "warm_medium_occasional",
+      "style": {"punctuation": "standard", "emoji_frequency": "occasional", "brevity": "medium", "humor": "light", "tone": "warm"},
+      "expected_directives": [
+        "Punctuation: standard capitalization and punctuation.",
+        "Emoji: occasional. At most two emoji where they fit.",
+        "Length: medium. Two to four sentences, under 400 characters.",
+        "Humor: light. A light touch where it is natural.",
+        "Tone: warm and friendly."
+      ],
+      "expected_text": "That sounds like a great hike, and your legs have earned a rest 🙂 Was the view worth the climb? I'd love to hear how it went."
+    },
+    {
+      "name": "formal_reserved_no_humor",
+      "style": {"punctuation": "standard", "emoji_frequency": "none", "humor": "none", "tone": "formal"},
+      "expected_directives": [
+        "Punctuation: standard capitalization and punctuation.",
+        "Emoji: none. Do not use any emoji.",
+        "Humor: none. No jokes.",
+        "Tone: polite and formal."
+      ],
+      "expected_text": "That sounds like a wonderful hike. Was the view worth the climb?"
+    }
+  ]
+}
