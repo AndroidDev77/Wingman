@@ -136,6 +136,7 @@ commit on the PR):
 | 3 (`ed89a86`) | FAIL | The hierarchy dump showed the app in the expected state (onboarding saved, Inbox open, bottom bar visible). The bottom-nav label is a plain Text node and its clickable parent has no text, so `textContains(..).clickable(true)` matched nothing (the same selector style explains run 2's "Next") | Match the exact label; tap the takeover dialog's button below its title |
 | 4 (`5c6feea`) | PASS | | |
 | 5 (`6f4f9cf`, integrator) | FAIL | Both phases: the hierarchy dump showed the system dialog "Pixel Launcher isn't responding" (Close app / Wait) over the screen on the freshly booted emulator; the app was hidden behind it | `E2eDevice` taps "Wait" on a system ANR dialog of another app (never "Close app"; an ANR of Wingman fails the test). The sign-in helper now fails loudly instead of assuming "already signed in" |
+| 6 (`f8f774e`, integrator) | FAIL | The same launcher ANR dialog came back after each "Wait" (logged 4 times) and covered onboarding | `emulator-tests.sh` sets `settings put global hide_error_dialogs 1` before installing (the launcher is not under test; a hung Wingman still fails every bounded wait) |
 
 
 ### Real channel: SMS on the CI emulator ("emulator SMS stack exercised")
@@ -283,7 +284,7 @@ fix or that passed regardless (see [Evidence](#evidence)).
 | I-024 | No periodic Android SMS sync | The emulator test triggers sync rounds itself (`SmsConnectorRuntime.syncInBackground`); on a real phone claims and uploads wait until the app opens |
 | (new) | Compose UI tests under `createAndroidComposeRule` cannot launch `MainActivity` | The test rule's effect dispatcher made the first-launch onboarding `LaunchedEffect` call `NavController.navigate` off the main thread ("setCurrentState must be called on the main thread"). A test-environment artifact (the app launched normally does not run effects that way), so the instrumented tests use UiAutomator. Worth a follow-up if Compose-rule tests of the shell are wanted |
 | (limit) | Content guardrails are not E2E-testable with the dev mock | The dev mock never writes unsafe, ungrounded or escalating text; those guardrails are covered at unit level (`backend/tests/ai/replies`) |
-| (limit) | CI emulator noise | A freshly booted emulator can show a system ANR dialog for another app ("Pixel Launcher isn't responding", run 5); the helper taps Wait. Not an app failure; a Wingman ANR still fails the test |
+| (limit) | CI emulator noise | A freshly booted emulator can show a system ANR dialog for another app ("Pixel Launcher isn't responding", run 5); the script suppresses system error dialogs (`hide_error_dialogs`) and the helper taps Wait on any that remain. Not an app failure; a hung Wingman still fails the bounded waits |
 | (limit) | Delivery receipts | Only the emulator's simulated modem produced one; carrier delivery reports are D4 on a physical device |
 
 ## Evidence
@@ -299,8 +300,8 @@ passed; the PR description lists every job on the final head commit.
 | Backend (ruff, mypy, pytest) | [job 124946258153](https://github.com/AndroidDev77/Wingman/actions/runs/41339483728/job/124946258153): 954 passed | success (953 passed) |
 | Migrations, Contracts, Backend image, Android (`ci.yml`) | success (all four) | success (all four) |
 
-Failed runs on this PR, all explained above: emulator runs 1 to 3 (author, test harness) and 5
-(`6f4f9cf`, system ANR dialog); E2E backend on `6f4f9cf`
+Failed runs on this PR, all explained above: emulator runs 1 to 3 (author, test harness), 5
+(`6f4f9cf`) and 6 (`f8f774e`) (system ANR dialog of the launcher); E2E backend on `6f4f9cf`
 ([job 124942090473](https://github.com/AndroidDev77/Wingman/actions/runs/41338088423/job/124942090473),
 X2, the commit-after-response race, product bug 2).
 

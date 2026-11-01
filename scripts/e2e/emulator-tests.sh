@@ -38,6 +38,14 @@ log "emulator: $(adb shell getprop ro.product.model | tr -d '\r') API $(adb shel
 adb shell 'echo -n "health via 10.0.2.2: "; (toybox nc -w 3 10.0.2.2 8000 < /dev/null && echo reachable) || echo "nc unavailable"' || true
 curl -fsS http://127.0.0.1:8000/health && echo
 
+# A freshly booted CI emulator repeatedly showed "Pixel Launcher isn't responding" over the app
+# (CI runs on 6f4f9cf and f8f774e); tapping Wait did not stop it coming back. The launcher is not
+# part of the test, so system crash/ANR dialogs are suppressed for this emulator. This hides no
+# Wingman failure: a hung app still fails every bounded UI wait and server check.
+log "suppress system error dialogs (hide_error_dialogs=1)"
+adb shell settings put global hide_error_dialogs 1
+echo "hide_error_dialogs=$(adb shell settings get global hide_error_dialogs | tr -d '\r')"
+
 log "install debug app and test APKs (built with -Pwingman.useMockApi=false)"
 adb install -r -g "$repo/android/app/build/outputs/apk/debug/app-debug.apk"
 adb install -r -g "$repo/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
