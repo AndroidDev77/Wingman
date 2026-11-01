@@ -65,9 +65,16 @@ object SmsConnectorRuntime {
      */
     @Synchronized
     fun connectBackend(newApi: WingmanApi?) {
+        // Same client (e.g. MainActivity recreated): keep the connector. Rebuilding it would give a
+        // second SmsSender/SmsOutboxPoller, whose per-instance locks would not exclude a sync still
+        // running on the old one.
+        if (newApi === api) return
         api = newApi
         connector = null
     }
+
+    /** Serializes sync rounds process-wide, across connector rebuilds (one claim/send round at a time). */
+    private val syncLock = Any()
 
     /**
      * One upload + claim + execute round on a background thread (never the main thread: it does
@@ -77,9 +84,11 @@ object SmsConnectorRuntime {
     fun syncInBackground(context: Context, onDone: ((SmsConnector.SyncReport?) -> Unit)? = null) {
         val app = context.applicationContext
         Thread {
-            val report = runCatching {
-                get(app)?.sync(SmsRoleHelper.sendPreconditions(app))
-            }.getOrNull()
+            val report = synchronized(syncLock) {
+                runCatching {
+                    get(app)?.sync(SmsRoleHelper.sendPreconditions(app))
+                }.getOrNull()
+            }
             onDone?.invoke(report)
         }.apply { name = "wingman-sms-sync" }.start()
     }
