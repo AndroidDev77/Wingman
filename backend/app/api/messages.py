@@ -15,7 +15,13 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api._automation_common import AutomationServices, get_services, idempotent, message_out
+from app.api._automation_common import (
+    AutomationServices,
+    commit_then_dispatch,
+    get_services,
+    idempotent,
+    message_out,
+)
 from app.api.errors import ErrorCode, ProblemException
 from app.db.repositories import ConversationRepository
 from app.db.scope import UserScope
@@ -67,6 +73,7 @@ async def send_message(
                 title="Connection does not support sending",
             ) from None
         response = slot.complete(202, message_out(message))
-    # Hand it to the transport after the 202 body is fixed (same transaction).
-    await services.dispatcher.dispatch(session, scope, message.id)
+    # The decision, the queued message and the stored response are committed BEFORE
+    # any transport call (D-006 replay; never roll back a real send).
+    await commit_then_dispatch(session, services, scope, message.id)
     return response

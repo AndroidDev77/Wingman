@@ -69,10 +69,22 @@ def get_pipeline_runner(request: Request) -> PipelineRunner:
         current = services or await get_services(request)
         try:
             async with session_scope() as session:
-                await current.controller.handle_inbound_message(session, scope, message_id)
-        except Exception:
-            # Fail safe: the message is stored; no draft, approval or send happened.
-            logger.exception("automation pipeline failed user=%s", scope.user_id)
+                result = await current.controller.handle_inbound_message(
+                    session, scope, message_id, defer_dispatch=True
+                )
+            # The autopilot send is committed as queued; transmit in a new transaction.
+            if result.outbound_message_id is not None:
+                async with session_scope() as session:
+                    await current.dispatcher.dispatch(session, scope, result.outbound_message_id)
+        except Exception as exc:
+            # Fail safe: the message is stored and never undone. Log the class only: a
+            # database error's text can carry bound parameters (message text).
+            logger.error(  # noqa: TRY400 - no traceback on purpose (redaction)
+                "automation pipeline failed user=%s message=%s error_class=%s",
+                scope.user_id,
+                message_id,
+                type(exc).__name__,
+            )
 
     return run
 

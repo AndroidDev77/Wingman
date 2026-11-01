@@ -10,8 +10,8 @@
 Every route is user-scoped (``get_current_user_scope``; another user's approval or
 contact is ``404``), every POST requires ``Idempotency-Key`` (ADR 0004), every error is
 ``application/problem+json``. Approving never reports ``sent``: the response carries
-the message as queued; the dispatcher runs after the response body is fixed, in the
-same transaction.
+the message as queued; the decision and the queued message are committed, then the
+dispatcher runs in a new transaction.
 """
 
 import uuid
@@ -26,6 +26,7 @@ from app.api._automation_common import (
     AutomationServices,
     action_out,
     approval_out,
+    commit_then_dispatch,
     get_services,
     idempotent,
     message_out,
@@ -160,7 +161,9 @@ async def approve(
             "message": message_out(message),
         }
         response = slot.complete(200, payload)
-    await services.dispatcher.dispatch(session, scope, message.id)
+    # The decision, the queued message and the stored response are committed BEFORE
+    # any transport call (D-006 replay; never roll back a real send).
+    await commit_then_dispatch(session, services, scope, message.id)
     return response
 
 

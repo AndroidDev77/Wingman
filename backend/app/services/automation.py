@@ -330,6 +330,8 @@ class PipelineOutcome(StrEnum):
     NO_SEND = "no_send"  # draft decided not to reply (no_send / ask_user)
     APPROVAL = "approval"
     DISPATCHED = "dispatched"
+    # Autopilot send queued; the caller commits, then dispatches (``defer_dispatch``).
+    QUEUED = "queued"
     BLOCKED = "blocked"  # capability unsupported / block rule
 
 
@@ -382,8 +384,15 @@ class AutomationController:
         session: AsyncSession,
         scope: UserScope,
         message_id: uuid.UUID,
+        *,
+        defer_dispatch: bool = False,
     ) -> PipelineResult:
         """Steps 2-7 for one newly ingested inbound message.
+
+        With ``defer_dispatch=True`` an autopilot send is only queued (outcome
+        ``QUEUED``): the caller commits first and then calls ``dispatcher.dispatch`` in a
+        new transaction, so the queued message is durable before any transport call and
+        a failure after transmitting can never erase the record (D-006 replay, D-015).
 
         memory -> analysis -> draft -> policy -> approval or dispatch -> audit. Model
         failures degrade to no send (WING-008/009/010 are each fail-safe; any other
@@ -426,7 +435,9 @@ class AutomationController:
         draft = await self._store_draft(session, scope, result, trigger_message_id=message_id)
         if draft is None:
             return PipelineResult(PipelineOutcome.DUPLICATE, message_id=message_id)
-        return await self.decide(session, scope, draft, trigger_message_id=message_id)
+        return await self.decide(
+            session, scope, draft, trigger_message_id=message_id, defer_dispatch=defer_dispatch
+        )
 
     async def _store_draft(
         self,
@@ -531,8 +542,10 @@ class AutomationController:
         draft: Draft,
         *,
         trigger_message_id: uuid.UUID | None = None,
+        defer_dispatch: bool = False,
     ) -> PipelineResult:
-        """Apply the policy to a stored draft: stop, queue for approval, or dispatch."""
+        """Apply the policy to a stored draft: stop, queue for approval, or dispatch
+        (only queue with ``defer_dispatch``; see :meth:`handle_inbound_message`)."""
         conversation = await ConversationRepository(session, scope).require(draft.conversation_id)
         user = await UserRepository(session).lock(scope)
         contact = await ContactRepository(session, scope).lock_shared(conversation.contact_id)
@@ -610,6 +623,8 @@ class AutomationController:
             actor=Actor.AGENT,
             send_after=send_after,
         )
+        if defer_dispatch:
+            return _replace(base, PipelineOutcome.QUEUED, outbound_message_id=message.id)
         result = await self.dispatcher.dispatch(session, scope, message.id)
         return _replace(
             base,

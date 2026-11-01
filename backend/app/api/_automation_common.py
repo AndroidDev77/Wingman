@@ -12,6 +12,7 @@ so the claim, the side effect and the stored response commit together; a 5xx
 (exception) rolls all three back and the client may retry with the same key.
 """
 
+import logging
 import re
 import uuid
 from collections.abc import AsyncIterator
@@ -33,6 +34,8 @@ from app.services.automation import AutomationController, draft_to_contract
 from app.services.dispatcher import ConnectorRegistry, Dispatcher
 from app.services.ingest import IngestService
 from app.services.outbox import OutboxService
+
+logger = logging.getLogger(__name__)
 
 KEY_RE = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
 IN_PROGRESS_RETRY_AFTER_S = 2
@@ -279,3 +282,31 @@ async def get_services(request: Request) -> AutomationServices:
         services = build_services(controller=default_pipeline_controller())
         request.app.state.automation = services
     return services
+
+
+# --------------------------------------------------------------------------- dispatch
+
+
+async def commit_then_dispatch(
+    session: AsyncSession, services: AutomationServices, scope: UserScope, message_id: uuid.UUID
+) -> None:
+    """Commit the queued message (and the stored idempotent response), then dispatch it
+    in a savepoint of a new transaction.
+
+    The commit comes first so that nothing after a transport call can erase the record
+    of what was queued: if the dispatch fails, only its savepoint rolls back, the message
+    stays ``queued`` and the next dispatch derives the same per-attempt key, so the
+    connector replays instead of sending twice (D-006). The client's response is the
+    already-stored one; a dispatch failure is logged by class only (no bound values).
+    """
+    await session.commit()
+    try:
+        async with session.begin_nested():
+            await services.dispatcher.dispatch(session, scope, message_id)
+    except Exception as exc:
+        logger.error(  # noqa: TRY400 - no traceback on purpose (redaction)
+            "dispatch after commit failed user=%s message=%s error_class=%s",
+            scope.user_id,
+            message_id,
+            type(exc).__name__,
+        )
