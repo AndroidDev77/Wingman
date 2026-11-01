@@ -106,4 +106,6 @@ User-authored sends (`POST /v1/conversations/{id}/messages`) enter at step 6. Th
 
 - Swiping and discovery (WING-019): `swipe` exists only as a capability flag. No endpoint requires it.
 - Date-proposal endpoints (WING-018): the `DateProposal` shape and `DateProposalState` enum are defined so that persistence can be built. Endpoints will come in an additive contract PR.
-- Connection onboarding and pairing endpoints, the event-ingest HTTP route, memory endpoints, analytics and billing: each of these goes in its owning ticket's additive contract PR.
+- Connection onboarding and pairing endpoints, analytics and billing: each of these goes in its owning ticket's additive contract PR.
+
+Added in contract v1.1.0 (PR #15, D-012), so no longer out of scope: device event ingest (`POST /v1/connections/{connection_id}/events`), the pull-based device outbox with single-use leases (`GET /v1/connections/{connection_id}/outbox`, `POST .../outbox/claim`, ADR 0006), and the memory routes (`GET /v1/contacts/{contact_id}/memories`, `PUT`/`DELETE /v1/memories/{memory_id}`). They are specified but not implemented yet: WING-011 implements ingest, outbox and claim; the WING-008 memory router still needs contract pagination before it is mounted.
