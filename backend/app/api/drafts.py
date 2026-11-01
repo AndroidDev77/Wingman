@@ -75,7 +75,7 @@ async def create_draft(
     conversation_id: uuid.UUID,
     response: Response,
     scope: Annotated[UserScope, Depends(get_current_user_scope)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
     generator: Annotated[ReplyGenerator, Depends(get_reply_generator)],
     body: DraftCreateRequest | None = None,
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,

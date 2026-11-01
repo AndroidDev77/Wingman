@@ -190,7 +190,7 @@ def _expected_version(if_match: str | None) -> int | None:
     return None if if_match is None else int(if_match.strip('"'))
 
 
-Session = Annotated[AsyncSession, Depends(get_session)]
+Session = Annotated[AsyncSession, Depends(get_session, scope="function")]
 Scope = Annotated[UserScope, Depends(get_current_user_scope)]
 IfMatch = Annotated[
     str | None,

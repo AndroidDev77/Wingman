@@ -5,7 +5,7 @@ Usage (FastAPI, wired by the integrator / WING-004)::
     from app.db.session import get_session
 
     @router.get(...)
-    async def handler(session: AsyncSession = Depends(get_session)) -> ...:
+    async def handler(session: AsyncSession = Depends(get_session, scope="function")) -> ...:
         repo = ConversationRepository(session)
         ...
 

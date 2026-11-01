@@ -35,7 +35,7 @@ __all__ = ["router"]
 router = APIRouter()
 
 Scope = Annotated[UserScope, Depends(get_current_user_scope)]
-Session = Annotated[AsyncSession, Depends(get_session)]
+Session = Annotated[AsyncSession, Depends(get_session, scope="function")]
 Cursor = Annotated[str | None, Query(min_length=1, max_length=MAX_CURSOR_LEN)]
 Limit = Annotated[int, Query(ge=1, le=MAX_LIMIT)]
 PlatformParam = Annotated[str | None, Query(pattern=r"^[a-z][a-z0-9_]{1,31}$")]

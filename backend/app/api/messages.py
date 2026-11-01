@@ -47,7 +47,7 @@ async def send_message(
     conversation_id: uuid.UUID,
     body: SendMessageRequest,
     scope: Annotated[UserScope, Depends(get_current_user_scope)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
     services: Annotated[AutomationServices, Depends(get_services)],
     idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> JSONResponse:
