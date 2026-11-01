@@ -96,7 +96,7 @@ class MockPairingTest {
         val queued = api.sendMessage(conv.id, SendMessageRequest("hi"), IdempotencyKey("send-key-01")).getOrNull()!!
         assertEquals(DeliveryState.QUEUED, queued.deliveryState)
         api.queueOutboxInstruction(sms, "sms:+15550101234", "leased one")
-        api.claimOutboxInstructions(sms, OutboxClaimRequest(install, 1), IdempotencyKey("claim-key-1"))
+        api.claimOutboxInstructions(sms, OutboxClaimRequest(MockFixtures.SMS_DEVICE_INSTALL_ID, 1), IdempotencyKey("claim-key-1")).getOrNull()!! // the fixture's paired install (I-018)
         api.queueOutboxInstruction(sms, "sms:+15550101234", "pending one")
 
         val r = api.unpairConnection(sms, key(1)).getOrNull()!!
@@ -117,6 +117,34 @@ class MockPairingTest {
         assertEquals(listOf(0, 0, 0, 0), listOf(again.canceledMessageCount, again.canceledInstructionCount, again.canceledApprovalCount, again.inFlightMessageCount))
         // Sending on the unpaired connection is refused.
         assertEquals(ErrorCode.CAPABILITY_UNSUPPORTED, api.sendMessage(conv.id, SendMessageRequest("again"), IdempotencyKey("send-key-02")).errorOrNull()!!.code)
+    }
+
+    @Test fun claimIsBoundToThePairedInstall() = runTest {
+        // I-018 / D-017, like the backend: only the paired install may claim; 422 at /device_install_id otherwise.
+        fun rejected(r: ApiResult<*>) {
+            val e = r.errorOrNull() as ApiError.Http
+            assertEquals(422, e.status)
+            assertEquals(ErrorCode.VALIDATION_ERROR, e.code)
+            assertEquals("/device_install_id", e.problem!!.errors!!.single().pointer)
+        }
+        val c = api.createConnection(sms(), key(1)).getOrNull()!!
+        api.queueOutboxInstruction(c.id, "sms:+15550101234", "only for the paired phone")
+        val other = "0192f3a0-0000-4000-8000-0000000000bb"
+        rejected(api.claimOutboxInstructions(c.id, OutboxClaimRequest(other, 1), IdempotencyKey("claim-foreign-1")))
+        // The foreign attempt took nothing: the paired install still gets the instruction...
+        val leased = api.claimOutboxInstructions(c.id, OutboxClaimRequest(install, 1), IdempotencyKey("claim-key-1")).getOrNull()!!
+        assertEquals(1, leased.instructions.size)
+        // ...and recovers its own lease with a new key; the foreign install cannot recover it.
+        assertEquals(leased.instructions, api.claimOutboxInstructions(c.id, OutboxClaimRequest(install, 1), IdempotencyKey("claim-key-2")).getOrNull()!!.instructions)
+        rejected(api.claimOutboxInstructions(c.id, OutboxClaimRequest(other, 1), IdempotencyKey("claim-foreign-2")))
+        // An unpaired connection: not even the install it was paired with may claim.
+        api.unpairConnection(c.id, key(2))
+        rejected(api.claimOutboxInstructions(c.id, OutboxClaimRequest(install, 1), IdempotencyKey("claim-key-3")))
+        // A backend-side connection (mock, no binding) still answers with an empty list.
+        val sim = api.claimOutboxInstructions(MockFixtures.CONNECTION_MOCK, OutboxClaimRequest(other, 1), IdempotencyKey("claim-sim-1")).getOrNull()!!
+        assertEquals(0, sim.instructions.size)
+        // A device-side connection that was never paired (the notification fixture has no binding).
+        rejected(api.claimOutboxInstructions(MockFixtures.CONNECTION_NOTIFICATION, OutboxClaimRequest(install, 1), IdempotencyKey("claim-notif-1")))
     }
 
     @Test fun unpairedConnectionAcceptsOnlySendOutcomes() = runTest {

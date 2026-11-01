@@ -139,7 +139,8 @@ class SmsPairingTest {
         assertEquals(backend.creates[0].key, backend.creates[1].key)
         assertEquals(backend.creates[0].body, backend.creates[1].body)
         assertTrue("replay of the original 201", r.replayed)
-        assertEquals(1, backend.mock.listConnections().getOrNull()!!.items.count { it.platform == "sms" && it.deviceInstallId != null })
+        val install = backend.creates[0].body.deviceInstallId
+        assertEquals(1, backend.mock.listConnections().getOrNull()!!.items.count { it.platform == "sms" && it.deviceInstallId == install })
         assertEquals(r.connection.id, m.activeScope()!!.connectionId)
     }
 

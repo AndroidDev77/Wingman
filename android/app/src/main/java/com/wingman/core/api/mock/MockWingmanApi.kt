@@ -21,6 +21,7 @@ import com.wingman.core.model.Capability
 import com.wingman.core.model.CapabilitySet
 import com.wingman.core.model.Connection
 import com.wingman.core.model.ConnectionCreateRequest
+import com.wingman.core.model.FieldError
 import com.wingman.core.model.ConnectionStatus
 import com.wingman.core.model.ConnectionUnpairRequest
 import com.wingman.core.model.ConnectionUnpairResult
@@ -90,7 +91,9 @@ import java.time.Instant
  *  - device connectors (v1.1.0): `ingestConnectorEvent` dedups by `event_id` (`duplicate_event`), refuses
  *    `mock.*` on a real connection and send outcomes without a leased instruction (422);
  *    `claimOutboxInstructions` leases instructions queued with [queueOutboxInstruction] at most once,
- *    returns the caller's own unexpired leases, and replays the same key;
+ *    returns the caller's own unexpired leases, and replays the same key. Only the install a device-side
+ *    connection is paired with may claim (I-018, D-017): another install, an unpaired connection or a
+ *    never-paired device-side connection is `422 validation_error` at `/device_install_id`;
  *  - pairing (v1.2.0, ADR 0007): `createConnection` answers a new connection, or the existing one when
  *    this `device_install_id` is already paired for the platform (the HTTP 200 case); a replay of the
  *    same key returns the original. A client-claimed `VERIFIED` is stored as `UNVERIFIED` (with the
@@ -598,7 +601,8 @@ class MockWingmanApi(
 
     override suspend fun claimOutboxInstructions(connectionId: String, body: OutboxClaimRequest, key: IdempotencyKey): ApiResult<OutboxClaimResult> =
         idempotent("claimOutboxInstructions", "POST /v1/connections/{id}/outbox/claim", key, connectionId to body) {
-            if (connections.none { it.id == connectionId }) return@idempotent notFound()
+            val connection = connections.firstOrNull { it.id == connectionId } ?: return@idempotent notFound()
+            installBindingProblem(connection, body.deviceInstallId)?.let { return@idempotent it }
             val now = clock()
             val max = body.maxInstructions ?: 1
             outbox.filter { it.state == OutboxInstructionState.LEASED && it.leaseExpiresAt!! <= now }
@@ -675,6 +679,34 @@ class MockWingmanApi(
     private fun nextId(): String = "0192f3a0-0000-7000-9000-" + (++idCounter).toString().padStart(12, '0')
 
     private fun <T> ok(value: T): ApiResult<T> = ApiResult.Success(value)
+
+    /**
+     * I-018 / D-017, as the backend's `OutboxService._check_binding`: only the install a device-side
+     * connection is paired with may claim. An unpaired connection, a never-paired device-side
+     * connection or another install gets `422 validation_error` at `/device_install_id`, and nothing
+     * is leased or recovered. A backend-side connection (`mock`, no binding) answers normally.
+     */
+    private fun installBindingProblem(connection: Connection, deviceInstallId: String): ApiResult<Nothing>? {
+        val reason = when {
+            connection.unpairedAt != null -> "this connection is unpaired; no install may claim on it"
+            connection.deviceInstallId == null ->
+                if (connection.platform in ConnectionCreateRequest.DEVICE_PLATFORMS) "this connection is not paired with any app install" else null
+            connection.deviceInstallId != deviceInstallId -> "not the app install this connection is paired with"
+            else -> null
+        } ?: return null
+        return ApiResult.Failure(
+            ApiError.Http(
+                status = 422,
+                problem = Problem(
+                    type = "https://wingman.invalid/problems/${ErrorCode.VALIDATION_ERROR.wire}",
+                    title = "This install may not claim instructions on this connection",
+                    status = 422,
+                    code = ErrorCode.VALIDATION_ERROR.wire,
+                    errors = listOf(FieldError(pointer = "/device_install_id", message = reason)),
+                ),
+            ),
+        )
+    }
 
     private fun notFound(): ApiResult<Nothing> = problem(404, ErrorCode.NOT_FOUND, "Not found")
 

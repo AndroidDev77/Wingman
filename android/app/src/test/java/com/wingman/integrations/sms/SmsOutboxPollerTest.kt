@@ -2,6 +2,7 @@ package com.wingman.integrations.sms
 
 import com.wingman.core.api.ApiResult
 import com.wingman.core.api.IdempotencyKey
+import com.wingman.core.api.mock.MockFixtures
 import com.wingman.core.api.mock.MockWingmanApi
 import com.wingman.core.model.OutboxAuthorization
 import com.wingman.core.model.OutboxAuthorizationOrigin
@@ -260,16 +261,18 @@ class SmsOutboxPollerTest {
     @Test fun `end to end against MockWingmanApi - dispatcher instruction, claim, send, ack ingested`() {
         val mock = MockWingmanApi(clock = { Instant.ofEpochMilli(clock.now) })
         val key = mock.queueOutboxInstruction(CONNECTION, "sms:+15550101234", "See you at 8")
-        val connector = SmsConnector(SCOPE, InMemorySmsStateStore(), transport, clock = clock, api = mock)
+        // This install is the one the fixture SMS connection is paired with (I-018).
+        val store = InMemorySmsStateStore().apply { put(SmsInstallId.KEY, MockFixtures.SMS_DEVICE_INSTALL_ID) }
+        val connector = SmsConnector(SCOPE, store, transport, clock = clock, api = mock)
         assertEquals(1, connector.sync(READY).poll.submitted)
         connector.sender.onPartSent(key, 0, SmsSentResult.Ok)
         assertEquals(1, connector.sync(READY).uploadBefore.accepted)
         assertEquals(listOf("message.send_acknowledged"), mock.ingestedEvents.map { it.str("type") })
-        // A second device cannot claim the same instruction, and this device's next claim is empty.
+        // A second install may not claim on this connection at all (I-018: 422), and this device's next claim is empty.
         val other = runBlocking {
             mock.claimOutboxInstructions(CONNECTION, com.wingman.core.model.OutboxClaimRequest("0192f3a0-0000-7000-8000-00000000ffff"), IdempotencyKey("other-device-claim"))
         }
-        assertEquals(0, other.getOrNull()!!.instructions.size)
+        assertEquals(422, (other.errorOrNull() as com.wingman.core.api.ApiError.Http).status)
         assertEquals(0, connector.sync(READY).poll.claimed)
         assertEquals(1, transport.submits.size)
     }
@@ -285,6 +288,39 @@ class SmsOutboxPollerTest {
         assertEquals(1, r.rejected)
         assertEquals(1, outbox.deadLetterCount())
         assertFalse(mock.ingestedEvents.isNotEmpty())
+    }
+
+    @Test fun `I-018 rejection of this install is definitive, backs off and never crash-loops`() {
+        // A claim from an install the connection is not paired with (e.g. re-paired on another phone).
+        val mock = MockWingmanApi(clock = { Instant.ofEpochMilli(clock.now) })
+        mock.queueOutboxInstruction(CONNECTION, "sms:+15550101234", "not for this phone")
+        val store = InMemorySmsStateStore().apply { put(SmsInstallId.KEY, "0192f3a0-0000-4000-8000-0000000000bb") }
+        val outbox = SmsOutbox(store)
+        val sender = SmsSender(SCOPE, store, transport, outbox, clock)
+        val poller = SmsOutboxPoller(SCOPE, store, mock, sender, clock, newKey = { "claim-key-${++keyCounter}" })
+
+        val first = poller.poll(READY)
+        assertEquals("HTTP 422 validation_error", first.skippedReason)
+        assertEquals(0, first.claimed)
+        assertNull("definitive: the rejected key is dropped, never replayed", poller.pendingClaimKey())
+        val next = first.nextAttemptAtMillis!!
+        assertTrue(next > clock.now)
+        // While backing off, no request is made at all.
+        assertEquals("backing off", poller.poll(READY).skippedReason)
+        assertEquals(1, mock.calls.count { it == "claimOutboxInstructions" })
+        // Repeated rejections grow the backoff instead of hammering the server.
+        clock.now = next
+        val second = poller.poll(READY)
+        assertEquals("HTTP 422 validation_error", second.skippedReason)
+        assertNull(poller.pendingClaimKey())
+        assertTrue("backoff grows: 5 s, then 10 s", second.nextAttemptAtMillis!! - clock.now >= 2 * 5_000)
+        assertEquals(2, mock.calls.count { it == "claimOutboxInstructions" })
+        assertEquals(0, transport.submits.size)
+        // Through the connector as well: a sync round reports the rejection and does not throw.
+        clock.now = second.nextAttemptAtMillis!!
+        val connector = SmsConnector(SCOPE, store, transport, clock = clock, api = mock)
+        assertEquals("HTTP 422 validation_error", connector.sync(READY).poll.skippedReason)
+        assertEquals(0, transport.submits.size)
     }
 
     @Test fun `claim keys differ between installs`() {
