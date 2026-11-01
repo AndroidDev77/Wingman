@@ -89,8 +89,9 @@ object SmsConnectionCopy {
     const val UNPAIR_TITLE = "Disconnect this phone's SMS?"
 
     const val UNPAIR_BODY =
-        "Wingman will stop reading and sending texts on this phone. Automated messages that are still queued and " +
-            "drafts waiting for your approval in these SMS conversations will be canceled. A message this phone has " +
+        "Wingman will stop reading and sending texts on this phone. Messages that are still queued to send " +
+            "(including ones you wrote or approved) and drafts waiting for your approval in these SMS conversations " +
+            "will be canceled. A message this phone has " +
             "already started sending can't be recalled; its result is still recorded. Your conversation history stays. " +
             "Texts already received but not yet uploaded are kept and uploaded later if Wingman accepts them."
 

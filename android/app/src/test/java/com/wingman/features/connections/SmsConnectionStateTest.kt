@@ -37,6 +37,15 @@ class SmsConnectionStateTest {
         return SmsConnectionsState(backgroundScope, host, { device }, "Pixel 8 SMS", clock, afterChange = { changes += Unit }) to host
     }
 
+    @Test fun `unpair confirmation explains what is canceled, including the user's own queued sends`() {
+        // ADR 0007: unpair cancels queued outbound messages of ANY origin and pending approvals; a leased send can't be recalled.
+        val body = SmsConnectionCopy.UNPAIR_BODY
+        assertTrue(body.contains("including ones you wrote or approved"))
+        assertTrue(body.contains("drafts waiting for your approval"))
+        assertTrue(body.contains("can't be recalled"))
+        assertFalse(body.contains("Automated messages that are still queued"))
+    }
+
     @Test fun `pair steps follow the role and permissions`() {
         assertEquals(SmsPairStep.READY, SmsConnectionPresenter.pairStep(device))
         assertEquals(SmsPairStep.NEEDS_ROLE, SmsConnectionPresenter.pairStep(device.copy(isDefaultSmsApp = false)))
