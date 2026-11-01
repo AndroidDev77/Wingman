@@ -19,6 +19,7 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -34,6 +35,9 @@ import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.wingman.core.di.AppContainer
 import com.wingman.core.ui.compose.LocalAppContainer
+import com.wingman.features.approvals.ApprovalsNavIcon
+import com.wingman.features.approvals.LocalPendingBadge
+import com.wingman.features.approvals.PendingBadgeState
 import com.wingman.features.auth.AuthGate
 import com.wingman.features.auth.SignInScreen
 import com.wingman.features.onboarding.OnboardingGate
@@ -78,6 +82,11 @@ private fun MainShell(
     val navigator = remember(navController) { NavControllerNavigator(navController) }
     val backStack by navController.currentBackStackEntryAsState()
     val current = Destination.fromRoute(backStack?.destination?.route)
+    // WING-015: pending-approvals badge, re-read from the server on every destination change.
+    val badgeScope = rememberCoroutineScope()
+    val pendingBadge = remember(container) { PendingBadgeState(badgeScope, container.api) }
+    val badge by pendingBadge.badge.collectAsState()
+    LaunchedEffect(current) { pendingBadge.refresh() }
     Scaffold(
         bottomBar = {
             NavigationBar {
@@ -85,14 +94,22 @@ private fun MainShell(
                     NavigationBarItem(
                         selected = current == dest,
                         onClick = { navigator.navigateTo(dest) },
-                        icon = { Icon(dest.icon(), contentDescription = null) },
+                        icon = {
+                            if (dest == Destination.Approvals) {
+                                ApprovalsNavIcon(badge) { Icon(dest.icon(), contentDescription = null) }
+                            } else {
+                                Icon(dest.icon(), contentDescription = null)
+                            }
+                        },
                         label = { Text(dest.label) },
                     )
                 }
             }
         },
     ) { padding ->
-        WingmanNavHost(navController, navigator, screens, Modifier.padding(padding))
+        CompositionLocalProvider(LocalPendingBadge provides pendingBadge) {
+            WingmanNavHost(navController, navigator, screens, Modifier.padding(padding))
+        }
     }
     // First-launch rule (WING-013): one GET /v1/preferences. Only a confirmed never-saved user
     // (server version 0) is sent to onboarding; a failed or pending check returns false, so a
