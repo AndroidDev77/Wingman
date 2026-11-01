@@ -26,6 +26,10 @@ duplicate send.
 - [ ] **All seven CI jobs green on that commit** (D-011, D-018): Backend, Migrations, Contracts,
       Backend image, Android, E2E backend, E2E Android emulator.
       `gh api repos/AndroidDev77/Wingman/commits/<sha>/check-runs --jq '.check_runs[]|"\(.name) \(.conclusion)"'`
+- [ ] If `E2E backend` is red only in X1 with `DeadlockDetectedError` in the server log, that is
+      the known intermittent ingest deadlock ([known_limitations.md](known_limitations.md#backend-and-operations)):
+      re-run the job once and record both runs; any other failure, or a duplicate counter above 0,
+      blocks the release.
 - [ ] `scripts/release/check.sh` passes locally (backend checks, contracts, migrations, backend E2E;
       stops at the first failure). It prints `Release scope: LIMITED PRIVATE BETA only` while G5 is
       blocked. That is expected for this beta.

@@ -73,6 +73,7 @@ reproducible run on the real target (`AGENT_RULES.md`).
 
 | # | Item | Issue | Notes |
 |---|---|---|---|
+| 5b | Deadlock under concurrent duplicate ingest | (new, found on PR #36 CI) | X1 failed twice with Postgres `DeadlockDetectedError` in `get_or_create_for_thread` (HTTP `500`, nothing stored, retried by the device); passed on the third run. Retry the ingest transaction on serialization/deadlock errors or lock per thread; add a repeated-run stress job. Fix before SMS autopilot ([known_limitations.md](known_limitations.md#backend-and-operations)) |
 | 6 | Mark-read | I-022 | Additive contract route; `ConversationRepository.mark_read` exists. Unread counts only grow today |
 | 7 | Self-service account deletion and export | (new, this beta) | Today the operator deletes by SQL ([checklist §5](release_checklist.md#5-privacy-and-data-handling)). Needs an additive contract operation and an audit trail |
 | 8 | Hosted deployment | WING-023 follow-up | Run the Azure sample (or another host) for real and update `docs/deployment.md`'s verification table; worker app included. Blocked on the IdP for `prod` |

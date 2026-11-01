@@ -86,6 +86,20 @@ Owner: WING-026. State as of v0.1.0-beta.1 (`main` @ `266243a`, 2026-11-01). Lab
 
 ### Backend and operations
 
+- **Intermittent deadlock on concurrent duplicate inbound events (found by WING-026 CI, not
+  fixed here).** On PR #36 the CI job `E2E backend` failed twice in a row in scenario X1 and passed
+  on the third attempt, with no backend code changed by the PR (`main` @ `266243a` had passed). Two
+  of the 12 parallel deliveries of the same message under different event IDs got HTTP `500`:
+  Postgres `DeadlockDetectedError` in `ConversationRepository.get_or_create_for_thread`
+  (`INSERT ... ON CONFLICT DO NOTHING` on `conversations`, reached from
+  `app/services/ingest.py::_inbound`). Not reproduced locally (6 of 6 runs of X1 passed, and the full
+  suite). The run-wide zero-duplicate-sends invariant still held in the failing runs (every counter
+  0): the failed requests stored nothing and were not acknowledged, so a device retries them and the
+  retry is deduplicated. Impact for testers: a rare `500` on a burst of identical SMS uploads, retried
+  by the phone; no duplicate or lost message observed. Proposed follow-up (roadmap P1): retry the
+  ingest transaction on `40P01` (deadlock) / `40001`, or take a per-thread advisory lock before the
+  upsert, plus a stress test.
+
 - **No deployed environment exists.** The Azure sample is UNVERIFIED and its image default
   (`WINGMAN_ENV=prod`) refuses the dev stub, so it cannot host this beta until an IdP exists.
 - The beta backend runs with `WINGMAN_ENV=dev`, so the unauthenticated demo router

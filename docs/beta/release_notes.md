@@ -70,6 +70,9 @@ Anything not listed here is not claimed. For what does not work, see
 - No duplicate sends under duplicate inbound events, an offline phone, a lapsed device lease,
   retryable and permanent failures, takeover mid-flight, and server kills (SIGKILL/SIGTERM).
   *Evidence:* X1 to X5 and the run-wide zero-duplicate-sends check (every duplicate counter 0).
+  **Known issue:** a burst of identical inbound uploads can intermittently hit a database deadlock
+  and answer `500` for some of the copies (X1 failed twice on PR #36's CI, then passed; duplicate
+  counters stayed 0). See [`known_limitations.md`](known_limitations.md#backend-and-operations).
 - A phone that never reports back is shown as "outcome unknown", never as sent or failed, and is
   never retried automatically. *Evidence:* X2; D-016.
 
