@@ -89,8 +89,10 @@ duplicate_drafts 0, duplicate_approval_sends 0, conversations_over_replied 0,
 duplicate_radio_attempts 0
 ```
 
-(`send_attempted` 20 vs. `sent` 18: X2's lapsed lease and X3's failed attempt 1 are attempts that
-did not end in an acknowledgement; X3b's dead-lettered send is the other; each was attempted once.)
+(`send_attempted` 20 vs. `sent` 18: the two attempts that never ended in an acknowledgement are
+X3's failed attempt 1 (retried as attempt 2, which was sent) and X3b's dead-lettered send. X2's
+lapsed lease is not one of them: its late acknowledgement was accepted and that message counts as
+`sent`. Integrator correction: an earlier version of this paragraph listed X2 as well.)
 
 The server log of the whole run has no traceback, `IntegrityError`, failed post-commit dispatch,
 failed pipeline or HTTP 500.
@@ -185,6 +187,11 @@ What this shows and what it does not:
 - It is **not** a physical device: no SIM, no radio, no carrier, no second phone received anything.
   Per AGENT_RULES.md and the I-003 rule, that is not VERIFIED. The operator `verify` CLI was **not**
   run and SMS capabilities were **not** changed.
+- Integrator hardening (after review): `EmulatorSmsRoundTripTest` returns early through
+  `assumeTrue` when `wingman.sms` is not set, and an assumption-skipped test also prints
+  `OK (1 test)`. `scripts/e2e/emulator-tests.sh` now also requires the `files/wing025-done` marker
+  the test writes after its last assertion, so a skipped phase B can no longer count as PASS.
+  Every run cited above did log the full round trip (the `RESULT` line), so no result changes.
 - In the first run, `cmd role add-role-holder` printed `java.util.concurrent.TimeoutException`
   and `get-role-holders` still listed `com.google.android.apps.messaging` right after it, while the
   app's own check (`RoleManager.isRoleHeld`) said `role=true` about 10 s later and `SMS_DELIVER`
