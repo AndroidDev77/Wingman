@@ -140,9 +140,8 @@ environment, never from the repo, the image, or a plain env var in an IaC templa
 | `WINGMAN_LLM_OUTPUT_USD_PER_1M` | unset | no | Output price per 1M tokens |
 | `WINGMAN_LLM_STRICT_JSON_SCHEMA` | `false` | no | Ask the endpoint to enforce the schema (OpenAI `strict`) |
 
-`.env.example` lists the common subset; the four `WINGMAN_LLM_*` rows not in it
-(`MAX_OUTPUT_RETRIES`, `BACKOFF_BASE_S`, `BACKOFF_MAX_S`, `STRICT_JSON_SCHEMA`) are
-optional tuning knobs.
+`.env.example` lists every `WINGMAN_LLM_*` key (commented); `MAX_OUTPUT_RETRIES`,
+`BACKOFF_BASE_S`, `BACKOFF_MAX_S` and `STRICT_JSON_SCHEMA` are optional tuning knobs.
 
 ### Tests and tooling only (never set in a deployed environment)
 
