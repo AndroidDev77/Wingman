@@ -9,18 +9,38 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Literal
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from pydantic import BaseModel
 
 from app import __version__
+from app.ai.llm_gateway import build_gateway
+from app.ai.memory import MemoryService
 from app.api.auth import create_auth_router
 from app.api.demo_connector import create_demo_connector_router
 from app.api.drafts import router as drafts_router
 from app.api.errors import register_error_handlers
+from app.api.memories import create_memories_router
 from app.api.preferences import router as preferences_router
 from app.config import get_settings
 from app.db.session import dispose_engine
 from app.security.factory import check_auth_config
+
+
+async def get_memory_service(request: Request) -> MemoryService:
+    """FastAPI dependency: the app's single ``MemoryService``.
+
+    Built from ``build_gateway()`` on first use and then reused for every request of
+    this app, so no provider is constructed per request. Built lazily (not in
+    ``create_app``) so an LLM misconfiguration cannot stop unrelated routes from
+    starting; listing, correcting and deleting memories never call the model. It is
+    ``async`` so it runs on the event loop: there is no await between the check and
+    the assignment, so concurrent first requests cannot build two services.
+    """
+    service: MemoryService | None = getattr(request.app.state, "memory_service", None)
+    if service is None:
+        service = MemoryService(build_gateway())
+        request.app.state.memory_service = service
+    return service
 
 
 class HealthResponse(BaseModel):
@@ -49,6 +69,8 @@ def create_app() -> FastAPI:
     app.include_router(create_auth_router())
     # WING-007: /v1/preferences and /v1/contacts/{id}/preferences.
     app.include_router(preferences_router)
+    # WING-008 (contract v1.1.0, D-012): contact memories, correction, deletion.
+    app.include_router(create_memories_router(get_memory_service))
     # WING-010: POST /v1/conversations/{id}/drafts (suggestions only; never sends).
     app.include_router(drafts_router)
 

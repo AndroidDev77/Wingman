@@ -45,7 +45,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, time, timedelta
 
-from sqlalchemy import or_, select
+from sqlalchemy import Select, or_, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.llm_gateway import LLMGateway
@@ -75,6 +75,7 @@ from app.db.base import utc_now
 from app.db.enums import MessageDirection
 from app.db.errors import NotFoundError
 from app.db.models import ConversationMemory, Message
+from app.db.pagination import CursorPosition, Page, clamp_limit, decode_cursor, encode_cursor
 from app.db.repositories import ContactRepository, ConversationRepository, MemoryRepository
 from app.db.scope import UserScope
 
@@ -700,6 +701,59 @@ class MemoryService:
         Without ``include_history`` only active rows (not superseded, not expired).
         """
         await ContactRepository(session, scope).require(contact_id)
+        stmt = self._list_stmt(scope, contact_id, include_history=include_history)
+        stmt = stmt.order_by(ConversationMemory.created_at.desc(), ConversationMemory.id.desc())
+        return [to_domain(r) for r in (await session.scalars(stmt)).all()]
+
+    @staticmethod
+    def _listing(contact_id: uuid.UUID, include_history: bool) -> str:
+        # The cursor's listing tag carries the contact and ``include_history``, so a
+        # cursor replayed against another contact or the other history mode is an
+        # invalid cursor (ADR 0003: changing filters means starting again).
+        return f"memories:{contact_id}:{'history' if include_history else 'active'}"
+
+    async def list_page(
+        self,
+        session: AsyncSession,
+        scope: UserScope,
+        contact_id: uuid.UUID,
+        *,
+        include_history: bool = False,
+        cursor: str | None = None,
+        limit: int | None = None,
+    ) -> Page[MemoryFact]:
+        """One keyset page of :meth:`list_facts` (contract ``listContactMemories``).
+
+        Order is ``(created_at desc, id desc)``. ``NotFoundError`` for a missing or
+        other-user contact; ``InvalidCursorError`` for a malformed cursor or one issued
+        for another contact or the other ``include_history`` mode; ``ValueError`` for a
+        limit outside 1..100. Rows inserted while paging are newer than every cursor
+        position, so they never shift later pages (no duplicates, no gaps).
+        """
+        size = clamp_limit(limit)
+        await ContactRepository(session, scope).require(contact_id)
+        listing = self._listing(contact_id, include_history)
+        stmt = self._list_stmt(scope, contact_id, include_history=include_history)
+        if cursor is not None:
+            pos = decode_cursor(listing, cursor)
+            stmt = stmt.where(
+                tuple_(ConversationMemory.created_at, ConversationMemory.id)
+                < tuple_(pos.sort_value, pos.id)
+            )
+        stmt = stmt.order_by(
+            ConversationMemory.created_at.desc(), ConversationMemory.id.desc()
+        ).limit(size + 1)
+        rows = list((await session.scalars(stmt)).all())
+        items = rows[:size]
+        next_cursor = None
+        if len(rows) > size:
+            last = items[-1]
+            next_cursor = encode_cursor(listing, CursorPosition(last.created_at, last.id))
+        return Page(items=[to_domain(r) for r in items], next_cursor=next_cursor)
+
+    def _list_stmt(
+        self, scope: UserScope, contact_id: uuid.UUID, *, include_history: bool
+    ) -> Select[ConversationMemory]:
         stmt = select(ConversationMemory).where(
             ConversationMemory.user_id == scope.user_id,
             ConversationMemory.contact_id == contact_id,
@@ -713,8 +767,7 @@ class MemoryService:
                     ConversationMemory.expires_at > self._now(),
                 ),
             )
-        stmt = stmt.order_by(ConversationMemory.created_at.desc(), ConversationMemory.id.desc())
-        return [to_domain(r) for r in (await session.scalars(stmt)).all()]
+        return stmt
 
     async def history(
         self, session: AsyncSession, scope: UserScope, memory_id: uuid.UUID
