@@ -31,6 +31,41 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
+
+  # One-shot: `alembic upgrade head`, then exits. backend and worker start after it.
+  migrate:
+    profiles: ["backend"]
+    build: ./backend
+    env_file: [.env]
+    environment:
+      WINGMAN_DATABASE_URL: postgresql+asyncpg://wingman:wingman@postgres:5432/wingman
+    command: ["alembic", "upgrade", "head"]
+    healthcheck: { disable: true }
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  # Periodic jobs (I-015): reply delays / retry backoff (dispatch_due), outbox lease
+  # expiry, approval expiry. Same image. It skips `mock` connections (I-016: the mock
+  # simulator lives in the API process); see docs/deployment.md "Background worker".
+  worker:
+    profiles: ["backend"]
+    build: ./backend
+    env_file: [.env]
+    environment:
+      WINGMAN_DATABASE_URL: postgresql+asyncpg://wingman:wingman@postgres:5432/wingman
+      WINGMAN_WORKER_HEALTH_PORT: "8081"
+    command: ["python", "-m", "app.worker"]
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/health', timeout=4)"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
+    depends_on:
+      postgres: { condition: service_healthy }
+      migrate: { condition: service_completed_successfully }
 
 volumes:
   pgdata:
