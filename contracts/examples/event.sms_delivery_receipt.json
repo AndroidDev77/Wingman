@@ -1,0 +1,15 @@
+{
+  "schema_version": "connector_event.v1",
+  "event_id": "0192f3a0-0000-7000-8000-000000000313",
+  "type": "message.delivery_receipt",
+  "platform": "sms",
+  "connection_id": "0192f3a0-0000-7000-8000-0000000000a1",
+  "user_id": "0192f3a0-0000-7000-8000-000000000001",
+  "external_message_id": "sms:out:send:0192f3a0-0000-7000-8000-0000000000d6:1",
+  "external_thread_id": "sms:+15550101234",
+  "occurred_at": "2026-10-31T19:05:09Z",
+  "observed_at": "2026-10-31T19:05:09Z",
+  "payload": {
+    "outbound_message_id": "0192f3a0-0000-7000-8000-0000000000d6"
+  }
+}

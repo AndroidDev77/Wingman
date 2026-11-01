@@ -19,7 +19,9 @@ Checks:
      is application/problem+json; every /v1 operation is authenticated.
   4. Every example in examples/manifest.json validates against its schema, with
      format assertion (date-time, uuid, email, uri-reference) enabled.
-  5. Every example under examples/invalid/ FAILS validation (negative tests).
+  5. Every example under examples/invalid/ FAILS validation (negative tests). When a
+     manifest entry has `expect_error`, at least one error must contain that text, so a
+     negative example cannot pass by failing for an unrelated reason.
   6. No example file is missing from, or orphaned by, the manifest.
 """
 
@@ -179,7 +181,11 @@ def check_examples(registry: Registry) -> None:
         expect_invalid = rel.startswith("invalid/")
         if expect_invalid:
             n_invalid += 1
-            if errors:
+            expected = entry.get("expect_error")
+            if errors and expected and not any(expected in e.message for e in errors):
+                got = "; ".join(e.message for e in errors[:3])
+                fail(f"examples/{rel} rejected, but not for {expected!r} (got: {got})")
+            elif errors:
                 ok(f"examples/{rel} rejected as expected ({len(errors)} error(s))")
             else:
                 fail(f"examples/{rel} should be INVALID ({entry.get('why_invalid')}) but passed")

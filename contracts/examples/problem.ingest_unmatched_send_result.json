@@ -1,0 +1,13 @@
+{
+  "type": "https://wingman.invalid/problems/validation_error",
+  "title": "Request validation failed",
+  "status": 422,
+  "code": "validation_error",
+  "detail": "send result does not match a send instruction leased on this connection",
+  "errors": [
+    {
+      "pointer": "/payload/idempotency_key",
+      "message": "no leased outbox instruction with this outbound_message_id and idempotency_key"
+    }
+  ]
+}
