@@ -18,6 +18,7 @@ from app.ai.memory import MemoryService
 from app.api.agent_actions import router as agent_actions_router
 from app.api.auth import create_auth_router
 from app.api.connections import router as connections_router
+from app.api.conversations import router as conversations_router
 from app.api.demo_connector import create_demo_connector_router
 from app.api.device_connector import router as device_connector_router
 from app.api.drafts import router as drafts_router
@@ -86,12 +87,14 @@ def create_app() -> FastAPI:
     # Contract 1.2.0 (I-017, ADR 0007): list, get, pair and unpair connections. Pairing
     # never stores a client-claimed VERIFIED capability; `mock` is refused in prod.
     app.include_router(connections_router)
+    # I-021: listConversations, getConversation, listMessages (read-only, user-scoped).
+    app.include_router(conversations_router)
 
     # WING-006 simulator: unauthenticated, in-memory, single demo user. Never in prod.
     if settings.env != "prod":
         app.include_router(create_demo_connector_router())
 
-    @app.get("/health", response_model=HealthResponse, tags=["health"])
+    @app.get("/health", response_model=HealthResponse, tags=["health"], operation_id="getHealth")
     async def health() -> HealthResponse:
         # Liveness only: deliberately does not touch DB/Redis so the
         # service can boot and report healthy in mock mode.

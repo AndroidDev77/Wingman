@@ -186,7 +186,7 @@ async def test_client_claiming_verified_never_gets_autopilot_sends(
     # The user approves it: an approved_draft send is allowed on UNVERIFIED (ADR 0005).
     _, msg = await world.controller.approve(session, world.scope, a1.id, edited_text=None)
     await world.dispatcher.dispatch(session, world.scope, msg.id)
-    [ins] = (await claim(client, sms)).json()["instructions"]
+    [ins] = (await claim(client, sms, device=INSTALL)).json()["instructions"]
     assert ins["authorization"]["origin"] == "approved_draft"
     ack = await post_event(
         client,
@@ -227,7 +227,7 @@ async def test_client_claiming_verified_never_gets_autopilot_sends(
         )
     ).all()
     assert autopilot == []
-    assert (await claim(client, sms)).json()["instructions"] == []
+    assert (await claim(client, sms, device=INSTALL)).json()["instructions"] == []
 
 
 async def test_only_operator_path_sets_verified(session: AsyncSession, make_conn_client) -> None:  # type: ignore[no-untyped-def]
@@ -427,8 +427,10 @@ async def test_unpair_cancels_pending_automated_work_with_audit(
     assert_contract("AgentActionPage", audit.json())
     assert len(audit.json()["items"]) == 1
 
-    # Nothing can go out any more on this connection.
-    assert (await claim(client, world)).json()["instructions"] == []
+    # Nothing can go out any more on this connection: an unpaired connection cannot be
+    # claimed on at all, not even by the install it was paired with (I-018).
+    gone = problem(await claim(client, world), 422, "validation_error")
+    assert gone["errors"][0]["pointer"] == "/device_install_id"
     sent = await client.post(
         f"/v1/conversations/{queued.conversation_id}/messages",
         json={"text": "still there?"},

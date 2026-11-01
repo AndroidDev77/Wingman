@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import func, update
+from sqlalchemy import ColumnElement, func, update
 from sqlalchemy.dialects.postgresql import insert
 
 from app.db.base import utc_now
@@ -127,20 +127,28 @@ class ConversationRepository(ScopedRepository[Conversation]):
         limit: int | None = None,
         platform: str | None = None,
         stage: ConversationStage | None = None,
+        conditions: Sequence[ColumnElement[bool]] = (),
+        filter_tag: str = "",
     ) -> Page[Conversation]:
         """Unified inbox: ``last_activity_at`` DESC, then ``id`` DESC.
 
-        ``intent`` and ``automation_mode`` filters depend on effective preferences and are
-        applied by the service layer (WING-007/WING-014).
+        ``intent`` and ``automation_mode`` filters depend on effective preferences; the
+        service layer (``app.services.conversations``) builds them as extra
+        ``conditions`` on ``Conversation`` and names them in ``filter_tag``. The cursor
+        is bound to every filter (ADR 0003): replaying it with other filters is an
+        invalid cursor.
         """
         stmt = self._select()
         if platform is not None:
             stmt = stmt.where(Conversation.platform == platform)
         if stage is not None:
             stmt = stmt.where(Conversation.stage == stage)
+        for condition in conditions:
+            stmt = stmt.where(condition)
+        listing = f"inbox:{platform or ''}:{stage or ''}:{filter_tag}"
         return await self._page(
             stmt,
-            listing="inbox",
+            listing=listing,
             sort_column=Conversation.last_activity_at,
             descending=True,
             cursor=cursor,

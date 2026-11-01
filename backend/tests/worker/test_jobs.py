@@ -17,6 +17,7 @@ from app.services.dispatcher import send_key
 from app.worker.config import WorkerSettings
 from app.worker.jobs import due_message_ids
 from app.worker.runner import Worker, build_jobs
+from tests.automation.conftest import DEVICE_INSTALL
 from tests.worker.conftest import Factory, worker_for
 from tests.worker.helpers import (
     get_message,
@@ -113,7 +114,7 @@ async def test_expired_lease_becomes_expired_and_is_never_retried(committed: Fac
 
     # The worker's dispatch creates the device instruction (attempt 1); a device leases it.
     await worker.run_once()
-    device = __import__("uuid").uuid4()
+    device = DEVICE_INSTALL  # the paired install (I-018)
     claimed, _ = await tx(
         committed,
         lambda s: world.services.outbox.claim(
