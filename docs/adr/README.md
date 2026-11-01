@@ -10,3 +10,4 @@ Short records of decisions that shape the shared contracts. To supersede one, ad
 | [0004](0004-idempotency.md) | Every POST requires an `Idempotency-Key` with replay semantics | Accepted |
 | [0005](0005-connector-capability-model.md) | Connector capabilities are independent and verification-labeled | Accepted |
 | [0006](0006-device-outbox-leases.md) | Device connectors ingest events by POST and pull single-use leased send instructions from an outbox | Accepted |
+| [0007](0007-connection-pairing-and-capability-trust.md) | The app pairs connectors over the API; client-claimed capabilities are never `VERIFIED`; unpair cancels pending automated work | Accepted |

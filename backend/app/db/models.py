@@ -239,6 +239,19 @@ class PlatformConnection(UserOwnedMixin, Base):
         Index(None, "user_id", "created_at", "id"),
         CheckConstraint(f"platform ~ '{PLATFORM_PATTERN}'", name="platform_format"),
         CheckConstraint("char_length(display_name) >= 1", name="display_name_nonempty"),
+        # Contract 1.2.0 (ADR 0007): one paired connection per install and platform, and
+        # an unpaired connection is always disconnected.
+        Index(
+            None,
+            "user_id",
+            "platform",
+            "device_install_id",
+            unique=True,
+            postgresql_where=sql("device_install_id IS NOT NULL AND unpaired_at IS NULL"),
+        ),
+        CheckConstraint(
+            "unpaired_at IS NULL OR status = 'disconnected'", name="unpaired_is_disconnected"
+        ),
         CheckConstraint("jsonb_typeof(capabilities) = 'object'", name="capabilities_object"),
         CheckConstraint(
             "capabilities ->> 'platform' IS NOT DISTINCT FROM platform",
@@ -278,6 +291,10 @@ class PlatformConnection(UserOwnedMixin, Base):
     calendar_write_capability: Mapped[CapabilityVerification] = mapped_column(
         pg_enum("capability_verification"), nullable=False
     )
+    # Contract 1.2.0 pairing (ADR 0007). Null for connections created outside the API.
+    device_install_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    paired_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    unpaired_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
 # --------------------------------------------------------------------------- contacts

@@ -318,6 +318,21 @@ class OutboxRepository(ScopedRepository[OutboxInstruction]):
         )
         return len(rows.all())
 
+    async def cancel_pending_for_connection(self, connection_id: uuid.UUID, *, at: datetime) -> int:
+        """Unpair (contract 1.2.0): every unclaimed instruction of the connection."""
+        rows = await self.session.scalars(
+            update(OutboxInstruction)
+            .where(
+                OutboxInstruction.user_id == self.scope.user_id,
+                OutboxInstruction.connection_id == connection_id,
+                OutboxInstruction.state == OutboxInstructionState.PENDING,
+            )
+            .values(state=OutboxInstructionState.CANCELED, updated_at=at)
+            .returning(OutboxInstruction.id)
+            .execution_options(synchronize_session="fetch")
+        )
+        return len(rows.all())
+
     async def expire_lapsed(self, *, now: datetime) -> list[OutboxInstruction]:
         """Leases past their deadline become ``expired``. Outcome unknown: nothing else
         changes (the message stays ``sending`` and is never retried automatically)."""

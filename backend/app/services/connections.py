@@ -1,0 +1,417 @@
+"""Connection pairing, unpairing and capability trust (contract 1.2.0, ADR 0007, I-017).
+
+**Capabilities sent by a client are a claim, never evidence** (ADR 0005). Every path
+that stores a capability document that came from a client (``createConnection``, a
+``connection.capabilities_changed`` event) goes through :func:`trust_claimed_capabilities`:
+
+* claimed ``UNSUPPORTED`` / ``UNVERIFIED``: stored as claimed (a device may always
+  *lower* what it can do), with any client ``evidence``/``verified_at`` dropped;
+* claimed ``VERIFIED``: stored as ``UNVERIFIED`` (with a note), unless the server already
+  holds ``VERIFIED`` for that capability *for the same* ``connector_version``, which is
+  kept unchanged (the client cannot raise it, only keep what the server recorded).
+
+The only way to get ``VERIFIED`` on a real platform is
+:meth:`ConnectionService.record_verification`: an operator-only, server-side call (no
+HTTP route) that records a reference to a reproduced device run (the G5 device
+checklist, ``docs/integrations/android_sms.md``). The backend ``mock`` connector is
+created with the simulator's own document (``VERIFIED`` against the deterministic
+simulator, ADR 0005), and only when ``WINGMAN_ENV != prod``.
+
+**Unpair** (``unpairConnection``) is effective before it returns, in one transaction,
+with the global lock order (user -> approval -> instruction -> message): the connection
+becomes ``disconnected`` with every capability ``UNSUPPORTED``; pending approvals for its
+conversations, its unclaimed (``pending``) outbox instructions and its ``queued``
+outbound messages are canceled (reason ``connection_unavailable``) and audited. A
+message a device already leased (``sending``) cannot be recalled; its outcome is still
+accepted (ADR 0006).
+"""
+
+import argparse
+import logging
+import uuid
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Any
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.connectors.capabilities import (
+    CapabilityName,
+    ConnectorCapabilities,
+    VerificationStatus,
+)
+from app.connectors.mock import default_mock_capabilities
+from app.db.base import utc_now
+from app.db.enums import (
+    Actor,
+    AgentActionType,
+    DeliveryState,
+)
+from app.db.errors import NotFoundError
+from app.db.models import PlatformConnection
+from app.db.repositories import (
+    AgentActionRepository,
+    ApprovalRepository,
+    ConnectionRepository,
+    ConversationRepository,
+    MessageRepository,
+    OutboxRepository,
+    UserRepository,
+)
+from app.db.repositories.connections import CAPABILITY_NAMES
+from app.db.scope import UserScope
+
+__all__ = [
+    "CLIENT_VERIFIED_NOTE",
+    "DEVICE_PAIRABLE_PLATFORMS",
+    "MOCK_PLATFORM",
+    "UNAVAILABLE_REASON",
+    "ConnectionService",
+    "PairingError",
+    "PairResult",
+    "UnpairResult",
+    "trust_claimed_capabilities",
+    "unpaired_capabilities",
+]
+
+logger = logging.getLogger(__name__)
+
+MOCK_PLATFORM = "mock"
+DEVICE_PAIRABLE_PLATFORMS = frozenset({"sms", "android_notification"})
+UNAVAILABLE_REASON = "connection_unavailable"
+CLIENT_VERIFIED_NOTE = (
+    "Claimed VERIFIED by the client; stored as UNVERIFIED until server-side evidence "
+    "of a reproduced device run is recorded (ADR 0005, ADR 0007)."
+)
+UNPAIRED_NOTE = "Connection unpaired (ADR 0007)."
+
+
+# --------------------------------------------------------------------------- trust
+
+
+def trust_claimed_capabilities(
+    claimed: ConnectorCapabilities, current: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """The ``connector_capabilities.v1`` document the server stores for a client claim.
+
+    Never returns ``VERIFIED`` for a capability unless ``current`` (the server's stored
+    document) already has it ``VERIFIED`` for the same ``connector_version``.
+    """
+    doc = claimed.to_contract_dict()
+    same_version = (
+        current is not None and current.get("connector_version") == doc["connector_version"]
+    )
+    current_caps: dict[str, Any] = (current or {}).get("capabilities") or {}
+    out: dict[str, Any] = {}
+    for name in CAPABILITY_NAMES:
+        entry: dict[str, Any] = dict(doc["capabilities"][name])
+        status = entry["status"]
+        if status == VerificationStatus.VERIFIED.value:
+            held = current_caps.get(name)
+            if same_version and isinstance(held, dict) and held.get("status") == "VERIFIED":
+                out[name] = dict(held)
+                continue
+            entry = {"status": VerificationStatus.UNVERIFIED.value, "notes": CLIENT_VERIFIED_NOTE}
+            if "reports_delivery_receipts" in doc["capabilities"][name]:
+                entry["reports_delivery_receipts"] = doc["capabilities"][name][
+                    "reports_delivery_receipts"
+                ]
+        else:
+            entry.pop("evidence", None)
+            entry.pop("verified_at", None)
+        out[name] = entry
+    doc["capabilities"] = out
+    return doc
+
+
+def unpaired_capabilities(current: dict[str, Any]) -> dict[str, Any]:
+    """Every capability ``UNSUPPORTED``: nothing can be sent or read any more."""
+    doc = dict(current)
+    doc["capabilities"] = {
+        name: {"status": "UNSUPPORTED", "notes": UNPAIRED_NOTE} for name in CAPABILITY_NAMES
+    }
+    return doc
+
+
+# --------------------------------------------------------------------------- service
+
+
+class PairingError(Exception):
+    """A rejected pairing request: ``422 validation_error`` at ``pointer``."""
+
+    def __init__(self, detail: str, *, pointer: str, message: str) -> None:
+        super().__init__(detail)
+        self.detail = detail
+        self.pointer = pointer
+        self.message = message
+
+
+@dataclass(frozen=True)
+class PairResult:
+    connection: PlatformConnection
+    created: bool
+
+
+@dataclass(frozen=True)
+class UnpairResult:
+    connection: PlatformConnection
+    canceled_message_count: int
+    canceled_instruction_count: int
+    canceled_approval_count: int
+    in_flight_message_count: int
+
+
+class ConnectionService:
+    def __init__(self, *, env: str, now: Callable[[], datetime] = utc_now) -> None:
+        self.env = env
+        self._now = now
+
+    async def pair(
+        self,
+        session: AsyncSession,
+        scope: UserScope,
+        *,
+        platform: str,
+        display_name: str,
+        device_install_id: uuid.UUID | None,
+        capabilities: ConnectorCapabilities | None,
+    ) -> PairResult:
+        """``createConnection``. Capabilities are stored per :func:`trust_claimed_capabilities`."""
+        repo = ConnectionRepository(session, scope)
+        now = self._now()
+        if platform == MOCK_PLATFORM:
+            if self.env == "prod":
+                raise PairingError(
+                    "the mock platform cannot be paired in production",
+                    pointer="/platform",
+                    message="'mock' is not available in prod",
+                )
+            if device_install_id is not None or capabilities is not None:
+                raise PairingError(
+                    "mock takes neither device_install_id nor capabilities",
+                    pointer="/capabilities" if capabilities is not None else "/device_install_id",
+                    message="must be absent for platform 'mock'",
+                )
+            stored = default_mock_capabilities().to_contract_dict()
+        elif platform in DEVICE_PAIRABLE_PLATFORMS:
+            if device_install_id is None:
+                raise PairingError(
+                    "device-side platforms need device_install_id",
+                    pointer="/device_install_id",
+                    message="required",
+                )
+            if capabilities is None:
+                raise PairingError(
+                    "device-side platforms need capabilities",
+                    pointer="/capabilities",
+                    message="required",
+                )
+            if capabilities.platform != platform:
+                raise PairingError(
+                    "capabilities platform does not match",
+                    pointer="/capabilities/platform",
+                    message="must equal platform",
+                )
+            # Serialize concurrent pairings of one install (the unique index backs this).
+            await UserRepository(session).lock(scope)
+            existing = await repo.paired_for_install(platform, device_install_id)
+            if existing is not None:
+                return PairResult(existing, created=False)
+            stored = trust_claimed_capabilities(capabilities)
+        else:  # pragma: no cover - the request schema enumerates platforms
+            raise PairingError(
+                "platform is not pairable", pointer="/platform", message="unsupported"
+            )
+        connection = await repo.create(
+            platform=platform,
+            display_name=display_name,
+            capabilities=stored,
+            device_install_id=device_install_id,
+            paired_at=now,
+        )
+        await AgentActionRepository(session, scope).record(
+            type=AgentActionType.CONNECTION_PAIRED,
+            actor=Actor.USER,
+            occurred_at=now,
+            details={
+                "connection_id": str(connection.id),
+                "platform": platform,
+                "device_side": device_install_id is not None,
+                "send_capability": connection.send_capability.value,
+                "client_claimed_verified": sorted(
+                    name
+                    for name in CAPABILITY_NAMES
+                    if capabilities is not None
+                    and capabilities.status(CapabilityName(name)) is VerificationStatus.VERIFIED
+                ),
+            },
+        )
+        return PairResult(connection, created=True)
+
+    async def unpair(
+        self, session: AsyncSession, scope: UserScope, connection_id: uuid.UUID
+    ) -> UnpairResult:
+        """``unpairConnection``: effective before returning. Idempotent on state."""
+        repo = ConnectionRepository(session, scope)
+        await repo.require(connection_id)
+        # Lock order: user first (serializes with policy decisions and device claims).
+        if await UserRepository(session).lock(scope) is None:  # pragma: no cover
+            raise NotFoundError("user not found")
+        connection = await repo.lock_for_update(connection_id)
+        if connection is None:  # pragma: no cover - deleted concurrently
+            raise NotFoundError("connection not found")
+        if connection.unpaired_at is not None:
+            return UnpairResult(connection, 0, 0, 0, 0)
+        now = self._now()
+        connection = await repo.mark_unpaired(
+            connection_id, capabilities=unpaired_capabilities(connection.capabilities), at=now
+        )
+        audit = AgentActionRepository(session, scope)
+
+        approvals = ApprovalRepository(session, scope)
+        canceled_approvals = 0
+        for conversation in await ConversationRepository(session, scope).for_connection(
+            connection_id
+        ):
+            conversation_id, contact_id = conversation.id, conversation.contact_id
+            for approval in await approvals.cancel_pending(at=now, conversation_id=conversation_id):
+                canceled_approvals += 1
+                await audit.record(
+                    type=AgentActionType.APPROVAL_CANCELED,
+                    actor=Actor.USER,
+                    conversation_id=conversation_id,
+                    contact_id=contact_id,
+                    approval_id=approval.id,
+                    reason_code=UNAVAILABLE_REASON,
+                    occurred_at=now,
+                    details={"draft_id": str(approval.draft_id), "stage": "unpair"},
+                )
+
+        canceled_instructions = await OutboxRepository(
+            session, scope
+        ).cancel_pending_for_connection(connection_id, at=now)
+        messages = MessageRepository(session, scope)
+        canceled_messages = 0
+        for message, contact_id in await messages.outbound_for_connection(
+            connection_id, states=(DeliveryState.QUEUED,)
+        ):
+            locked = await messages.lock(message.id)
+            if locked is None or locked.delivery_state is not DeliveryState.QUEUED:
+                continue  # leased meanwhile: its real outcome is recorded
+            await messages.update_delivery(locked.id, delivery_state=DeliveryState.CANCELED)
+            canceled_messages += 1
+            await audit.record(
+                type=AgentActionType.SEND_CANCELED,
+                actor=Actor.USER,
+                conversation_id=locked.conversation_id,
+                contact_id=contact_id,
+                message_id=locked.id,
+                approval_id=locked.approval_id,
+                reason_code=UNAVAILABLE_REASON,
+                occurred_at=now,
+                details={"origin": locked.origin.value, "stage": "unpair"},
+            )
+        in_flight = len(
+            await messages.outbound_for_connection(connection_id, states=(DeliveryState.SENDING,))
+        )
+        await audit.record(
+            type=AgentActionType.CONNECTION_UNPAIRED,
+            actor=Actor.USER,
+            occurred_at=now,
+            reason_code=UNAVAILABLE_REASON,
+            details={
+                "connection_id": str(connection_id),
+                "platform": connection.platform,
+                "canceled_messages": canceled_messages,
+                "canceled_instructions": canceled_instructions,
+                "canceled_approvals": canceled_approvals,
+                "in_flight_messages": in_flight,
+            },
+        )
+        return UnpairResult(
+            connection, canceled_messages, canceled_instructions, canceled_approvals, in_flight
+        )
+
+    async def record_verification(
+        self,
+        session: AsyncSession,
+        scope: UserScope,
+        connection_id: uuid.UUID,
+        capability: CapabilityName,
+        *,
+        evidence: str,
+        verified_at: datetime,
+    ) -> PlatformConnection:
+        """Operator-only (no HTTP route, ADR 0007): mark one capability ``VERIFIED``.
+
+        ``evidence`` must reference a reproduced device run recorded outside the client
+        (e.g. a G5 checklist entry in ``docs/integrations/android_sms.md`` or a CI device
+        job ID). It is the only way a real platform's capability becomes ``VERIFIED``.
+        """
+        evidence = evidence.strip()
+        if not evidence:
+            raise ValueError("evidence is required to mark a capability VERIFIED")
+        if verified_at.tzinfo is None:
+            raise ValueError("verified_at must be timezone-aware")
+        repo = ConnectionRepository(session, scope)
+        connection = await repo.require(connection_id)
+        if connection.unpaired_at is not None:
+            raise ValueError("an unpaired connection cannot be verified")
+        doc = dict(connection.capabilities)
+        caps = dict(doc["capabilities"])
+        entry = dict(caps[capability.value])
+        entry.update(
+            status="VERIFIED",
+            evidence=evidence[:500],
+            verified_at=verified_at.isoformat().replace("+00:00", "Z"),
+        )
+        caps[capability.value] = entry
+        doc["capabilities"] = caps
+        ConnectorCapabilities.model_validate(doc)  # still a valid v1 document
+        updated = await repo.set_capabilities(connection_id, doc)
+        logger.warning(
+            "capability verified by operator user=%s connection=%s capability=%s",
+            scope.user_id,
+            connection_id,
+            capability.value,
+        )
+        return updated
+
+
+def _main() -> None:  # pragma: no cover - thin operator CLI
+    """``python -m app.services.connections verify --user-id U --connection-id C
+    --capability send --evidence REF``: the operator path that sets VERIFIED."""
+    import asyncio
+
+    from app.db.session import dispose_engine, session_scope
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    verify = sub.add_parser("verify")
+    verify.add_argument("--user-id", type=uuid.UUID, required=True)
+    verify.add_argument("--connection-id", type=uuid.UUID, required=True)
+    verify.add_argument("--capability", choices=[c.value for c in CapabilityName], required=True)
+    verify.add_argument("--evidence", required=True)
+    args = parser.parse_args()
+    logging.basicConfig(level=logging.INFO)
+
+    async def run() -> None:
+        try:
+            async with session_scope() as session:
+                await ConnectionService(env="operator").record_verification(
+                    session,
+                    UserScope(args.user_id),
+                    args.connection_id,
+                    CapabilityName(args.capability),
+                    evidence=args.evidence,
+                    verified_at=utc_now(),
+                )
+        finally:
+            await dispose_engine()
+
+    asyncio.run(run())
+
+
+if __name__ == "__main__":  # pragma: no cover
+    _main()

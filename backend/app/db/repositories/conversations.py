@@ -101,6 +101,15 @@ class ConversationRepository(ScopedRepository[Conversation]):
             raise LookupError("conversation vanished during get_or_create")
         return found
 
+    async def for_connection(self, connection_id: uuid.UUID) -> list[Conversation]:
+        """Every conversation on one connection (contract 1.2.0 unpair)."""
+        stmt = (
+            self._select()
+            .where(Conversation.connection_id == connection_id)
+            .order_by(Conversation.created_at, Conversation.id)
+        )
+        return list((await self.session.scalars(stmt)).all())
+
     async def get_for_contact(self, contact_id: uuid.UUID) -> Conversation | None:
         """Oldest conversation with this contact (one per contact in v1)."""
         row: Conversation | None = await self.session.scalar(
@@ -288,6 +297,28 @@ class MessageRepository(ScopedRepository[Message]):
                 & (Conversation.id == Message.conversation_id),
             ).where(Conversation.contact_id == contact_id)
         return list((await self.session.scalars(stmt.order_by(Message.created_at))).all())
+
+    async def outbound_for_connection(
+        self, connection_id: uuid.UUID, *, states: Sequence[DeliveryState]
+    ) -> list[tuple[Message, uuid.UUID]]:
+        """Outbound messages of one connection in ``states``, with their contact id."""
+        stmt = (
+            self._select()
+            .add_columns(Conversation.contact_id)
+            .join(
+                Conversation,
+                (Conversation.user_id == Message.user_id)
+                & (Conversation.id == Message.conversation_id),
+            )
+            .where(
+                Conversation.connection_id == connection_id,
+                Message.direction == MessageDirection.OUTBOUND,
+                Message.delivery_state.in_(list(states)),
+            )
+            .order_by(Message.created_at, Message.id)
+        )
+        rows = await self.session.execute(stmt)
+        return [(r[0], r[1]) for r in rows.all()]
 
     async def due_outbound(
         self, *, now: datetime, limit: int = 50, connection_id: uuid.UUID | None = None

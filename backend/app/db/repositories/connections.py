@@ -42,12 +42,51 @@ class ConnectionRepository(ScopedRepository[PlatformConnection]):
         display_name: str,
         capabilities: dict[str, Any],
         status: ConnectionStatus = ConnectionStatus.CONNECTED,
+        device_install_id: uuid.UUID | None = None,
+        paired_at: datetime | None = None,
     ) -> PlatformConnection:
         return await self._add(
             platform=platform,
             display_name=display_name,
             status=status,
             capabilities=capabilities,
+            device_install_id=device_install_id,
+            paired_at=paired_at,
+            **capability_columns(capabilities),
+        )
+
+    async def paired_for_install(
+        self, platform: str, device_install_id: uuid.UUID
+    ) -> PlatformConnection | None:
+        """The still-paired connection of this install for ``platform`` (contract 1.2.0)."""
+        row: PlatformConnection | None = await self.session.scalar(
+            self._select().where(
+                PlatformConnection.platform == platform,
+                PlatformConnection.device_install_id == device_install_id,
+                PlatformConnection.unpaired_at.is_(None),
+            )
+        )
+        return row
+
+    async def lock_for_update(self, connection_id: uuid.UUID) -> PlatformConnection | None:
+        row: PlatformConnection | None = await self.session.scalar(
+            self._select()
+            .where(PlatformConnection.id == connection_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return row
+
+    async def mark_unpaired(
+        self, connection_id: uuid.UUID, *, capabilities: dict[str, Any], at: datetime
+    ) -> PlatformConnection:
+        """``unpairConnection``: disconnected, every capability as given, ``unpaired_at``."""
+        return await self._update(
+            connection_id,
+            status=ConnectionStatus.DISCONNECTED,
+            unpaired_at=at,
+            capabilities=capabilities,
+            updated_at=at,
             **capability_columns(capabilities),
         )
 

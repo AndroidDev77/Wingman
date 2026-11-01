@@ -18,9 +18,9 @@ Claim, per instruction, atomically (one transaction, row locks):
    toward ``max_instructions``.
 
 Lease expiry (:func:`expire_lapsed_leases`, a periodic job): ``leased`` past
-``lease_expires_at`` -> ``expired``. The outcome is unknown, so the message stays
-``sending``: never ``sent``, never retried automatically. A late outcome event still
-completes the instruction (``app.services.ingest``).
+``lease_expires_at`` -> ``expired``, audited ``lease_expired`` (contract 1.2.0). The
+outcome is unknown, so the message stays ``sending``: never ``sent``, never retried
+automatically. A late outcome event still completes the instruction (``app.services.ingest``).
 """
 
 import logging
@@ -219,14 +219,38 @@ class OutboxService:
         )
 
     async def expire(self, session: AsyncSession, scope: UserScope) -> list[OutboxInstruction]:
-        """This user's lapsed leases -> ``expired`` (audited). Messages are untouched."""
+        """This user's lapsed leases -> ``expired``, audited ``lease_expired`` (actor
+        ``system``). Messages are untouched."""
         now = self._now()
         expired = await OutboxRepository(session, scope).expire_lapsed(now=now)
-        # Contract gap: ``AgentActionType`` has no "lease expired / outcome unknown"
-        # entry, and ``send_failed`` would claim a failure nobody observed. So expiry is
-        # visible on the instruction (``state: expired``, ``listOutboxInstructions``) and
-        # in the log, not in the audit timeline. The message stays ``sending``.
+        # Contract 1.2.0: audited as ``lease_expired`` (outcome unknown), never as
+        # ``send_failed``, which would claim a failure nobody observed. The message stays
+        # ``sending`` and is never retried automatically. IDs and codes only.
+        audit = AgentActionRepository(session, scope)
         for instruction in expired:
+            message = await MessageRepository(session, scope).require(
+                instruction.outbound_message_id
+            )
+            conversation = await ConversationRepository(session, scope).require(
+                message.conversation_id
+            )
+            await audit.record(
+                type=AgentActionType.LEASE_EXPIRED,
+                actor=Actor.SYSTEM,
+                conversation_id=conversation.id,
+                contact_id=conversation.contact_id,
+                message_id=message.id,
+                approval_id=message.approval_id,
+                reason_code="outcome_unknown",
+                occurred_at=now,
+                details={
+                    "instruction_id": str(instruction.id),
+                    "connection_id": str(instruction.connection_id),
+                    "attempt": instruction.attempt,
+                    "outcome": "unknown",
+                    "retried": False,
+                },
+            )
             logger.warning(
                 "outbox lease expired user=%s instruction=%s message=%s attempt=%d "
                 "outcome=unknown retried=false",
