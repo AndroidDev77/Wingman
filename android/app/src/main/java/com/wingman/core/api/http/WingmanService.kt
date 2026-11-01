@@ -6,6 +6,9 @@ import com.wingman.core.model.ApprovalDecisionResult
 import com.wingman.core.model.ApproveRequest
 import com.wingman.core.model.AutomationActionRequest
 import com.wingman.core.model.Connection
+import com.wingman.core.model.ConnectionCreateRequest
+import com.wingman.core.model.ConnectionUnpairRequest
+import com.wingman.core.model.ConnectionUnpairResult
 import com.wingman.core.model.ConnectorEventIngestResult
 import com.wingman.core.model.ContactAutomationState
 import com.wingman.core.model.ContactPreferenceOverrideUpdate
@@ -77,6 +80,22 @@ internal interface WingmanService {
         @Query("cursor") cursor: String?,
         @Query("limit") limit: Int?,
     ): Response<Page<Connection>>
+
+    @POST("v1/connections")
+    suspend fun createConnection(
+        @Header("Idempotency-Key") key: String,
+        @Body body: ConnectionCreateRequest,
+    ): Response<Connection>
+
+    @GET("v1/connections/{connection_id}")
+    suspend fun getConnection(@Path("connection_id") connectionId: String): Response<Connection>
+
+    @POST("v1/connections/{connection_id}/unpair")
+    suspend fun unpairConnection(
+        @Path("connection_id") connectionId: String,
+        @Header("Idempotency-Key") key: String,
+        @Body body: ConnectionUnpairRequest,
+    ): Response<ConnectionUnpairResult>
 
     @GET("v1/conversations")
     suspend fun listConversations(

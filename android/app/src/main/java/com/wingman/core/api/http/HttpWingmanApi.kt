@@ -21,6 +21,9 @@ import com.wingman.core.model.ApprovalDecisionResult
 import com.wingman.core.model.ApproveRequest
 import com.wingman.core.model.AutomationActionRequest
 import com.wingman.core.model.Connection
+import com.wingman.core.model.ConnectionCreateRequest
+import com.wingman.core.model.ConnectionUnpairRequest
+import com.wingman.core.model.ConnectionUnpairResult
 import com.wingman.core.model.ConnectorEventIngestResult
 import com.wingman.core.model.ContactAutomationState
 import com.wingman.core.model.ContactPreferenceOverrideUpdate
@@ -113,6 +116,18 @@ class HttpWingmanApi(
 
     override suspend fun listConnections(page: PageRequest): ApiResult<Page<Connection>> =
         call { service.listConnections(page.cursor, page.limit) }
+
+    override suspend fun createConnection(body: ConnectionCreateRequest, key: IdempotencyKey): ApiResult<Connection> =
+        call { service.createConnection(key.value, body) }
+
+    override suspend fun getConnection(connectionId: String): ApiResult<Connection> =
+        call { service.getConnection(connectionId) }
+
+    override suspend fun unpairConnection(
+        connectionId: String,
+        key: IdempotencyKey,
+        body: ConnectionUnpairRequest,
+    ): ApiResult<ConnectionUnpairResult> = call { service.unpairConnection(connectionId, key.value, body) }
 
     override suspend fun listConversations(page: PageRequest, filter: ConversationFilter): ApiResult<Page<Conversation>> =
         call {

@@ -51,8 +51,9 @@ class SmsDemoActivity : Activity() {
         button("2. Request SMS permissions") {
             requestPermissions(arrayOf(Manifest.permission.RECEIVE_SMS, Manifest.permission.SEND_SMS, Manifest.permission.READ_SMS), 2)
         }
-        button("3. Configure demo connection scope") {
-            // Fixed demo IDs, same as contracts/examples. Replace with real IDs once pairing exists.
+        button("3. Configure demo connection scope (offline only; real pairing is Settings > Phone SMS)") {
+            // Fixed demo IDs, same as contracts/examples. Against a real backend, pair from Settings instead
+            // (I-020): a scope set here is checked with getConnection on the next app start and cleared on 404.
             SmsConnectorRuntime.configure(this, SmsConnectionScope(DEMO_USER, DEMO_CONNECTION))
             refresh("Configured demo scope")
         }
@@ -115,7 +116,8 @@ class SmsDemoActivity : Activity() {
         status.text = buildString {
             appendLine(message ?: "")
             appendLine("default SMS app: ${device.isDefaultSmsApp}; RECEIVE ${device.receiveSmsGranted}; SEND ${device.sendSmsGranted}; READ ${device.readSmsGranted}")
-            appendLine("scope configured: ${connector != null}; outbox: ${connector?.outbox?.size()}; dead letters: ${connector?.outbox?.deadLetterCount()}")
+            val local = SmsConnectorRuntime.host(this@SmsDemoActivity).localStatus()
+            appendLine("paired (scope configured): ${connector != null}; connection: ${connector?.scope?.connectionId}; outbox: ${local.pendingEnvelopes}; dead letters: ${local.deadLetters}")
             appendLine("backend: ${connector?.poller != null}; upload backoff until: ${connector?.uploadBackoff?.nextAttemptAtMillis()}")
             connector?.poller?.let { appendLine("device_install_id: ${it.deviceInstallId()}; pending claim key: ${it.pendingClaimKey()}") }
         }

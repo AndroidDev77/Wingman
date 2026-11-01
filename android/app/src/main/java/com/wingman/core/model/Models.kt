@@ -264,6 +264,54 @@ data class Connection(
     val capabilities: ConnectorCapabilities,
     @SerialName("created_at") val createdAt: Instant,
     @SerialName("updated_at") val updatedAt: Instant,
+    /** (1.2.0, optional) The app install a device-side connection is bound to; null for backend-side ones. */
+    @SerialName("device_install_id") val deviceInstallId: String? = null,
+    /** (1.2.0, optional) When `createConnection` paired it. */
+    @SerialName("paired_at") val pairedAt: Instant? = null,
+    /** (1.2.0, optional) Set by `unpairConnection`; null while paired. */
+    @SerialName("unpaired_at") val unpairedAt: Instant? = null,
+) {
+    /** True while the server still treats this connection as paired (not unpaired, not disconnected). */
+    val isPaired: Boolean get() = unpairedAt == null && status != ConnectionStatus.DISCONNECTED
+}
+
+/**
+ * `components.schemas.ConnectionCreateRequest` (1.2.0, ADR 0007). Device-side platforms (`sms`,
+ * `android_notification`) need [deviceInstallId] and [capabilities]; `mock` takes neither. The
+ * capabilities are a CLAIM: the server never stores a client-claimed `VERIFIED` as `VERIFIED`.
+ */
+@Serializable
+data class ConnectionCreateRequest(
+    val platform: String,
+    @SerialName("display_name") val displayName: String,
+    @SerialName("device_install_id") val deviceInstallId: String? = null,
+    val capabilities: ConnectorCapabilities? = null,
+) {
+    init {
+        require(platform in PAIRABLE_PLATFORMS) { "platform must be one of $PAIRABLE_PLATFORMS" }
+        require(displayName.length in 1..120) { "display_name must be 1..120 chars" }
+    }
+
+    companion object {
+        /** Contract 1.2.0 `ConnectionCreateRequest.platform` enum. */
+        val PAIRABLE_PLATFORMS: Set<String> = setOf("sms", "android_notification", "mock")
+        val DEVICE_PLATFORMS: Set<String> = setOf("sms", "android_notification")
+    }
+}
+
+/** `components.schemas.ConnectionUnpairRequest` (1.2.0): an empty object, reserved for future options. */
+@Serializable
+data object ConnectionUnpairRequest
+
+/** `components.schemas.ConnectionUnpairResult` (1.2.0). Counts only. */
+@Serializable
+data class ConnectionUnpairResult(
+    val connection: Connection,
+    @SerialName("canceled_message_count") val canceledMessageCount: Int,
+    @SerialName("canceled_instruction_count") val canceledInstructionCount: Int,
+    @SerialName("canceled_approval_count") val canceledApprovalCount: Int,
+    /** Already leased to a device (`sending`): not recallable; the real outcome is still recorded. */
+    @SerialName("in_flight_message_count") val inFlightMessageCount: Int,
 )
 
 /* ------------------------------------------------------------------ conversations */

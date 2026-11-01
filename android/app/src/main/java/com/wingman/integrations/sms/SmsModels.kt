@@ -25,8 +25,8 @@ internal fun requireWingmanId(value: String, name: String) {
  * The Wingman user and connection that this device-side connector reports for. Every envelope
  * carries both; the backend rejects events whose connection is not owned by the user (B1).
  *
- * Connection pairing is not in the v1 contract yet (D-004), so the scope is configured
- * explicitly (see `docs/integrations/android_sms.md`, "Configure the connection scope").
+ * Set by pairing (I-020, [SmsPairingManager]): `userId` from `getMe`, `connectionId` from
+ * `createConnection`. The debug harness can also set a fixed demo scope for offline tests.
  */
 data class SmsConnectionScope(val userId: String, val connectionId: String) {
     init {

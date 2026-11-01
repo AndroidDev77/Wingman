@@ -161,13 +161,8 @@ class SmsOutboxPoller(
     private val newKey: () -> String = { UUID.randomUUID().toString() },
 ) {
     /** Stable per-install lease holder ID (contract `OutboxClaimRequest.device_install_id`). */
-    @Synchronized
-    fun deviceInstallId(): String {
-        store.get(KEY_INSTALL_ID)?.let { return it }
-        val id = UUID.randomUUID().toString()
-        store.put(KEY_INSTALL_ID, id)
-        return id
-    }
+    /** The SAME ID `createConnection` binds the connection to (I-020, [SmsInstallId]). */
+    fun deviceInstallId(): String = SmsInstallId.getOrCreate(store)
 
     /** The claim key that is persisted and not yet fully processed, if any (for diagnostics and tests). */
     fun pendingClaimKey(): String? = pendingClaim()?.key
@@ -284,7 +279,7 @@ class SmsOutboxPoller(
     private data class PendingClaim(val key: String, val deviceInstallId: String, val maxInstructions: Int?, val firstSentAtMillis: Long)
 
     companion object {
-        const val KEY_INSTALL_ID = "config:device_install_id"
+        const val KEY_INSTALL_ID = SmsInstallId.KEY
         const val KEY_PENDING_CLAIM = "claim:pending"
 
         /** A claim key is replayed for at most this long (server retention is at least 24 h, ADR 0004). */
