@@ -250,7 +250,7 @@ class ContractExamplesTest {
         assertEquals(contractEnum("ErrorCode"), ErrorCode.entries.map { it.wire })
         // Sanity: the parser found real lists.
         assertEquals(15, contractEnum("ErrorCode").size)
-        assertEquals(20, contractEnum("AgentActionType").size)
+        assertEquals(23, contractEnum("AgentActionType").size)
     }
 
     @Test fun stringSerializerSanity() {

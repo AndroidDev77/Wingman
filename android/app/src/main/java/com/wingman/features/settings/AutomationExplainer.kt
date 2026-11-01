@@ -178,6 +178,7 @@ object PreferenceLabels {
         ApprovalReason.CAPABILITY_UNVERIFIED -> "Unverified channel"
         ApprovalReason.SEND_LIMIT_REACHED -> "Daily limit reached"
         ApprovalReason.USER_RULE -> "Your own rule"
+        ApprovalReason.PAUSED -> "Automation is paused"
     }
 
     fun punctuation(v: Punctuation) = when (v) {

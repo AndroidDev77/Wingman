@@ -31,8 +31,9 @@ object ReasonText {
         ApprovalReason.OUTSIDE_ACTIVE_HOURS -> "It's outside the hours you allowed automatic replies."
         ApprovalReason.CAPABILITY_UNVERIFIED -> "Sending on this app hasn't been verified, so Wingman never sends there on its own."
         ApprovalReason.SEND_LIMIT_REACHED -> "You've reached your daily limit for automatic replies."
-        // D-015: until contract v1.2, an approval caused by a pause is reported as `user_rule`.
-        ApprovalReason.USER_RULE -> "One of your rules asks for approval, or automation is paused."
+        ApprovalReason.USER_RULE -> "One of your rules asks for approval."
+        // Contract 1.2.0 (D-016): a pause is reported as `paused`, not `user_rule`.
+        ApprovalReason.PAUSED -> "Automation is paused, so nothing goes out without your approval."
     }
 
     fun all(reasons: List<ApprovalReason>): List<String> = reasons.distinct().map(::of)

@@ -91,6 +91,7 @@ sealed interface DraftPanel {
             ApprovalReason.CAPABILITY_UNVERIFIED -> "platform capability unverified"
             ApprovalReason.SEND_LIMIT_REACHED -> "send limit reached"
             ApprovalReason.USER_RULE -> "your rule"
+            ApprovalReason.PAUSED -> "automation is paused"
         }
     }
 }
