@@ -30,6 +30,11 @@ EXPECTED_TABLES = {
     "subscriptions",
     "usage_events",
     "idempotency_keys",
+    # WING-011 (D-010: amended into 0001).
+    "drafts",
+    "approvals",
+    "outbox_instructions",
+    "connector_event_ingests",
 }
 
 

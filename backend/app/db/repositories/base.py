@@ -51,6 +51,14 @@ class ScopedRepository[ModelT: UserOwnedMixin]:
         row: ModelT | None = await self.session.scalar(self._select().where(self.model.id == id_))
         return row
 
+    async def get_fresh(self, id_: uuid.UUID) -> ModelT | None:
+        """Like :meth:`get`, but re-reads the row even if the session already holds it
+        (for state another transaction may have committed meanwhile)."""
+        row: ModelT | None = await self.session.scalar(
+            self._select().where(self.model.id == id_).execution_options(populate_existing=True)
+        )
+        return row
+
     async def require(self, id_: uuid.UUID) -> ModelT:
         """Like :meth:`get` but raises :class:`NotFoundError`."""
         row = await self.get(id_)

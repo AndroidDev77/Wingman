@@ -137,6 +137,26 @@ class ContactRepository(ScopedRepository[Contact]):
             updated_at=when,
         )
 
+    async def lock_for_update(self, contact_id: uuid.UUID) -> Contact | None:
+        row: Contact | None = await self.session.scalar(
+            self._select()
+            .where(Contact.id == contact_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return row
+
+    async def lock_shared(self, contact_id: uuid.UUID) -> Contact | None:
+        """The contact, ``FOR SHARE``-locked and refreshed: a concurrent takeover or pause
+        (which updates this row) waits until the caller's decision is committed."""
+        row: Contact | None = await self.session.scalar(
+            self._select()
+            .where(Contact.id == contact_id)
+            .with_for_update(read=True)
+            .execution_options(populate_existing=True)
+        )
+        return row
+
     async def list(self, *, cursor: str | None = None, limit: int | None = None) -> Page[Contact]:
         return await self._page(
             self._select(),

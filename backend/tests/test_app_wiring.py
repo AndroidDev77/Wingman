@@ -191,3 +191,67 @@ def test_dev_stub_allowed_in_dev(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WINGMAN_AUTH_DEV_SECRET", "x" * 48)
     with _client(monkeypatch, "dev") as client:
         assert client.get("/v1/me").status_code == 401  # still needs a token
+
+
+_WING011_ROUTES = [
+    ("GET", "/v1/approvals"),
+    ("GET", "/v1/approvals/00000000-0000-0000-0000-000000000001"),
+    ("POST", "/v1/approvals/00000000-0000-0000-0000-000000000001/approve"),
+    ("POST", "/v1/approvals/00000000-0000-0000-0000-000000000001/reject"),
+    ("GET", "/v1/automation"),
+    ("POST", "/v1/automation/pause"),
+    ("POST", "/v1/automation/resume"),
+    ("GET", "/v1/contacts/00000000-0000-0000-0000-000000000001/automation"),
+    ("POST", "/v1/contacts/00000000-0000-0000-0000-000000000001/automation/pause"),
+    ("POST", "/v1/contacts/00000000-0000-0000-0000-000000000001/automation/resume"),
+    ("POST", "/v1/contacts/00000000-0000-0000-0000-000000000001/automation/takeover"),
+    ("GET", "/v1/agent-actions"),
+    ("POST", "/v1/conversations/00000000-0000-0000-0000-000000000001/messages"),
+    ("POST", "/v1/connections/00000000-0000-0000-0000-000000000001/events"),
+    ("GET", "/v1/connections/00000000-0000-0000-0000-000000000001/outbox"),
+    ("POST", "/v1/connections/00000000-0000-0000-0000-000000000001/outbox/claim"),
+]
+
+
+@pytest.mark.parametrize(("method", "path"), _WING011_ROUTES)
+@pytest.mark.parametrize("env", ["dev", "prod"])
+def test_wing011_routes_are_mounted_and_require_a_token(
+    monkeypatch: pytest.MonkeyPatch, env: str, method: str, path: str
+) -> None:
+    with _client(monkeypatch, env) as client:
+        resp = client.request(method, path, json={}, headers={"Idempotency-Key": "wiring-key-0001"})
+        assert resp.status_code == 401, resp.text
+        assert resp.headers["content-type"].startswith("application/problem+json")
+        assert resp.json()["code"] == "unauthenticated"
+
+
+def test_wing011_operation_ids_match_the_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    import yaml
+
+    from tests.automation.conftest import OPENAPI
+
+    contract = yaml.safe_load(OPENAPI.read_text())["paths"]
+    with _client(monkeypatch, "prod") as client:
+        served = client.get("/openapi.json").json()["paths"]
+    ops = {
+        "listApprovals",
+        "getApproval",
+        "approveApproval",
+        "rejectApproval",
+        "getGlobalAutomationState",
+        "pauseAllAutomation",
+        "resumeAllAutomation",
+        "getContactAutomationState",
+        "pauseContactAutomation",
+        "resumeContactAutomation",
+        "takeoverContact",
+        "listAgentActions",
+        "sendMessage",
+        "ingestConnectorEvent",
+        "listOutboxInstructions",
+        "claimOutboxInstructions",
+    }
+    for path, item in contract.items():
+        for method, op in item.items():
+            if isinstance(op, dict) and op.get("operationId") in ops:
+                assert served[path][method]["operationId"] == op["operationId"], (path, method)

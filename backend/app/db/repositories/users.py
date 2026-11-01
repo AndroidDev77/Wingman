@@ -59,6 +59,22 @@ class UserRepository:
         user: User | None = await self.session.get(User, scope.user_id)
         return user
 
+    async def lock(self, scope: UserScope, *, shared: bool = False) -> User | None:
+        """The user row, locked and refreshed.
+
+        ``FOR UPDATE`` (default): the automation controller holds it while deciding a
+        send, so concurrent decisions for one user (daily limit) and a global pause are
+        serialised. ``shared=True`` (``FOR SHARE``): the dispatcher's last-moment
+        re-check; a global pause waits until the dispatch transaction ends.
+        """
+        user: User | None = await self.session.scalar(
+            select(User)
+            .where(User.id == scope.user_id)
+            .with_for_update(read=shared)
+            .execution_options(populate_existing=True)
+        )
+        return user
+
     async def set_global_automation_status(
         self, scope: UserScope, status: GlobalAutomationStatus, *, at: datetime | None = None
     ) -> User:

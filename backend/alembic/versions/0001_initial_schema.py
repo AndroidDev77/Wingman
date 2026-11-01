@@ -60,6 +60,9 @@ ENUMS: dict[str, tuple[str, ...]] = {
         "send_limit_reached",
         "user_rule",
     ),
+    "approval_status": ("pending", "approved", "rejected", "expired", "canceled"),
+    "draft_decision": ("send_candidate", "no_send", "ask_user"),
+    "outbox_instruction_state": ("pending", "leased", "completed", "expired", "canceled"),
     "contact_automation_status": ("active", "paused", "taken_over"),
     "global_automation_status": ("active", "paused"),
     "actor": ("user", "agent", "dispatcher", "connector", "system"),
@@ -1116,6 +1119,7 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
             nullable=False,
         ),
+        sa.Column("send_after", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -1150,6 +1154,10 @@ def upgrade() -> None:
         ),
         sa.CheckConstraint(
             "attempt_count >= 0", name=op.f("ck_messages_attempt_count_nonnegative")
+        ),
+        sa.CheckConstraint(
+            "send_after IS NULL OR direction = 'outbound'",
+            name=op.f("ck_messages_send_after_outbound_only"),
         ),
         sa.CheckConstraint(
             "external_message_id IS NULL OR char_length(external_message_id) BETWEEN 1 AND 256",
@@ -1407,8 +1415,505 @@ def upgrade() -> None:
         unique=False,
     )
 
+    # ---- WING-011 (D-010: folded into 0001): drafts, approvals, device outbox, event
+    # ingest record, and the approval FKs that messages/agent_actions were waiting for.
+    op.create_table(
+        "drafts",
+        sa.Column("id", sa.UUID(), nullable=False),
+        sa.Column("user_id", sa.UUID(), nullable=False),
+        sa.Column("conversation_id", sa.UUID(), nullable=False),
+        sa.Column("contact_id", sa.UUID(), nullable=False),
+        sa.Column(
+            "decision",
+            postgresql.ENUM(
+                "send_candidate", "no_send", "ask_user", name="draft_decision", create_type=False
+            ),
+            nullable=False,
+        ),
+        sa.Column("text", sa.Text(), nullable=True),
+        sa.Column("question_for_user", sa.Text(), nullable=True),
+        sa.Column("rationale", sa.Text(), nullable=False),
+        sa.Column("confidence", sa.Float(), nullable=False),
+        sa.Column("requires_approval", sa.Boolean(), nullable=False),
+        sa.Column(
+            "approval_reasons",
+            postgresql.ARRAY(
+                postgresql.ENUM(
+                    "assisted_mode",
+                    "sensitive_content",
+                    "date_or_commitment",
+                    "low_confidence",
+                    "first_message",
+                    "outside_active_hours",
+                    "capability_unverified",
+                    "send_limit_reached",
+                    "user_rule",
+                    name="approval_reason",
+                    create_type=False,
+                )
+            ),
+            server_default=sa.text("'{}'"),
+            nullable=False,
+        ),
+        sa.Column(
+            "intent_mode",
+            postgresql.ENUM(
+                "serious",
+                "casual_dating",
+                "casual_physical",
+                "open",
+                "custom",
+                name="intent_mode",
+                create_type=False,
+            ),
+            nullable=False,
+        ),
+        sa.Column(
+            "grounding_memory_ids",
+            postgresql.ARRAY(sa.UUID()),
+            server_default=sa.text("'{}'"),
+            nullable=False,
+        ),
+        sa.Column(
+            "grounding_message_ids",
+            postgresql.ARRAY(sa.UUID()),
+            server_default=sa.text("'{}'"),
+            nullable=False,
+        ),
+        sa.Column("reason", sa.String(length=64), nullable=False),
+        sa.Column("trigger_message_id", sa.UUID(), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.CheckConstraint(
+            "(decision = 'send_candidate') = (text IS NOT NULL)",
+            name=op.f("ck_drafts_text_iff_send_candidate"),
+        ),
+        sa.CheckConstraint(
+            "decision <> 'ask_user' OR question_for_user IS NOT NULL",
+            name=op.f("ck_drafts_ask_user_question"),
+        ),
+        sa.CheckConstraint(
+            "confidence >= 0 AND confidence <= 1", name=op.f("ck_drafts_confidence_range")
+        ),
+        sa.CheckConstraint(
+            "requires_approval = (cardinality(approval_reasons) > 0)",
+            name=op.f("ck_drafts_requires_approval_matches_reasons"),
+        ),
+        sa.CheckConstraint(
+            "text IS NULL OR char_length(text) BETWEEN 1 AND 4000", name=op.f("ck_drafts_text_len")
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "trigger_message_id"],
+            ["messages.user_id", "messages.id"],
+            name=op.f("fk_drafts_user_id_trigger_message_id_messages"),
+            ondelete="SET NULL (trigger_message_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "contact_id"],
+            ["contacts.user_id", "contacts.id"],
+            name=op.f("fk_drafts_user_id_contact_id_contacts"),
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "conversation_id"],
+            ["conversations.user_id", "conversations.id"],
+            name=op.f("fk_drafts_user_id_conversation_id_conversations"),
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id"], ["users.id"], name=op.f("fk_drafts_user_id_users"), ondelete="CASCADE"
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_drafts")),
+        sa.UniqueConstraint("user_id", "id", name=op.f("uq_drafts_user_id_id")),
+    )
+    op.create_index(
+        "uq_drafts_user_id_trigger_message_id",
+        "drafts",
+        ["user_id", "trigger_message_id"],
+        unique=True,
+        postgresql_where=sa.text("trigger_message_id IS NOT NULL"),
+    )
+    op.create_index(
+        op.f("ix_drafts_user_id_conversation_id_created_at_id"),
+        "drafts",
+        ["user_id", "conversation_id", "created_at", "id"],
+        unique=False,
+    )
+    op.create_table(
+        "approvals",
+        sa.Column("id", sa.UUID(), nullable=False),
+        sa.Column("user_id", sa.UUID(), nullable=False),
+        sa.Column("conversation_id", sa.UUID(), nullable=False),
+        sa.Column("contact_id", sa.UUID(), nullable=False),
+        sa.Column("draft_id", sa.UUID(), nullable=False),
+        sa.Column(
+            "status",
+            postgresql.ENUM(
+                "pending",
+                "approved",
+                "rejected",
+                "expired",
+                "canceled",
+                name="approval_status",
+                create_type=False,
+            ),
+            server_default="pending",
+            nullable=False,
+        ),
+        sa.Column(
+            "reasons",
+            postgresql.ARRAY(
+                postgresql.ENUM(
+                    "assisted_mode",
+                    "sensitive_content",
+                    "date_or_commitment",
+                    "low_confidence",
+                    "first_message",
+                    "outside_active_hours",
+                    "capability_unverified",
+                    "send_limit_reached",
+                    "user_rule",
+                    name="approval_reason",
+                    create_type=False,
+                )
+            ),
+            nullable=False,
+        ),
+        sa.Column("final_text", sa.Text(), nullable=True),
+        sa.Column("rejection_reason", sa.Text(), nullable=True),
+        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("decided_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.CheckConstraint(
+            "(status = 'approved') = (final_text IS NOT NULL)",
+            name=op.f("ck_approvals_final_text_iff_approved"),
+        ),
+        sa.CheckConstraint(
+            "(status = 'pending') = (decided_at IS NULL)",
+            name=op.f("ck_approvals_decided_iff_not_pending"),
+        ),
+        sa.CheckConstraint(
+            "rejection_reason IS NULL OR (status = 'rejected' AND char_length(rejection_reason) <= 500)",
+            name=op.f("ck_approvals_rejection_reason_shape"),
+        ),
+        sa.CheckConstraint("cardinality(reasons) >= 1", name=op.f("ck_approvals_reasons_nonempty")),
+        sa.CheckConstraint(
+            "final_text IS NULL OR char_length(final_text) BETWEEN 1 AND 4000",
+            name=op.f("ck_approvals_final_text_len"),
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "contact_id"],
+            ["contacts.user_id", "contacts.id"],
+            name=op.f("fk_approvals_user_id_contact_id_contacts"),
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "conversation_id"],
+            ["conversations.user_id", "conversations.id"],
+            name=op.f("fk_approvals_user_id_conversation_id_conversations"),
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "draft_id"],
+            ["drafts.user_id", "drafts.id"],
+            name=op.f("fk_approvals_user_id_draft_id_drafts"),
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id"], ["users.id"], name=op.f("fk_approvals_user_id_users"), ondelete="CASCADE"
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_approvals")),
+        sa.UniqueConstraint("user_id", "draft_id", name=op.f("uq_approvals_user_id_draft_id")),
+        sa.UniqueConstraint("user_id", "id", name=op.f("uq_approvals_user_id_id")),
+    )
+    op.create_index(
+        op.f("ix_approvals_user_id_contact_id_status"),
+        "approvals",
+        ["user_id", "contact_id", "status"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_approvals_user_id_status_created_at_id",
+        "approvals",
+        ["user_id", "status", sa.literal_column("created_at DESC"), sa.literal_column("id DESC")],
+        unique=False,
+    )
+    op.create_index(
+        "uq_approvals_user_id_conversation_id_pending",
+        "approvals",
+        ["user_id", "conversation_id"],
+        unique=True,
+        postgresql_where=sa.text("status = 'pending'"),
+    )
+    op.create_table(
+        "connector_event_ingests",
+        sa.Column("id", sa.UUID(), nullable=False),
+        sa.Column("user_id", sa.UUID(), nullable=False),
+        sa.Column("event_id", sa.UUID(), nullable=False),
+        sa.Column("connection_id", sa.UUID(), nullable=False),
+        sa.Column("event_type", sa.String(length=64), nullable=False),
+        sa.Column("request_hash", sa.String(length=64), nullable=False),
+        sa.Column("outcome", sa.String(length=32), nullable=False),
+        sa.Column("message_id", sa.UUID(), nullable=True),
+        sa.Column("occurred_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("deferred", sa.Boolean(), server_default=sa.text("false"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.CheckConstraint(
+            "event_type ~ '^[a-z][a-z_.]{1,63}$'",
+            name=op.f("ck_connector_event_ingests_event_type_format"),
+        ),
+        sa.CheckConstraint(
+            "outcome IN ('accepted', 'duplicate_message')",
+            name=op.f("ck_connector_event_ingests_outcome_values"),
+        ),
+        sa.CheckConstraint(
+            "request_hash ~ '^[0-9a-f]{64}$'",
+            name=op.f("ck_connector_event_ingests_request_hash_sha256"),
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "connection_id"],
+            ["platform_connections.user_id", "platform_connections.id"],
+            name=op.f("fk_connector_event_ingests_user_id_connection_id_platform_connections"),
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "message_id"],
+            ["messages.user_id", "messages.id"],
+            name=op.f("fk_connector_event_ingests_user_id_message_id_messages"),
+            ondelete="SET NULL (message_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id"],
+            ["users.id"],
+            name=op.f("fk_connector_event_ingests_user_id_users"),
+            ondelete="CASCADE",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_connector_event_ingests")),
+        sa.UniqueConstraint(
+            "user_id", "event_id", name=op.f("uq_connector_event_ingests_user_id_event_id")
+        ),
+        sa.UniqueConstraint("user_id", "id", name=op.f("uq_connector_event_ingests_user_id_id")),
+    )
+    op.create_index(
+        "ix_connector_event_ingests_user_id_message_id_deferred",
+        "connector_event_ingests",
+        ["user_id", "message_id"],
+        unique=False,
+        postgresql_where=sa.text("deferred"),
+    )
+    op.create_table(
+        "outbox_instructions",
+        sa.Column("id", sa.UUID(), nullable=False),
+        sa.Column("user_id", sa.UUID(), nullable=False),
+        sa.Column("connection_id", sa.UUID(), nullable=False),
+        sa.Column("outbound_message_id", sa.UUID(), nullable=False),
+        sa.Column("attempt", sa.Integer(), nullable=False),
+        sa.Column("idempotency_key", sa.String(length=128), nullable=False),
+        sa.Column(
+            "state",
+            postgresql.ENUM(
+                "pending",
+                "leased",
+                "completed",
+                "expired",
+                "canceled",
+                name="outbox_instruction_state",
+                create_type=False,
+            ),
+            server_default="pending",
+            nullable=False,
+        ),
+        sa.Column("device_install_id", sa.UUID(), nullable=True),
+        sa.Column("leased_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("lease_expires_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("completed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.CheckConstraint(
+            "(state = 'completed') = (completed_at IS NOT NULL)",
+            name=op.f("ck_outbox_instructions_completed_shape"),
+        ),
+        sa.CheckConstraint(
+            "(state IN ('pending', 'canceled')) = (leased_at IS NULL) AND (leased_at IS NULL) = (lease_expires_at IS NULL) AND (leased_at IS NULL) = (device_install_id IS NULL)",
+            name=op.f("ck_outbox_instructions_lease_shape"),
+        ),
+        sa.CheckConstraint(
+            "idempotency_key ~ '^[A-Za-z0-9._:-]{8,128}$'",
+            name=op.f("ck_outbox_instructions_idempotency_key_format"),
+        ),
+        sa.CheckConstraint("attempt >= 1", name=op.f("ck_outbox_instructions_attempt_positive")),
+        sa.CheckConstraint(
+            "lease_expires_at IS NULL OR lease_expires_at > leased_at",
+            name=op.f("ck_outbox_instructions_lease_after_start"),
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "connection_id"],
+            ["platform_connections.user_id", "platform_connections.id"],
+            name=op.f("fk_outbox_instructions_user_id_connection_id_platform_connections"),
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "outbound_message_id"],
+            ["messages.user_id", "messages.id"],
+            name=op.f("fk_outbox_instructions_user_id_outbound_message_id_messages"),
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id"],
+            ["users.id"],
+            name=op.f("fk_outbox_instructions_user_id_users"),
+            ondelete="CASCADE",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_outbox_instructions")),
+        sa.UniqueConstraint("user_id", "id", name=op.f("uq_outbox_instructions_user_id_id")),
+        sa.UniqueConstraint(
+            "user_id",
+            "idempotency_key",
+            name=op.f("uq_outbox_instructions_user_id_idempotency_key"),
+        ),
+        sa.UniqueConstraint(
+            "user_id",
+            "outbound_message_id",
+            "attempt",
+            name=op.f("uq_outbox_instructions_user_id_outbound_message_id_attempt"),
+        ),
+    )
+    op.create_index(
+        op.f("ix_outbox_instructions_user_id_connection_id_state_created_at_id"),
+        "outbox_instructions",
+        ["user_id", "connection_id", "state", "created_at", "id"],
+        unique=False,
+    )
+    op.create_index(
+        "ix_outbox_instructions_user_id_lease_expires_at",
+        "outbox_instructions",
+        ["user_id", "lease_expires_at"],
+        unique=False,
+        postgresql_where=sa.text("state = 'leased'"),
+    )
+    op.create_index(
+        "uq_outbox_instructions_user_id_outbound_message_id_live",
+        "outbox_instructions",
+        ["user_id", "outbound_message_id"],
+        unique=True,
+        postgresql_where=sa.text("state IN ('pending', 'leased')"),
+    )
+    op.create_foreign_key(
+        op.f("fk_agent_actions_user_id_approval_id_approvals"),
+        "agent_actions",
+        "approvals",
+        ["user_id", "approval_id"],
+        ["user_id", "id"],
+        ondelete="SET NULL (approval_id)",
+    )
+    op.create_index(
+        "uq_messages_user_id_approval_id",
+        "messages",
+        ["user_id", "approval_id"],
+        unique=True,
+        postgresql_where=sa.text("approval_id IS NOT NULL"),
+    )
+    op.create_foreign_key(
+        op.f("fk_messages_user_id_approval_id_approvals"),
+        "messages",
+        "approvals",
+        ["user_id", "approval_id"],
+        ["user_id", "id"],
+        ondelete="SET NULL (approval_id)",
+    )
+
 
 def downgrade() -> None:
+    # ---- WING-011
+    op.drop_constraint(
+        op.f("fk_messages_user_id_approval_id_approvals"), "messages", type_="foreignkey"
+    )
+    op.drop_index(
+        "uq_messages_user_id_approval_id",
+        table_name="messages",
+        postgresql_where=sa.text("approval_id IS NOT NULL"),
+    )
+    op.drop_constraint(
+        op.f("fk_agent_actions_user_id_approval_id_approvals"), "agent_actions", type_="foreignkey"
+    )
+    op.drop_index(
+        "uq_outbox_instructions_user_id_outbound_message_id_live",
+        table_name="outbox_instructions",
+        postgresql_where=sa.text("state IN ('pending', 'leased')"),
+    )
+    op.drop_index(
+        "ix_outbox_instructions_user_id_lease_expires_at",
+        table_name="outbox_instructions",
+        postgresql_where=sa.text("state = 'leased'"),
+    )
+    op.drop_index(
+        op.f("ix_outbox_instructions_user_id_connection_id_state_created_at_id"),
+        table_name="outbox_instructions",
+    )
+    op.drop_table("outbox_instructions")
+    op.drop_index(
+        "ix_connector_event_ingests_user_id_message_id_deferred",
+        table_name="connector_event_ingests",
+        postgresql_where=sa.text("deferred"),
+    )
+    op.drop_table("connector_event_ingests")
+    op.drop_index(
+        "uq_approvals_user_id_conversation_id_pending",
+        table_name="approvals",
+        postgresql_where=sa.text("status = 'pending'"),
+    )
+    op.drop_index("ix_approvals_user_id_status_created_at_id", table_name="approvals")
+    op.drop_index(op.f("ix_approvals_user_id_contact_id_status"), table_name="approvals")
+    op.drop_table("approvals")
+    op.drop_index(
+        "uq_drafts_user_id_trigger_message_id",
+        table_name="drafts",
+        postgresql_where=sa.text("trigger_message_id IS NOT NULL"),
+    )
+    op.drop_index(op.f("ix_drafts_user_id_conversation_id_created_at_id"), table_name="drafts")
+    op.drop_table("drafts")
     op.drop_index(op.f("ix_usage_events_user_id_occurred_at_id"), table_name="usage_events")
     op.drop_index(
         op.f("ix_usage_events_user_id_event_type_occurred_at_id"), table_name="usage_events"
