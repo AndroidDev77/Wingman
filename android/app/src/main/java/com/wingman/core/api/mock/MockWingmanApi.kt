@@ -18,6 +18,8 @@ import com.wingman.core.model.ApprovalStatus
 import com.wingman.core.model.ApproveRequest
 import com.wingman.core.model.AutomationActionRequest
 import com.wingman.core.model.Connection
+import com.wingman.core.model.ConnectorEventIngestOutcome
+import com.wingman.core.model.ConnectorEventIngestResult
 import com.wingman.core.model.ContactAutomationState
 import com.wingman.core.model.ContactAutomationStatus
 import com.wingman.core.model.ContactPreferenceOverride
@@ -39,6 +41,12 @@ import com.wingman.core.model.IntentMode
 import com.wingman.core.model.Message
 import com.wingman.core.model.MessageDirection
 import com.wingman.core.model.MessageOrigin
+import com.wingman.core.model.OutboxAuthorization
+import com.wingman.core.model.OutboxAuthorizationOrigin
+import com.wingman.core.model.OutboxClaimRequest
+import com.wingman.core.model.OutboxClaimResult
+import com.wingman.core.model.OutboxInstruction
+import com.wingman.core.model.OutboxInstructionState
 import com.wingman.core.model.Page
 import com.wingman.core.model.Preferences
 import com.wingman.core.model.PreferencesUpdate
@@ -52,6 +60,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import java.io.IOException
 import java.time.Instant
 
@@ -66,13 +75,18 @@ import java.time.Instant
  *    `409 approval_not_pending`, sending on an UNSUPPORTED connection is `422 capability_unsupported`;
  *  - delivery truth: sends and approvals return `queued` and are never advanced to `sent`;
  *  - takeover cancels the contact's pending approvals; pause/resume update state;
+ *  - device connectors (v1.1.0): `ingestConnectorEvent` dedups by `event_id` (`duplicate_event`), refuses
+ *    `mock.*` on a real connection and send outcomes without a leased instruction (422);
+ *    `claimOutboxInstructions` leases instructions queued with [queueOutboxInstruction] at most once,
+ *    returns the caller's own unexpired leases, and replays the same key;
  *  - preferences: `If-Match` mismatch is `412 precondition_failed`; per-contact overrides have their
  *    own version sequence, never touch user-wide preferences, and `effective` follows the
  *    backend's `merge_effective` (override field when non-null > user-wide); `custom` intent
  *    without a description is `422 validation_error`.
  *
  * Test hooks: [failNextWith] makes the next call fail, [failAllWith] makes every call fail,
- * [latencyMs] adds an artificial delay. [calls] records the operations invoked.
+ * [latencyMs] adds an artificial delay. [calls] records the operations invoked. [ingestedEvents]
+ * holds accepted envelopes; [queueOutboxInstruction] plays the dispatcher (WING-011) for the outbox.
  */
 class MockWingmanApi(
     private val clock: () -> Instant = { MockFixtures.NOW },
@@ -93,6 +107,21 @@ class MockWingmanApi(
     private var globalState = GlobalAutomationState(GlobalAutomationStatus.ACTIVE, changedAt = null)
     private val contactStates = mutableMapOf<String, ContactAutomationState>()
     private val idempotency = mutableMapOf<String, Pair<Any, ApiResult<*>>>()
+    private val ingested = LinkedHashMap<String, Pair<JsonObject, ConnectorEventIngestResult>>()
+    private val inboundExternalIds = mutableMapOf<String, ConnectorEventIngestResult>()
+    private val outbox = mutableListOf<MockOutboxEntry>()
+
+    /** Accepted (not duplicate) ingest envelopes, oldest first. */
+    val ingestedEvents: List<JsonObject> get() = ingested.values.map { it.first }
+
+    /** A dispatcher-created instruction and its mock lease state. */
+    private data class MockOutboxEntry(
+        val instruction: OutboxInstruction,
+        var state: OutboxInstructionState = OutboxInstructionState.PENDING,
+        var holder: String? = null,
+        var leasedAt: Instant? = null,
+        var leaseExpiresAt: Instant? = null,
+    )
 
     private var failNext: ApiError? = null
     private var failAll: ApiError? = null
@@ -330,6 +359,110 @@ class MockWingmanApi(
     override suspend fun takeoverContact(contactId: String, body: AutomationActionRequest, key: IdempotencyKey): ApiResult<ContactAutomationState> =
         idempotent("takeoverContact", "POST /v1/contacts/{id}/automation/takeover", key, contactId to body) {
             setContactStatus(contactId, ContactAutomationStatus.TAKEN_OVER, AgentActionType.AUTOMATION_TAKEOVER, cancelApprovals = true)
+        }
+
+    /* ------------------------------------------------------------ device connectors (v1.1.0) */
+
+    /**
+     * Test hook standing in for the WING-011 dispatcher: queues a `pending` instruction on
+     * [connectionId]. Returns its per-attempt key (`send:<outbound>:<attempt>`, D-006).
+     */
+    fun queueOutboxInstruction(
+        connectionId: String,
+        externalThreadId: String,
+        text: String,
+        authorization: OutboxAuthorization = OutboxAuthorization(OutboxAuthorizationOrigin.USER_MANUAL, null),
+        attempt: Int = 1,
+        outboundMessageId: String = nextId(),
+        conversationId: String = MockFixtures.CONVERSATION_SAM,
+    ): String {
+        val key = "send:$outboundMessageId:$attempt"
+        // Lease fields are placeholders until claimed; the returned copy carries the real lease.
+        outbox += MockOutboxEntry(
+            OutboxInstruction(
+                id = nextId(), connectionId = connectionId, outboundMessageId = outboundMessageId, idempotencyKey = key,
+                attempt = attempt, state = OutboxInstructionState.PENDING, createdAt = clock(), leasedAt = clock(),
+                leaseExpiresAt = clock(), conversationId = conversationId, externalThreadId = externalThreadId,
+                text = text, authorization = authorization,
+            ),
+        )
+        return key
+    }
+
+    /** Lease length the mock grants (contract default 120 s). */
+    var leaseSeconds: Long = 120
+
+    override suspend fun ingestConnectorEvent(connectionId: String, envelope: JsonObject, key: IdempotencyKey): ApiResult<ConnectorEventIngestResult> =
+        op("ingestConnectorEvent") {
+            fun field(name: String) = (envelope[name] as? JsonPrimitive)?.takeIf { it.isString }?.content
+            val connection = connections.find { it.id == connectionId }
+            if (connection == null || field("user_id") != MockFixtures.USER_ID) return@op notFound()
+            val eventId = field("event_id")
+            if (eventId != key.value) return@op problem(422, ErrorCode.VALIDATION_ERROR, "Idempotency-Key must equal event_id")
+            ingested[eventId]?.let { (body, result) ->
+                return@op if (body == envelope) {
+                    ApiResult.Success(result.copy(outcome = ConnectorEventIngestOutcome.DUPLICATE_EVENT), idempotentReplayed = true)
+                } else {
+                    problem(422, ErrorCode.IDEMPOTENCY_KEY_MISMATCH, "Idempotency-Key reused with a different body")
+                }
+            }
+            val type = field("type").orEmpty()
+            if (field("connection_id") != connectionId || field("platform") != connection.platform) {
+                return@op problem(422, ErrorCode.VALIDATION_ERROR, "connection_id/platform do not match the connection")
+            }
+            if (type.startsWith("mock.") && connection.platform != "mock") {
+                return@op problem(422, ErrorCode.VALIDATION_ERROR, "mock.* events are only accepted on a mock connection")
+            }
+            val payload = (envelope["payload"] as? JsonObject) ?: JsonObject(emptyMap())
+            fun payloadField(name: String) = (payload[name] as? JsonPrimitive)?.takeIf { it.isString }?.content
+            var messageId: String? = null
+            if (type.endsWith("send_acknowledged") || type.endsWith("send_failed") || type.endsWith("delivery_receipt")) {
+                val outbound = payloadField("outbound_message_id")
+                val sendKey = payloadField("idempotency_key")
+                val match = outbox.firstOrNull { e ->
+                    e.instruction.connectionId == connectionId && e.instruction.outboundMessageId == outbound &&
+                        (sendKey == null || e.instruction.idempotencyKey == sendKey) &&
+                        e.state in setOf(OutboxInstructionState.LEASED, OutboxInstructionState.EXPIRED, OutboxInstructionState.COMPLETED)
+                } ?: return@op problem(422, ErrorCode.VALIDATION_ERROR, "send result does not match a send instruction leased on this connection")
+                if (!type.endsWith("delivery_receipt")) match.state = OutboxInstructionState.COMPLETED
+                messageId = outbound
+            }
+            val externalId = field("external_message_id")
+            if (type.endsWith("message.received") || type == "mock.inbound_message_injected") {
+                val dedupKey = "${connection.platform}|$externalId"
+                inboundExternalIds[dedupKey]?.let { first ->
+                    return@op ok(ConnectorEventIngestResult(eventId, ConnectorEventIngestOutcome.DUPLICATE_MESSAGE, first.messageId, clock()))
+                }
+                messageId = nextId()
+                inboundExternalIds[dedupKey] = ConnectorEventIngestResult(eventId, ConnectorEventIngestOutcome.ACCEPTED, messageId, clock())
+            }
+            val result = ConnectorEventIngestResult(eventId, ConnectorEventIngestOutcome.ACCEPTED, messageId, clock())
+            ingested[eventId] = envelope to result
+            ok(result)
+        }
+
+    override suspend fun claimOutboxInstructions(connectionId: String, body: OutboxClaimRequest, key: IdempotencyKey): ApiResult<OutboxClaimResult> =
+        idempotent("claimOutboxInstructions", "POST /v1/connections/{id}/outbox/claim", key, connectionId to body) {
+            if (connections.none { it.id == connectionId }) return@idempotent notFound()
+            val now = clock()
+            val max = body.maxInstructions ?: 1
+            outbox.filter { it.state == OutboxInstructionState.LEASED && it.leaseExpiresAt!! <= now }
+                .forEach { it.state = OutboxInstructionState.EXPIRED }
+            val held = outbox.filter {
+                it.instruction.connectionId == connectionId && it.state == OutboxInstructionState.LEASED && it.holder == body.deviceInstallId
+            }
+            val fresh = outbox.filter { it.instruction.connectionId == connectionId && it.state == OutboxInstructionState.PENDING }
+                .take((max - held.size).coerceAtLeast(0))
+            fresh.forEach { e ->
+                e.state = OutboxInstructionState.LEASED
+                e.holder = body.deviceInstallId
+                e.leasedAt = now
+                e.leaseExpiresAt = now.plusSeconds(leaseSeconds)
+            }
+            val leased = (held + fresh).take(max).map { e ->
+                e.instruction.copy(state = OutboxInstructionState.LEASED, leasedAt = e.leasedAt!!, leaseExpiresAt = e.leaseExpiresAt!!)
+            }
+            ok(OutboxClaimResult(leased, now))
         }
 
     /* ------------------------------------------------------------ internals */

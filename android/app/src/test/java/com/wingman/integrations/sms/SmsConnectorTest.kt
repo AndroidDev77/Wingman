@@ -53,13 +53,17 @@ class SmsConnectorTest {
         assertEquals(listOf("message.received", "message.send_acknowledged"), up.uploaded.map { it.str("type") })
     }
 
-    @Test fun `no ingest route keeps envelopes queued (I-010)`() {
-        val c = connector(File(tmp.root, "s.json"), FakeSmsTransport(), NoIngestRouteUploader)
+    @Test fun `without a backend client envelopes stay queued and nothing is claimed`() {
+        val t = FakeSmsTransport()
+        val c = connector(File(tmp.root, "s.json"), t, NoBackendUploader)
         c.inbound.onSmsReceived(sms())
         val report = c.maintain()
         assertEquals(0, report.accepted)
-        assertTrue(report.retryReason!!.contains("I-010"))
+        assertTrue(report.retryReason!!.contains("no backend client"))
         assertEquals(1, c.outbox.size())
+        assertEquals(null, c.poller)
+        assertEquals("no backend connected", c.sync(READY, ignoreBackoff = true).poll.skippedReason)
+        assertEquals(0, t.submits.size)
     }
 
     @Test fun `outbox keeps order, stops on retry, dead-letters rejections`() {

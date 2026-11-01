@@ -6,6 +6,7 @@ import com.wingman.core.model.ApprovalDecisionResult
 import com.wingman.core.model.ApproveRequest
 import com.wingman.core.model.AutomationActionRequest
 import com.wingman.core.model.Connection
+import com.wingman.core.model.ConnectorEventIngestResult
 import com.wingman.core.model.ContactAutomationState
 import com.wingman.core.model.ContactPreferenceOverrideUpdate
 import com.wingman.core.model.ContactPreferences
@@ -16,12 +17,15 @@ import com.wingman.core.model.DraftCreateRequest
 import com.wingman.core.model.GlobalAutomationState
 import com.wingman.core.model.HealthResponse
 import com.wingman.core.model.Message
+import com.wingman.core.model.OutboxClaimRequest
+import com.wingman.core.model.OutboxClaimResult
 import com.wingman.core.model.Page
 import com.wingman.core.model.Preferences
 import com.wingman.core.model.PreferencesUpdate
 import com.wingman.core.model.RejectRequest
 import com.wingman.core.model.SendMessageRequest
 import com.wingman.core.model.User
+import kotlinx.serialization.json.JsonObject
 import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.DELETE
@@ -33,7 +37,7 @@ import retrofit2.http.Path
 import retrofit2.http.Query
 
 /**
- * Retrofit binding of contracts/openapi.yaml v1.0.0. Paths are relative (no leading slash) so they
+ * Retrofit binding of contracts/openapi.yaml (v1.0.0 plus the v1.1.0 device-connector operations). Paths are relative (no leading slash) so they
  * resolve against the normalized base URL. Internal: callers use [com.wingman.core.api.WingmanApi].
  */
 internal interface WingmanService {
@@ -181,4 +185,18 @@ internal interface WingmanService {
         @Query("contact_id") contactId: String?,
         @Query("type") type: String?,
     ): Response<Page<AgentAction>>
+
+    @POST("v1/connections/{connection_id}/events")
+    suspend fun ingestConnectorEvent(
+        @Path("connection_id") connectionId: String,
+        @Header("Idempotency-Key") key: String,
+        @Body envelope: JsonObject,
+    ): Response<ConnectorEventIngestResult>
+
+    @POST("v1/connections/{connection_id}/outbox/claim")
+    suspend fun claimOutboxInstructions(
+        @Path("connection_id") connectionId: String,
+        @Header("Idempotency-Key") key: String,
+        @Body body: OutboxClaimRequest,
+    ): Response<OutboxClaimResult>
 }

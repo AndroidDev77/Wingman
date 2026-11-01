@@ -109,8 +109,10 @@ data class SmsSendPreconditions(val hasTelephony: Boolean, val sendPermissionGra
  * - **Unknown outcome is not retryable.** If the process died after claiming, or no "sent"
  *   result arrives within [sentResultTimeoutMillis], [expireStale] fails the key with
  *   `timeout`, `retryable = false`, because the message may already be out.
- * - **Only the authorized dispatch path calls [send].** Nothing in the inbound path holds a
- *   reference to this class.
+ * - **Only the authorized dispatch path calls [send].** In production that is
+ *   [SmsOutboxPoller], which executes instructions the backend dispatcher leased to this
+ *   device (ADR 0006); the only other caller is the debug-only demo screen. Nothing in the
+ *   inbound path holds a reference to this class.
  */
 class SmsSender(
     private val scope: SmsConnectionScope,
@@ -133,8 +135,23 @@ class SmsSender(
 
     private fun save(r: SmsSendRecord) = store.put(key(r.idempotencyKey), json.encodeToString(SmsSendRecord.serializer(), r))
 
+    /**
+     * Performs the single transport attempt for [command]'s key, or replays the stored outcome.
+     *
+     * @param startDeadlineMillis local wall-clock instant (from [clock]) at or after which the
+     *   transport must NOT be called: the leased-instruction deadline of ADR 0006, computed by
+     *   [SmsOutboxPoller]. Checked last, immediately before the submit. When it has passed, the
+     *   key is used up without a transport call and `send_failed` / `timeout` / `retryable: true`
+     *   is emitted. Null means no deadline (the debug demo screen).
+     */
     @Synchronized
-    fun send(command: SmsSendCommand, preconditions: SmsSendPreconditions, subscriptionId: Int? = null, requestDeliveryReports: Boolean = true): SmsSendOutcome {
+    fun send(
+        command: SmsSendCommand,
+        preconditions: SmsSendPreconditions,
+        subscriptionId: Int? = null,
+        requestDeliveryReports: Boolean = true,
+        startDeadlineMillis: Long? = null,
+    ): SmsSendOutcome {
         val existing = record(command.idempotencyKey)
         if (existing != null) return replay(existing, command)
 
@@ -159,6 +176,10 @@ class SmsSender(
             else -> null
         }
         if (precheck != null) return fail(claimed, precheck)
+        // Lease deadline (ADR 0006): checked as late as possible, right before the radio is called.
+        if (startDeadlineMillis != null && clock.nowMillis() >= startDeadlineMillis) {
+            return fail(claimed, SmsFailureMapper.LEASE_DEADLINE_PASSED)
+        }
 
         val attempting = claimed.copy(transportCalled = true)
         save(attempting) // durable claim BEFORE the side effect: a crash from here on never resends

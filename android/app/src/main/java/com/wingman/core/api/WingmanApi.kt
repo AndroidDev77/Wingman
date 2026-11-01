@@ -9,6 +9,7 @@ import com.wingman.core.model.ApproveRequest
 import com.wingman.core.model.AutomationActionRequest
 import com.wingman.core.model.AutomationMode
 import com.wingman.core.model.Connection
+import com.wingman.core.model.ConnectorEventIngestResult
 import com.wingman.core.model.ContactAutomationState
 import com.wingman.core.model.ContactPreferenceOverrideUpdate
 import com.wingman.core.model.ContactPreferences
@@ -21,12 +22,15 @@ import com.wingman.core.model.GlobalAutomationState
 import com.wingman.core.model.HealthResponse
 import com.wingman.core.model.IntentMode
 import com.wingman.core.model.Message
+import com.wingman.core.model.OutboxClaimRequest
+import com.wingman.core.model.OutboxClaimResult
 import com.wingman.core.model.Page
 import com.wingman.core.model.Preferences
 import com.wingman.core.model.PreferencesUpdate
 import com.wingman.core.model.RejectRequest
 import com.wingman.core.model.SendMessageRequest
 import com.wingman.core.model.User
+import kotlinx.serialization.json.JsonObject
 
 /** Request for one page. `cursor == null` is the first page; `limit` is 1..100 (server default 50). */
 data class PageRequest(val cursor: String? = null, val limit: Int? = null) {
@@ -61,7 +65,8 @@ data class AgentActionFilter(
 )
 
 /**
- * Typed client for `contracts/openapi.yaml` v1.0.0. One method per `operationId`.
+ * Typed client for `contracts/openapi.yaml` (v1.0.0, plus the two v1.1.0 device-connector operations
+ * `ingestConnectorEvent` and `claimOutboxInstructions`). One method per `operationId`.
  *
  * Rules every implementation follows:
  *  - Never throws for HTTP, network or decoding failures: they come back as [ApiResult.Failure].
@@ -133,4 +138,21 @@ interface WingmanApi {
         page: PageRequest = PageRequest.FIRST,
         filter: AgentActionFilter = AgentActionFilter(),
     ): ApiResult<Page<AgentAction>>
+
+    // device-side connectors (contract v1.1.0, ADR 0006; used by the WING-016 SMS connector)
+
+    /**
+     * `ingestConnectorEvent`: reports one `connector_event.v1` [envelope]. [key] MUST equal the
+     * envelope's `event_id` (implementations return [ApiError.Client] otherwise, without a request).
+     * `202 accepted` and `200 duplicate_*` are both [ApiResult.Success]; branch on
+     * [ConnectorEventIngestResult.outcome]. The envelope may hold private text: never log it.
+     */
+    suspend fun ingestConnectorEvent(connectionId: String, envelope: JsonObject, key: IdempotencyKey): ApiResult<ConnectorEventIngestResult>
+
+    /**
+     * `claimOutboxInstructions`: leases dispatcher-created send instructions to this install.
+     * Persist [key] before calling and reuse it if the response is lost: a replay returns the
+     * original instructions with `idempotentReplayed = true`.
+     */
+    suspend fun claimOutboxInstructions(connectionId: String, body: OutboxClaimRequest, key: IdempotencyKey): ApiResult<OutboxClaimResult>
 }
