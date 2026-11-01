@@ -13,10 +13,19 @@ Each ticket goes to a separate remote agent working on its own `wing-###-short-n
 ### D-003 (2026-10-31): Integrator owns shared wiring
 Per `EXECUTION_PLAN.md`, only the integrator edits `backend/app/main.py` router registration, Alembic migration ordering, the Android manifest, the DI root, and the navigation graph. Feature PRs that need these changes describe them in the handoff instead.
 
+### D-004 (2026-11-01): Contract v1.0.0 frozen (G1)
+Changes to `contracts/` now need their own versioned PR. Deferred to additive PRs by the owning tickets: connection pairing, connector-event ingest route, memory, dates, analytics and billing endpoints.
+
+### D-005 (2026-11-01): Dependency and lockfile conflicts are resolved by the integrator
+Wave 2 runs three backend tickets at once. Each may add dependencies to `backend/pyproject.toml`; the integrator merges them and regenerates `uv.lock` at merge time. Each ticket also provides its own FastAPI `APIRouter`, which the integrator registers in `app/main.py`.
+
 ## Open issues
 
 | ID | Issue | Owner | Status |
 |---|---|---|---|
 | I-001 | No Android SDK in the cloud sandbox, so Android builds are UNVERIFIED until a runner has the SDK (WING-023) or a developer builds locally | Integrator / WING-023 | Open |
-| I-002 | No Docker daemon in the cloud sandbox; `docker-compose.yml` is UNVERIFIED here. DB-dependent tickets must run Postgres another way | Integrator | Open |
+| I-002 | No Docker daemon in the cloud sandbox; `docker-compose.yml` is UNVERIFIED here. Mitigated: Postgres 16 server binaries are at `/usr/lib/postgresql/16/bin` for tests | Integrator | Mitigated |
+| I-004 | One problem+json exception handler should replace FastAPI's default 422 body, and datetimes must serialize with `Z` | WING-004 | Open |
+| I-005 | Run `contracts/validate.sh` in CI | WING-023 | Open |
+| I-006 | Merged branches can't be deleted through the sandbox proxy; delete `wing-001-bootstrap` and `wing-002-contracts` in the GitHub UI | Repo owner | Open |
 | I-003 | G5 (physical-device SMS verification) needs a human with an Android device; cloud agents cannot satisfy it | Repo owner | Open |

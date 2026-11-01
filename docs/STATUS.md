@@ -7,18 +7,18 @@ Legend: ⬜ pending · 🟦 in progress · 🟨 in review · ✅ completed · �
 
 | Ticket | Task | Deps | Status | Branch / PR | Notes |
 |---|---|---|---|---|---|
-| WING-001 | Bootstrap the monorepo | none | 🟦 in progress | `wing-001-bootstrap` | Integrator-built |
-| WING-002 | Contracts and architecture | 001 | ⬜ pending | | Next; gates wave 2 |
-| WING-003 | PostgreSQL persistence | 002 | ⬜ pending | | Wave 2 |
+| WING-001 | Bootstrap the monorepo | none | ✅ completed | PR #1 | Android build UNVERIFIED (no SDK, I-001) |
+| WING-002 | Contracts and architecture | 001 | ✅ completed | PR #2 | Contract v1.0.0 frozen; validate with `contracts/validate.sh` |
+| WING-003 | PostgreSQL persistence | 002 | 🟦 in progress | `wing-003-persistence` | Wave 2 |
 | WING-004 | Auth and user isolation | 003 | ⬜ pending | | |
-| WING-005 | LLM gateway | 002 | ⬜ pending | | Wave 2 |
-| WING-006 | Connector SDK and simulator | 002 | ⬜ pending | | Wave 2 |
+| WING-005 | LLM gateway | 002 | 🟦 in progress | `wing-005-llm-gateway` | Wave 2 |
+| WING-006 | Connector SDK and simulator | 002 | 🟦 in progress | `wing-006-connector-sdk` | Wave 2 |
 | WING-007 | Intent and style profiles | 003 | ⬜ pending | | |
 | WING-008 | Conversation memory | 003, 005 | ⬜ pending | | Vertical slice |
 | WING-009 | Analysis and stage tracking | 005, 008 | ⬜ pending | | |
 | WING-010 | Grounded reply generation | 005, 007, 008, 009 | ⬜ pending | | Vertical slice |
 | WING-011 | Automation controller and dispatch | 004, 006, 010 | ⬜ pending | | Vertical slice |
-| WING-012 | Android shell and API client | 002 | ⬜ pending | | Wave 2 |
+| WING-012 | Android shell and API client | 002 | 🟦 in progress | `wing-012-android-shell` | Wave 2; build UNVERIFIED without SDK |
 | WING-013 | Onboarding and settings UI | 007, 012 | ⬜ pending | | |
 | WING-014 | Inbox and conversation views | 006, 012 | ⬜ pending | | |
 | WING-015 | Approvals, audit, takeover UI | 011, 012, 014 | ⬜ pending | | |
@@ -37,7 +37,7 @@ Legend: ⬜ pending · 🟦 in progress · 🟨 in review · ✅ completed · �
 ## Integration gates
 | Gate | Description | Status |
 |---|---|---|
-| G1 | Contract schema frozen after WING-002 | ⬜ |
+| G1 | Contract schema frozen after WING-002 | ✅ v1.0.0 (PR #2) |
 | G2 | Backend models and core API work in mock mode | ⬜ |
 | G3 | Android project builds and talks to mock backend | ⬜ |
 | G4 | Outbound path idempotent and approval-aware | ⬜ |
