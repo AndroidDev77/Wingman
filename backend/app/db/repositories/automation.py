@@ -128,7 +128,7 @@ class ApprovalRepository(ScopedRepository[Approval]):
         row: Approval | None = await self.session.scalar(
             self._select()
             .where(Approval.id == approval_id)
-            .with_for_update()
+            .with_for_update(key_share=True)  # FOR NO KEY UPDATE: see UserRepository.lock
             .execution_options(populate_existing=True)
         )
         return row
@@ -256,7 +256,7 @@ class OutboxRepository(ScopedRepository[OutboxInstruction]):
         row: OutboxInstruction | None = await self.session.scalar(
             stmt.order_by(OutboxInstruction.attempt.desc())
             .limit(1)
-            .with_for_update()
+            .with_for_update(key_share=True)  # FOR NO KEY UPDATE: see UserRepository.lock
             .execution_options(populate_existing=True)
         )
         return row
@@ -273,7 +273,7 @@ class OutboxRepository(ScopedRepository[OutboxInstruction]):
             )
             .order_by(OutboxInstruction.created_at, OutboxInstruction.id)
             .limit(limit)
-            .with_for_update(skip_locked=True)
+            .with_for_update(skip_locked=True, key_share=True)
             .execution_options(populate_existing=True)
         )
         return list((await self.session.scalars(stmt)).all())

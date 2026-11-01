@@ -278,7 +278,7 @@ class MessageRepository(ScopedRepository[Message]):
         row: Message | None = await self.session.scalar(
             self._select()
             .where(Message.id == message_id)
-            .with_for_update()
+            .with_for_update(key_share=True)  # FOR NO KEY UPDATE: see UserRepository.lock
             .execution_options(populate_existing=True)
         )
         return row
