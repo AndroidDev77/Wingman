@@ -39,6 +39,7 @@ import com.wingman.core.ui.UiState
 import com.wingman.core.ui.compose.LocalAppContainer
 import com.wingman.core.ui.compose.UiStateContent
 import com.wingman.core.ui.compose.wingmanViewModel
+import com.wingman.features.auth.SignOutButton
 import com.wingman.navigation.ScreenContent
 import com.wingman.ui.theme.WingmanTheme
 
@@ -89,6 +90,13 @@ fun SettingsScreen() {
         onRetryContacts = vm.contacts::load,
         editor = vm.editor,
         onOpenContact = { selectedContact = it },
+        // I-011 (integrator): sign out of the encrypted session. Renders nothing in mock-API
+        // builds, which have no session.
+        footer = {
+            HorizontalDivider()
+            SectionTitle("Account")
+            SignOutButton()
+        },
     )
 }
 
@@ -100,6 +108,8 @@ fun SettingsContent(
     onRetryContacts: () -> Unit,
     editor: PreferencesEditor?,
     onOpenContact: (String) -> Unit,
+    /** Shown after the per-contact list (the account section on the real screen). */
+    footer: @Composable () -> Unit = {},
 ) {
     UiStateContent(state, onRetry = onRetry) { c ->
         Column(
@@ -146,6 +156,7 @@ fun SettingsContent(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             ContactList(contacts, onRetryContacts, onOpenContact)
+            footer()
         }
         c.pendingAutomation?.let { pending ->
             AutomationConfirmDialog(pending, onConfirm = { editor?.confirmAutomationMode() }, onCancel = { editor?.cancelAutomationMode() })

@@ -21,6 +21,22 @@ android {
         // `-Pwingman.useMockApi=false` to talk to API_BASE_URL.
         val useMock = (project.findProperty("wingman.useMockApi") as String?)?.toBooleanStrictOrNull() ?: true
         buildConfigField("boolean", "USE_MOCK_API", useMock.toString())
+
+        // I-011 OIDC sign-in (AppAuth, authorization code + PKCE). No IdP is chosen yet (I-014), so
+        // these default to empty and real sign-in is disabled. Set them with
+        // -Pwingman.oidc.issuer=... etc. or in ~/.gradle/gradle.properties (docs/android_auth.md).
+        fun prop(name: String, default: String = "") = (project.findProperty(name) as String?)?.trim() ?: default
+        fun quoted(v: String) = "\"" + v.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
+        val oidcRedirect = prop("wingman.oidc.redirectUri")
+        buildConfigField("String", "OIDC_ISSUER", quoted(prop("wingman.oidc.issuer")))
+        buildConfigField("String", "OIDC_CLIENT_ID", quoted(prop("wingman.oidc.clientId")))
+        buildConfigField("String", "OIDC_REDIRECT_URI", quoted(oidcRedirect))
+        buildConfigField("String", "OIDC_SCOPES", quoted(prop("wingman.oidc.scopes", "openid profile email offline_access")))
+        buildConfigField("String", "OIDC_AUDIENCE", quoted(prop("wingman.oidc.audience")))
+        // AppAuth's RedirectUriReceiverActivity (from the library manifest) handles this scheme.
+        // Unconfigured builds use an inert app-specific placeholder.
+        manifestPlaceholders["appAuthRedirectScheme"] =
+            oidcRedirect.substringBefore(':', missingDelimiterValue = "").ifEmpty { "com.wingman.auth" }
     }
 
     buildTypes {
@@ -64,8 +80,16 @@ dependencies {
     implementation(libs.retrofit.kotlinx.serialization)
     implementation(libs.okhttp)
     implementation(libs.androidx.work.runtime.ktx)
+    implementation(libs.appauth)
     debugImplementation(libs.androidx.ui.tooling)
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.okhttp.mockwebserver)
+}
+
+// I-011: the release source set replaces the debug-only dev-token sign-in with a stub. CI builds
+// only the debug variant, so compile the release Kotlin too whenever unit tests run: a release
+// build that fails to compile (or still references the debug panel) fails the Android job.
+tasks.matching { it.name == "testDebugUnitTest" }.configureEach {
+    dependsOn("compileReleaseKotlin")
 }
