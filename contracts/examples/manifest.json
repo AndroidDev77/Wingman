@@ -150,6 +150,74 @@
       "schema": "schemas/connector_event.v1.json"
     },
     {
+      "file": "event.sms_send_acknowledged.json",
+      "schema": "schemas/connector_event.v1.json"
+    },
+    {
+      "file": "event.sms_send_failed.json",
+      "schema": "schemas/connector_event.v1.json"
+    },
+    {
+      "file": "event.sms_delivery_receipt.json",
+      "schema": "schemas/connector_event.v1.json"
+    },
+    {
+      "file": "ingest.accepted.response.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectorEventIngestResult"
+    },
+    {
+      "file": "ingest.duplicate_event.response.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectorEventIngestResult"
+    },
+    {
+      "file": "ingest.duplicate_message.response.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectorEventIngestResult"
+    },
+    {
+      "file": "ingest.send_acknowledged.response.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectorEventIngestResult"
+    },
+    {
+      "file": "problem.ingest_mock_event_on_real_connection.json",
+      "schema": "openapi.yaml#/components/schemas/Problem"
+    },
+    {
+      "file": "problem.ingest_unmatched_send_result.json",
+      "schema": "openapi.yaml#/components/schemas/Problem"
+    },
+    {
+      "file": "outbox.claim.request.json",
+      "schema": "openapi.yaml#/components/schemas/OutboxClaimRequest"
+    },
+    {
+      "file": "outbox.claim.response.json",
+      "schema": "openapi.yaml#/components/schemas/OutboxClaimResult"
+    },
+    {
+      "file": "outbox.claim.empty.response.json",
+      "schema": "openapi.yaml#/components/schemas/OutboxClaimResult"
+    },
+    {
+      "file": "outbox.page.json",
+      "schema": "openapi.yaml#/components/schemas/OutboxInstructionPage"
+    },
+    {
+      "file": "memories.page.json",
+      "schema": "openapi.yaml#/components/schemas/MemoryPage"
+    },
+    {
+      "file": "memories.history.page.json",
+      "schema": "openapi.yaml#/components/schemas/MemoryPage"
+    },
+    {
+      "file": "memory.correct.request.json",
+      "schema": "openapi.yaml#/components/schemas/MemoryCorrection"
+    },
+    {
+      "file": "memory.correct.response.json",
+      "schema": "openapi.yaml#/components/schemas/Memory"
+    },
+    {
       "file": "invalid/message.queued_claims_sent.json",
       "schema": "openapi.yaml#/components/schemas/Message",
       "why_invalid": "queued message must not carry sent_at (never claim a send on a queued message)"
@@ -218,6 +286,66 @@
       "file": "invalid/problem.unknown_code.json",
       "schema": "openapi.yaml#/components/schemas/Problem",
       "why_invalid": "error code must be a stable ErrorCode value"
+    },
+    {
+      "file": "invalid/outbox.instruction_missing_idempotency_key.json",
+      "schema": "openapi.yaml#/components/schemas/OutboxInstruction",
+      "why_invalid": "a leased instruction must carry the per-attempt send idempotency_key (D-006)",
+      "expect_error": "'idempotency_key' is a required property"
+    },
+    {
+      "file": "invalid/outbox.claim_returns_unleased_instruction.json",
+      "schema": "openapi.yaml#/components/schemas/OutboxClaimResult",
+      "why_invalid": "a claim only ever returns instructions in state leased, with a lease",
+      "expect_error": "'leased' was expected"
+    },
+    {
+      "file": "invalid/outbox.summary_pending_with_lease.json",
+      "schema": "openapi.yaml#/components/schemas/OutboxInstructionSummary",
+      "why_invalid": "a pending instruction has no lease timestamps",
+      "expect_error": "is not of type 'null'"
+    },
+    {
+      "file": "invalid/outbox.approved_draft_without_approval.json",
+      "schema": "openapi.yaml#/components/schemas/OutboxInstruction",
+      "why_invalid": "an approved_draft send must name its approval_id",
+      "expect_error": "None is not of type 'string'"
+    },
+    {
+      "file": "invalid/outbox.claim_without_device_install_id.json",
+      "schema": "openapi.yaml#/components/schemas/OutboxClaimRequest",
+      "why_invalid": "a claim must identify the lease holder (device_install_id)",
+      "expect_error": "'device_install_id' is a required property"
+    },
+    {
+      "file": "invalid/ingest_result.unknown_outcome.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectorEventIngestResult",
+      "why_invalid": "ingest outcome must be accepted/duplicate_event/duplicate_message",
+      "expect_error": "'ignored' is not one of"
+    },
+    {
+      "file": "invalid/memory.confidence_above_one.json",
+      "schema": "openapi.yaml#/components/schemas/Memory",
+      "why_invalid": "confidence must be within [0, 1]",
+      "expect_error": "greater than the maximum of 1"
+    },
+    {
+      "file": "invalid/memory.inferred_sensitive.json",
+      "schema": "openapi.yaml#/components/schemas/Memory",
+      "why_invalid": "inferred sensitive facts are never stored",
+      "expect_error": "False was expected"
+    },
+    {
+      "file": "invalid/memory.fact_without_source.json",
+      "schema": "openapi.yaml#/components/schemas/Memory",
+      "why_invalid": "a fact must cite at least one source message",
+      "expect_error": "should be non-empty"
+    },
+    {
+      "file": "invalid/memory.correction_unknown_field.json",
+      "schema": "openapi.yaml#/components/schemas/MemoryCorrection",
+      "why_invalid": "correction bodies reject unknown fields (confidence is server-set)",
+      "expect_error": "'confidence' was unexpected"
     }
   ]
 }

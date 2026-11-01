@@ -1,0 +1,38 @@
+{
+  "items": [
+    {
+      "id": "0192f3a0-0000-7000-8000-000000000401",
+      "connection_id": "0192f3a0-0000-7000-8000-0000000000a1",
+      "outbound_message_id": "0192f3a0-0000-7000-8000-0000000000d6",
+      "idempotency_key": "send:0192f3a0-0000-7000-8000-0000000000d6:1",
+      "attempt": 1,
+      "state": "completed",
+      "created_at": "2026-10-31T19:04:58Z",
+      "leased_at": "2026-10-31T19:05:00.512301Z",
+      "lease_expires_at": "2026-10-31T19:07:00.512301Z"
+    },
+    {
+      "id": "0192f3a0-0000-7000-8000-000000000402",
+      "connection_id": "0192f3a0-0000-7000-8000-0000000000a1",
+      "outbound_message_id": "0192f3a0-0000-7000-8000-0000000000d7",
+      "idempotency_key": "send:0192f3a0-0000-7000-8000-0000000000d7:1",
+      "attempt": 1,
+      "state": "completed",
+      "created_at": "2026-10-31T19:05:30Z",
+      "leased_at": "2026-10-31T19:05:31Z",
+      "lease_expires_at": "2026-10-31T19:07:31Z"
+    },
+    {
+      "id": "0192f3a0-0000-7000-8000-000000000403",
+      "connection_id": "0192f3a0-0000-7000-8000-0000000000a1",
+      "outbound_message_id": "0192f3a0-0000-7000-8000-0000000000d7",
+      "idempotency_key": "send:0192f3a0-0000-7000-8000-0000000000d7:2",
+      "attempt": 2,
+      "state": "pending",
+      "created_at": "2026-10-31T19:06:40Z",
+      "leased_at": null,
+      "lease_expires_at": null
+    }
+  ],
+  "next_cursor": null
+}

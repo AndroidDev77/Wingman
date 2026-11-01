@@ -4,7 +4,7 @@ Canonical, versioned interfaces shared by backend, Android and connector work. *
 
 | File | What it defines |
 |---|---|
-| `openapi.yaml` | OpenAPI 3.1 HTTP API: health, `/v1/me`, preferences (user-wide and per-contact), connections, conversations, messages, drafts, approvals, automation (pause, resume, takeover), audit log |
+| `openapi.yaml` | OpenAPI 3.1 HTTP API (v1.1.0): health, `/v1/me`, preferences (user-wide and per-contact), connections, device event ingest and device outbox (ADR 0006), conversations, messages, drafts, approvals, automation (pause, resume, takeover), memories, audit log |
 | `schemas/connector_capabilities.v1.json` | JSON Schema 2020-12 for `ConnectorCapabilities`: `read`, `draft`, `send`, `swipe`, `calendar_write`, each labeled `VERIFIED` / `UNVERIFIED` / `UNSUPPORTED` |
 | `schemas/connector_event.v1.json` | JSON Schema 2020-12 for the connector event envelope, including the explicit `mock.*` event types used by the WING-006 simulator |
 | `examples/` | Example requests, responses and events. `manifest.json` maps each file to its schema |
@@ -23,10 +23,10 @@ This needs only [uv](https://docs.astral.sh/uv/). Dependency versions are pinned
 2. Each file in `schemas/` is a valid Draft 2020-12 schema.
 3. The conventions hold: product paths are under `/v1`, every operation has a unique `operationId`, every `POST` requires `Idempotency-Key`, every `/v1` operation is authenticated, and every error response is `application/problem+json`.
 4. Every example validates against its schema, with format checking turned on.
-5. Every file in `examples/invalid/` is **rejected**.
+5. Every file in `examples/invalid/` is **rejected**, and for the reason in `expect_error` when the manifest gives one.
 6. Every example file is listed in `manifest.json`.
 
-To add an example, put the JSON in `examples/` (or `examples/invalid/` with a `why_invalid` note) and add an entry to `manifest.json`. Schema refs are relative to `contracts/`, for example `openapi.yaml#/components/schemas/Message`.
+To add an example, put the JSON in `examples/` (or `examples/invalid/` with a `why_invalid` note and, optionally, an `expect_error` substring that one validation error must contain) and add an entry to `manifest.json`. Schema refs are relative to `contracts/`, for example `openapi.yaml#/components/schemas/Message`.
 
 ## Conventions (summary)
 
@@ -38,6 +38,7 @@ The details live in `openapi.yaml` (`info.description`) and in `docs/adr/`.
 - **Pagination:** `?cursor=&limit=` returns `{items, next_cursor}`, and `next_cursor: null` marks the end. ([ADR 0003](../docs/adr/0003-cursor-pagination.md))
 - **Idempotency:** every `POST` requires `Idempotency-Key`. A replay returns the original response with `Idempotent-Replayed: true`. ([ADR 0004](../docs/adr/0004-idempotency.md))
 - **Capabilities:** each capability is independent and verification-labeled. Notification access never implies `send`. Autopilot requires a `VERIFIED` send. ([ADR 0005](../docs/adr/0005-connector-capability-model.md))
+- **Device connectors:** report events via `POST /v1/connections/{id}/events` and execute only instructions leased from `POST /v1/connections/{id}/outbox/claim`. One lease per instruction, never renewed; a retry is a new instruction with a new key. ([ADR 0006](../docs/adr/0006-device-outbox-leases.md))
 - **Delivery states:** `queued -> sending -> sent -> delivered`, plus `failed`, `dead_lettered` and `canceled`. A state changes only when the matching connector event arrives.
 
 ## Changing a contract
