@@ -6,6 +6,12 @@ from app.db.repositories.activity import (
     DateProposalRepository,
     MemoryRepository,
 )
+from app.db.repositories.automation import (
+    ApprovalRepository,
+    DraftRepository,
+    EventIngestRepository,
+    OutboxRepository,
+)
 from app.db.repositories.base import ScopedRepository
 from app.db.repositories.billing import (
     SubscriptionRepository,
@@ -33,6 +39,7 @@ from app.db.repositories.users import UserRepository
 
 __all__ = [
     "AgentActionRepository",
+    "ApprovalRepository",
     "AutomationRuleRepository",
     "Claim",
     "ClaimOutcome",
@@ -40,10 +47,13 @@ __all__ = [
     "ContactRepository",
     "ConversationRepository",
     "DateProposalRepository",
+    "DraftRepository",
+    "EventIngestRepository",
     "IdempotencyRepository",
     "IngestResult",
     "MemoryRepository",
     "MessageRepository",
+    "OutboxRepository",
     "PreferenceRepository",
     "ScopedRepository",
     "StyleProfileRepository",

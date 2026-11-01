@@ -72,6 +72,10 @@ def test_every_contract_enum_used_by_storage_is_covered() -> None:
         "Actor",
         "AgentActionType",
         "ConnectionStatus",
+        # WING-011: approvals, drafts and the device outbox are stored (contract enums).
+        "ApprovalStatus",
+        "DraftDecision",
+        "OutboxInstructionState",
     }
     registered = {
         ce.contract_path[3] for ce in CONTRACT_ENUMS if ce.contract_path[0] == "openapi.yaml"

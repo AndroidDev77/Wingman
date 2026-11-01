@@ -82,6 +82,30 @@ class ApprovalReason(StrEnum):
     USER_RULE = "user_rule"
 
 
+class ApprovalStatus(StrEnum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    EXPIRED = "expired"
+    CANCELED = "canceled"
+
+
+class DraftDecision(StrEnum):
+    SEND_CANDIDATE = "send_candidate"
+    NO_SEND = "no_send"
+    ASK_USER = "ask_user"
+
+
+class OutboxInstructionState(StrEnum):
+    """Device outbox instruction lifecycle (contract v1.1.0, ADR 0006)."""
+
+    PENDING = "pending"
+    LEASED = "leased"
+    COMPLETED = "completed"
+    EXPIRED = "expired"
+    CANCELED = "canceled"
+
+
 class ContactAutomationStatus(StrEnum):
     ACTIVE = "active"
     PAUSED = "paused"
@@ -207,6 +231,11 @@ CONTRACT_ENUMS: tuple[ContractEnum, ...] = (
     ContractEnum(MessageDirection, "message_direction", _schema("MessageDirection")),
     ContractEnum(MessageOrigin, "message_origin", _schema("MessageOrigin")),
     ContractEnum(ApprovalReason, "approval_reason", _schema("ApprovalReason")),
+    ContractEnum(ApprovalStatus, "approval_status", _schema("ApprovalStatus")),
+    ContractEnum(DraftDecision, "draft_decision", _schema("DraftDecision")),
+    ContractEnum(
+        OutboxInstructionState, "outbox_instruction_state", _schema("OutboxInstructionState")
+    ),
     ContractEnum(
         ContactAutomationStatus, "contact_automation_status", _schema("ContactAutomationStatus")
     ),

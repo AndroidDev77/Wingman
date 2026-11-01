@@ -15,11 +15,14 @@ from pydantic import BaseModel
 from app import __version__
 from app.ai.llm_gateway import build_gateway
 from app.ai.memory import MemoryService
+from app.api.agent_actions import router as agent_actions_router
 from app.api.auth import create_auth_router
 from app.api.demo_connector import create_demo_connector_router
+from app.api.device_connector import router as device_connector_router
 from app.api.drafts import router as drafts_router
 from app.api.errors import register_error_handlers
 from app.api.memories import create_memories_router
+from app.api.messages import router as messages_router
 from app.api.preferences import router as preferences_router
 from app.config import get_settings
 from app.db.session import dispose_engine
@@ -73,6 +76,12 @@ def create_app() -> FastAPI:
     app.include_router(create_memories_router(get_memory_service))
     # WING-010: POST /v1/conversations/{id}/drafts (suggestions only; never sends).
     app.include_router(drafts_router)
+    # WING-011: approvals, pause/resume/takeover, audit timeline; the user's own send;
+    # device event ingest and the leased device outbox (contract v1.1.0, ADR 0006).
+    # All sends go through the single dispatcher (app.services.dispatcher).
+    app.include_router(agent_actions_router)
+    app.include_router(messages_router)
+    app.include_router(device_connector_router)
 
     # WING-006 simulator: unauthenticated, in-memory, single demo user. Never in prod.
     if settings.env != "prod":
