@@ -92,7 +92,12 @@ Owner: WING-026. State as of v0.1.0-beta.1 (`main` @ `266243a`, 2026-11-01). Lab
   of the 12 parallel deliveries of the same message under different event IDs got HTTP `500`:
   Postgres `DeadlockDetectedError` in `ConversationRepository.get_or_create_for_thread`
   (`INSERT ... ON CONFLICT DO NOTHING` on `conversations`, reached from
-  `app/services/ingest.py::_inbound`). Not reproduced locally (6 of 6 runs of X1 passed, and the full
+  `app/services/ingest.py::_inbound`). The Postgres log of the first failing job
+  ([124966027140](https://github.com/AndroidDev77/Wingman/actions/runs/41346065184/job/124966027140),
+  checked by the integrator) shows the cycle: one request's `INSERT INTO conversations` waits on
+  another request's uncommitted insert of the same thread, while that request waits for
+  `SELECT ... FROM users ... FOR UPDATE` (the automation controller's per-user lock), which the
+  first request's earlier foreign-key share lock on the same `users` row blocks. Not reproduced locally (6 of 6 runs of X1 passed, and the full
   suite). The run-wide zero-duplicate-sends invariant still held in the failing runs (every counter
   0): the failed requests stored nothing and were not acknowledged, so a device retries them and the
   retry is deduplicated. Impact for testers: a rare `500` on a burst of identical SMS uploads, retried

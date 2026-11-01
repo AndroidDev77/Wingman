@@ -170,7 +170,10 @@ is proposed ("Wingman suggests not replying yet"). An explicit or pressuring dra
 `no_send` (`unsupported_escalation` when the contact never showed matching interest).
 
 (Guardrail behavior: unit-tested in `backend/tests/ai/replies` and `backend/tests/ai/analysis`;
-not E2E-testable with the dev mock, I-026.)
+not E2E-testable with the dev mock, I-026. Recognizing "please stop texting me" as a stop request,
+and a missing fact as one you never gave, is the model's job: with a real LLM that is UNVERIFIED,
+I-009. The rules that act on it, `paused` gives `no_send` and an ungrounded user fact gives
+`ask_user`, are enforced in code.)
 
 ### Sample C: takeover (intent: Casual dating, mode: Assisted)
 

@@ -36,16 +36,19 @@ Anything not listed here is not claimed. For what does not work, see
 
 ### Drafts and approvals
 
-- An incoming message produces a draft grounded in that message, matching your style settings;
-  in Assisted mode it waits in **To approve** and nothing is sent before you approve.
-  *Evidence:* F3, F4, A3, A4. Reply generation PR #20, automation PR #24, approvals UI PR #26.
+- An incoming message produces a draft grounded in that message; in Assisted mode it waits in
+  **To approve** and nothing is sent before you approve.
+  *Evidence:* F3, F4, A3, A4. Of the style settings, only **punctuation** is E2E-asserted (F3,
+  with the deterministic `[dev mock]` text); how well a real model follows your style is
+  UNVERIFIED (I-009). Reply generation PR #20, automation PR #24, approvals UI PR #26.
 - Approve, edit-then-approve (exactly your edited text is sent), or reject (nothing sent).
   Approving twice sends once.
   *Evidence:* F4 (`409 approval_not_pending` on a second approve; replayed key returns the same
   message).
 - "Sent" is shown only after the messaging side confirms; before that, "Queued, not sent yet".
   *Evidence:* A4, F4 (response `queued`, then `sent`).
-- **Suggest a reply** on request in Manual mode. *Evidence:* F3 (createDraft on request).
+- **Suggest a reply** on request in Manual mode. *Evidence:* F3 (createDraft on request, over
+  HTTP); the button in the app is compiled and JVM-tested, not UI-driven in E2E.
 - Wingman can decline to draft (`no_send`) or ask you (`ask_user`) instead of inventing facts or
   escalating. *Evidence:* **Unit only** (`backend/tests/ai/replies`); not E2E-testable with the dev
   mock (I-026).
