@@ -32,7 +32,7 @@ The Android build needs the SDK located via `ANDROID_HOME` or `android/local.pro
 
 ```bash
 cp .env.example .env           # safe local defaults; .env is git-ignored
-docker compose up -d           # Postgres 16 + Redis 7 (not needed until WING-003)
+docker compose up -d           # Postgres 16 + Redis 7
 ```
 
 ## Common commands
@@ -42,10 +42,15 @@ docker compose up -d           # Postgres 16 + Redis 7 (not needed until WING-00
 | `scripts/backend-check.sh` | Lint (ruff), format check, typecheck (mypy strict), unit tests |
 | `scripts/backend-run.sh` | Run the API on http://127.0.0.1:8000 with reload |
 | `curl localhost:8000/health` | Liveness check; returns `{"status":"ok",...}` |
+| `scripts/migration-check.sh` | Alembic up/down/up on an empty database (throwaway cluster unless `WINGMAN_DATABASE_URL` is set) |
+| `contracts/validate.sh` | Validate the OpenAPI document, JSON Schemas and examples |
+| `scripts/docker-smoke.sh` | Build the backend image and smoke-test it (non-root, `/health`, `HEALTHCHECK`) |
 | `scripts/android-build.sh` | Debug APK + JVM unit tests (exits 2 with `UNVERIFIED` if no SDK) |
-| `docker compose --profile backend up` | Run the backend in a container next to Postgres and Redis |
+| `docker compose --profile backend up --build` | Run the backend in a container next to Postgres and Redis. Run migrations with `docker compose run --rm backend alembic upgrade head` |
 
 The backend runs entirely with no API keys: `WINGMAN_LLM_PROVIDER=mock` is the default.
+
+CI: [`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the same scripts on every PR and on `main`. Deployment and the environment variable reference: [`docs/deployment.md`](docs/deployment.md) (the Azure path is an UNVERIFIED sample; nothing has been deployed).
 
 ## Working on a ticket
 
