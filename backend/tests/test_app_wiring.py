@@ -75,6 +75,34 @@ def test_me_is_mounted_and_requires_a_token(monkeypatch: pytest.MonkeyPatch, env
         assert resp.status_code == 401
 
 
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/v1/preferences"),
+        ("PUT", "/v1/preferences"),
+        ("GET", "/v1/preferences/versions"),
+        ("GET", "/v1/contacts/00000000-0000-0000-0000-000000000001/preferences"),
+        ("PUT", "/v1/contacts/00000000-0000-0000-0000-000000000001/preferences"),
+        ("DELETE", "/v1/contacts/00000000-0000-0000-0000-000000000001/preferences"),
+    ],
+)
+def test_preferences_routes_are_mounted_and_require_a_token(
+    monkeypatch: pytest.MonkeyPatch, method: str, path: str
+) -> None:
+    with _client(monkeypatch, "prod") as client:
+        resp = client.request(method, path)
+        assert resp.status_code == 401, resp.text
+        assert resp.headers["content-type"].startswith("application/problem+json")
+        assert resp.json()["code"] == "unauthenticated"
+
+
+def test_memory_routes_are_not_mounted(monkeypatch: pytest.MonkeyPatch) -> None:
+    # WING-008's router stays unmounted until the contract has memory routes.
+    with _client(monkeypatch, "dev") as client:
+        paths = client.get("/openapi.json").json()["paths"]
+        assert not any("memor" in p for p in paths)
+
+
 def test_unknown_route_is_problem_json(monkeypatch: pytest.MonkeyPatch) -> None:
     with _client(monkeypatch, "prod") as client:
         resp = client.get("/v1/does-not-exist")
