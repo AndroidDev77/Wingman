@@ -19,7 +19,7 @@ Status: accepted with WING-002. Interfaces are defined in [`contracts/`](../cont
 | Persistence | WING-003 | `backend/app/db/`, `alembic/` | Async SQLAlchemy models and repositories, all user-scoped. Unique `(user_id, platform, external_message_id)` |
 | Preferences | WING-007 | `services/preferences.py` | Intent, style and automation settings. Versioned. Per-contact override precedence |
 | LLM gateway | WING-005 | `app/ai/llm_gateway.py`, `ai/providers/` | Vendor-neutral structured-output calls, plus retries, cost accounting and a mock provider |
-| Memory | WING-008 | `app/ai/memory.py` | Attributable per-contact facts with source message IDs. Bounded retrieval |
+| Memory | WING-008 | `app/ai/memory/`, `app/api/memories.py` | Attributable per-contact facts with source message IDs. Bounded retrieval |
 | Analyzer | WING-009 | `app/ai/analyzer.py`, `stages.py` | Advisory `ConversationAnalysis` and `ConversationStage` |
 | Reply generator | WING-010 | `app/ai/reply_generator.py` | Produces a `Draft` (`send_candidate`, `no_send` or `ask_user`) with grounding and approval flags |
 | Automation controller | WING-011 | `services/automation.py` | Policy engine: decides whether to discard a draft, send it to the approval queue, or hand it to the dispatcher |
@@ -108,4 +108,4 @@ User-authored sends (`POST /v1/conversations/{id}/messages`) enter at step 6. Th
 - Date-proposal endpoints (WING-018): the `DateProposal` shape and `DateProposalState` enum are defined so that persistence can be built. Endpoints will come in an additive contract PR.
 - Connection onboarding and pairing endpoints, analytics and billing: each of these goes in its owning ticket's additive contract PR.
 
-Added in contract v1.1.0 (PR #15, D-012), so no longer out of scope: device event ingest (`POST /v1/connections/{connection_id}/events`), the pull-based device outbox with single-use leases (`GET /v1/connections/{connection_id}/outbox`, `POST .../outbox/claim`, ADR 0006), and the memory routes (`GET /v1/contacts/{contact_id}/memories`, `PUT`/`DELETE /v1/memories/{memory_id}`). They are specified but not implemented yet: WING-011 implements ingest, outbox and claim; the WING-008 memory router still needs contract pagination before it is mounted.
+Added in contract v1.1.0 (PR #15, D-012), so no longer out of scope: device event ingest (`POST /v1/connections/{connection_id}/events`), the pull-based device outbox with single-use leases (`GET /v1/connections/{connection_id}/outbox`, `POST .../outbox/claim`, ADR 0006), and the memory routes (`GET /v1/contacts/{contact_id}/memories`, `PUT`/`DELETE /v1/memories/{memory_id}`). The memory routes are implemented with contract cursor pagination and mounted (PR #19). The device side of ingest and claim is implemented in the Android SMS connector (PR #21); the backend side (ingest, the outbox table, claim and lease expiry) is not implemented yet and belongs to WING-011.
