@@ -1,0 +1,12 @@
+{
+  "type": "https://wingman.invalid/problems/validation_error",
+  "title": "Request validation failed",
+  "status": 422,
+  "code": "validation_error",
+  "errors": [
+    {
+      "pointer": "/intent/mode",
+      "message": "'hookup' is not one of the allowed values"
+    }
+  ]
+}

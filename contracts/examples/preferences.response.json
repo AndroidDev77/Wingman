@@ -1,0 +1,59 @@
+{
+  "intent": {
+    "mode": "serious",
+    "custom_description": null
+  },
+  "dealbreakers": [
+    "smoking"
+  ],
+  "style": {
+    "punctuation": "standard",
+    "emoji_frequency": "rare",
+    "brevity": "short",
+    "humor": "playful",
+    "tone": "warm",
+    "response_pace": "relaxed",
+    "style_samples": [
+      "haha that's amazing, where was that?"
+    ]
+  },
+  "automation": {
+    "mode": "assisted",
+    "active_hours": {
+      "timezone": "America/Chicago",
+      "windows": [
+        {
+          "days": [
+            "mon",
+            "tue",
+            "wed",
+            "thu",
+            "fri"
+          ],
+          "start": "17:00",
+          "end": "22:30"
+        },
+        {
+          "days": [
+            "sat",
+            "sun"
+          ],
+          "start": "10:00",
+          "end": "23:00"
+        }
+      ]
+    },
+    "reply_delay_seconds": {
+      "min": 60,
+      "max": 600
+    },
+    "daily_send_limit": 30,
+    "approval_required_for": [
+      "date_or_commitment",
+      "sensitive_content",
+      "first_message"
+    ]
+  },
+  "version": 3,
+  "updated_at": "2026-10-31T18:05:00Z"
+}

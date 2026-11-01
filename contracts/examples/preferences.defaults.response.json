@@ -1,0 +1,25 @@
+{
+  "version": 0,
+  "intent": {
+    "mode": "open",
+    "custom_description": null
+  },
+  "dealbreakers": [],
+  "style": {
+    "punctuation": null,
+    "emoji_frequency": null,
+    "brevity": null,
+    "humor": null,
+    "tone": null,
+    "response_pace": null,
+    "style_samples": []
+  },
+  "automation": {
+    "mode": "manual",
+    "active_hours": null,
+    "reply_delay_seconds": null,
+    "daily_send_limit": null,
+    "approval_required_for": []
+  },
+  "updated_at": null
+}

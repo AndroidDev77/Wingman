@@ -1,0 +1,40 @@
+{
+  "schema_version": "connector_event.v1",
+  "event_id": "0192f3a0-0000-7000-8000-000000000305",
+  "type": "connection.capabilities_changed",
+  "platform": "sms",
+  "connection_id": "0192f3a0-0000-7000-8000-0000000000a1",
+  "user_id": "0192f3a0-0000-7000-8000-000000000001",
+  "external_message_id": null,
+  "external_thread_id": null,
+  "occurred_at": "2026-10-31T18:00:00Z",
+  "observed_at": "2026-10-31T18:00:00Z",
+  "payload": {
+    "capabilities": {
+      "schema_version": "connector_capabilities.v1",
+      "platform": "sms",
+      "connector_version": "0.1.0",
+      "capabilities": {
+        "read": {
+          "status": "UNVERIFIED",
+          "notes": "Pending physical-device test (WING-016)."
+        },
+        "draft": {
+          "status": "UNSUPPORTED"
+        },
+        "send": {
+          "status": "UNVERIFIED",
+          "reports_delivery_receipts": true,
+          "notes": "Requires default-SMS-app role. Not yet device-tested."
+        },
+        "swipe": {
+          "status": "UNSUPPORTED"
+        },
+        "calendar_write": {
+          "status": "UNSUPPORTED"
+        }
+      },
+      "assessed_at": "2026-10-31T18:00:00Z"
+    }
+  }
+}

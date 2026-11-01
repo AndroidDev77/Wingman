@@ -1,0 +1,8 @@
+{
+  "intent": {
+    "mode": "custom",
+    "custom_description": "Keep it light; we met at a climbing gym."
+  },
+  "style": null,
+  "automation_mode": "manual"
+}

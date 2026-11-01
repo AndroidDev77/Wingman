@@ -1,0 +1,15 @@
+{
+  "id": "0192f3a0-0000-7000-8000-0000000000d3",
+  "conversation_id": "0192f3a0-0000-7000-8000-0000000000b1",
+  "direction": "outbound",
+  "origin": "user_manual",
+  "text": "Welcome back! How was it?",
+  "delivery_state": "queued",
+  "external_message_id": null,
+  "approval_id": null,
+  "attempt_count": 0,
+  "failure": null,
+  "created_at": "2026-10-31T18:02:00Z",
+  "sent_at": "2026-10-31T18:02:01Z",
+  "delivered_at": null
+}

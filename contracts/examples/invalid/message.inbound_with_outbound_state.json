@@ -1,0 +1,15 @@
+{
+  "id": "0192f3a0-0000-7000-8000-0000000000d1",
+  "conversation_id": "0192f3a0-0000-7000-8000-0000000000b1",
+  "direction": "inbound",
+  "origin": "contact",
+  "text": "Just got back from Lisbon!",
+  "delivery_state": "sent",
+  "external_message_id": "mock-msg-0001",
+  "approval_id": null,
+  "attempt_count": 0,
+  "failure": null,
+  "created_at": "2026-10-31T18:01:00Z",
+  "sent_at": null,
+  "delivered_at": null
+}

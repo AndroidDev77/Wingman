@@ -1,0 +1,2018 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: Wingman AI API
+  version: 1.0.0
+  summary: Canonical HTTP contract between the Wingman backend and its clients.
+  description: |
+    Source of truth for the Wingman backend <-> Android (and any other client) HTTP API.
+    Frozen after WING-002 review: any change needs its own versioned contract PR
+    (see `contracts/README.md`).
+
+    ## Conventions (apply to every operation; see `docs/adr/`)
+
+    * **Versioning.** All product endpoints live under `/v1`. `GET /health` is unversioned
+      liveness. Breaking changes ship under a new prefix (`/v2`); additive changes
+      (new optional fields, new endpoints) may land in `/v1` via a contract PR.
+    * **IDs** (ADR 0001). Every Wingman resource ID is a lowercase canonical UUID string
+      (servers generate UUIDv7). Clients MUST treat IDs as opaque strings and never parse
+      them. Platform-assigned identifiers (`external_*`) are arbitrary strings.
+    * **Timestamps.** Always UTC, RFC 3339 / ISO-8601 with a literal `Z` suffix, optional
+      fractional seconds up to microseconds: `2026-10-31T18:04:05.123456Z`. Offsets such
+      as `+00:00` are rejected in requests and never emitted.
+    * **Errors** (ADR 0002). Every non-2xx response is `application/problem+json`
+      (RFC 9457) using the `Problem` schema with a stable machine-readable `code`.
+      Clients branch on `code`, never on `title`/`detail` text.
+    * **Pagination** (ADR 0003). List endpoints take `cursor` + `limit` and return
+      `{items, next_cursor}`. `next_cursor: null` means the end. Cursors are opaque.
+    * **Idempotency** (ADR 0004). Every `POST` requires an `Idempotency-Key` header. A
+      replay with the same key and same body returns the original status and body with
+      `Idempotent-Replayed: true` and never performs the side effect twice.
+    * **Auth.** Bearer JWT (OIDC access token, implemented by WING-004) on every `/v1`
+      operation. Resources owned by another user respond `404 not_found`, never `403`,
+      so existence is not leaked.
+    * **Unknown fields.** Request bodies reject unknown properties (`422
+      validation_error`). Response objects may gain new optional properties in `/v1`;
+      clients must ignore unknown properties.
+    * **Capabilities** (ADR 0005). What a connector can do is advertised per capability
+      (`read`, `draft`, `send`, `swipe`, `calendar_write`) with a verification label.
+      No endpoint in this contract requires `swipe`, and nothing here infers `send`
+      from `read` or from notification access.
+    * **Delivery truth.** A message's `delivery_state` only advances on real connector
+      acknowledgements. `queued` is never reported as `sent`, and `sent` is never
+      reported as `delivered`.
+    * **LLM output is advisory.** Drafts and analyses are suggestions. Only the
+      automation controller's dispatcher sends, after policy and capability checks.
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+servers:
+  - url: http://127.0.0.1:8000
+    description: Local development (scripts/backend-run.sh)
+security:
+  - bearerAuth: []
+tags:
+  - name: health
+  - name: users
+  - name: preferences
+  - name: connections
+  - name: conversations
+  - name: messages
+  - name: drafts
+  - name: approvals
+  - name: automation
+  - name: audit
+
+paths:
+  /health:
+    get:
+      tags: [health]
+      operationId: getHealth
+      summary: Liveness probe
+      description: |
+        Liveness only. Does not touch the database or Redis so the service reports
+        healthy in mock mode. Unauthenticated. Shape matches `backend/app/main.py`.
+      security: []
+      responses:
+        "200":
+          description: Service is up.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthResponse"
+
+  /v1/me:
+    get:
+      tags: [users]
+      operationId: getMe
+      summary: The authenticated user
+      responses:
+        "200":
+          description: Current user.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/preferences:
+    get:
+      tags: [preferences]
+      operationId: getPreferences
+      summary: User-wide preferences (intent, style, automation)
+      description: |
+        Returns the current user-wide preferences. A user who never saved preferences
+        gets safe defaults: `version: 0`, automation `mode: manual`, all style
+        attributes `null` (not inferred).
+      responses:
+        "200":
+          description: Current user-wide preferences.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Preferences"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        default:
+          $ref: "#/components/responses/Error"
+    put:
+      tags: [preferences]
+      operationId: putPreferences
+      summary: Replace user-wide preferences
+      description: |
+        Full replacement. Each successful write creates a new immutable version
+        (`version` increments by 1). Send `If-Match: "<version>"` to avoid lost updates;
+        a stale version yields `412 precondition_failed`. PUT is naturally idempotent and
+        cannot cause a send, so `Idempotency-Key` is not required.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PreferencesUpdate"
+      responses:
+        "200":
+          description: Saved; returns the new version.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Preferences"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/preferences/versions:
+    get:
+      tags: [preferences]
+      operationId: listPreferenceVersions
+      summary: Version history of user-wide preferences
+      description: Newest version first.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of past versions.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PreferencesPage"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/contacts/{contact_id}/preferences:
+    parameters:
+      - $ref: "#/components/parameters/ContactId"
+    get:
+      tags: [preferences]
+      operationId: getContactPreferences
+      summary: Per-contact override and the effective merged preferences
+      description: |
+        Precedence: per-contact override field (when non-null) > user-wide preference >
+        safe default. Reading or writing an override never modifies user-wide defaults.
+      responses:
+        "200":
+          description: Override (possibly empty) plus effective preferences.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactPreferences"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+    put:
+      tags: [preferences]
+      operationId: putContactPreferences
+      summary: Replace the per-contact override
+      description: A `null` field means "inherit from user-wide preferences".
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContactPreferenceOverrideUpdate"
+      responses:
+        "200":
+          description: Saved.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactPreferences"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "412":
+          $ref: "#/components/responses/PreconditionFailed"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [preferences]
+      operationId: deleteContactPreferences
+      summary: Clear the per-contact override (inherit everything)
+      responses:
+        "204":
+          description: Override cleared (also returned if none existed).
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/connections:
+    get:
+      tags: [connections]
+      operationId: listConnections
+      summary: Messaging connections and their advertised capabilities
+      description: |
+        Each connection carries a `ConnectorCapabilities` document. Clients label a
+        platform unavailable unless the capability they need is not `UNSUPPORTED`, and
+        must show `UNVERIFIED` capabilities as unverified rather than working.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of connections.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionPage"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/conversations:
+    get:
+      tags: [conversations]
+      operationId: listConversations
+      summary: Unified inbox
+      description: Ordered by `last_activity_at` descending, then `id`.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: platform
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Platform"
+        - name: intent
+          in: query
+          required: false
+          description: Filter by effective intent mode.
+          schema:
+            $ref: "#/components/schemas/IntentMode"
+        - name: automation_mode
+          in: query
+          required: false
+          description: Filter by effective automation mode.
+          schema:
+            $ref: "#/components/schemas/AutomationMode"
+        - name: stage
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/ConversationStage"
+      responses:
+        "200":
+          description: A page of conversations.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationPage"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/conversations/{conversation_id}:
+    parameters:
+      - $ref: "#/components/parameters/ConversationId"
+    get:
+      tags: [conversations]
+      operationId: getConversation
+      summary: One conversation with its latest advisory analysis
+      responses:
+        "200":
+          description: Conversation detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationDetail"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/conversations/{conversation_id}/messages:
+    parameters:
+      - $ref: "#/components/parameters/ConversationId"
+    get:
+      tags: [messages]
+      operationId: listMessages
+      summary: Messages in a conversation
+      description: |
+        Chronological (`created_at` ascending, then `id`). The first page (no cursor)
+        starts at the oldest message; follow `next_cursor` to move forward in time.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of messages.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MessagePage"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      tags: [messages]
+      operationId: sendMessage
+      summary: User-authored send (goes through the dispatcher)
+      description: |
+        Queues a message written by the user. The request is handed to the single
+        dispatcher, which checks the connection's `send` capability (must not be
+        `UNSUPPORTED`) and records the outcome. Returns `202` with
+        `delivery_state: queued`; poll the message or the audit log for `sent`,
+        `delivered` or `failed`. Allowed while the contact is paused or taken over,
+        because the user is the author.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SendMessageRequest"
+      responses:
+        "202":
+          description: Accepted and queued. Not yet sent.
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Message"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/conversations/{conversation_id}/drafts:
+    parameters:
+      - $ref: "#/components/parameters/ConversationId"
+    post:
+      tags: [drafts]
+      operationId: createDraft
+      summary: Ask the AI for a suggested reply (never sends)
+      description: |
+        Generates a grounded draft for the user to read, edit, and send manually. The
+        draft is a suggestion only: this endpoint never queues a send and never creates
+        an approval. The result may be `no_send` or `ask_user` when context is
+        insufficient. Idempotency-Key prevents paying for duplicate generations.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DraftCreateRequest"
+      responses:
+        "201":
+          description: Draft created.
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Draft"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        "429":
+          $ref: "#/components/responses/RateLimited"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/approvals:
+    get:
+      tags: [approvals]
+      operationId: listApprovals
+      summary: Approval queue
+      description: Newest first. Defaults to `status=pending` when no status is given.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/ApprovalStatus"
+        - name: conversation_id
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Id"
+        - name: contact_id
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Id"
+      responses:
+        "200":
+          description: A page of approvals.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalPage"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/approvals/{approval_id}:
+    parameters:
+      - $ref: "#/components/parameters/ApprovalId"
+    get:
+      tags: [approvals]
+      operationId: getApproval
+      summary: One approval
+      responses:
+        "200":
+          description: The approval.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Approval"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/approvals/{approval_id}/approve:
+    parameters:
+      - $ref: "#/components/parameters/ApprovalId"
+    post:
+      tags: [approvals]
+      operationId: approveApproval
+      summary: Approve (optionally edited) and queue the send
+      description: |
+        Only a `pending` approval can be approved (`409 approval_not_pending`
+        otherwise). The dispatcher re-checks capability and policy at send time. The
+        response carries the queued message (`delivery_state: queued`), never `sent`.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ApproveRequest"
+      responses:
+        "200":
+          description: Approved; message queued.
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalDecisionResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/approvals/{approval_id}/reject:
+    parameters:
+      - $ref: "#/components/parameters/ApprovalId"
+    post:
+      tags: [approvals]
+      operationId: rejectApproval
+      summary: Reject a pending draft (nothing is sent)
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RejectRequest"
+      responses:
+        "200":
+          description: Rejected.
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ApprovalDecisionResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/automation:
+    get:
+      tags: [automation]
+      operationId: getGlobalAutomationState
+      summary: Global agent state (the account-wide stop switch)
+      responses:
+        "200":
+          description: Global state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GlobalAutomationState"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/automation/pause:
+    post:
+      tags: [automation]
+      operationId: pauseAllAutomation
+      summary: Stop all automated sends for this user immediately
+      description: See `AutomationState` for exact pause semantics.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/AutomationActionBody"
+      responses:
+        "200":
+          $ref: "#/components/responses/GlobalAutomationStateOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/automation/resume:
+    post:
+      tags: [automation]
+      operationId: resumeAllAutomation
+      summary: Lift the global pause
+      description: |
+        Re-enables automation according to each contact's effective mode and state.
+        Does not resume contacts that are individually paused or taken over, and does
+        not resurrect messages canceled by the pause.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/AutomationActionBody"
+      responses:
+        "200":
+          $ref: "#/components/responses/GlobalAutomationStateOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/contacts/{contact_id}/automation:
+    parameters:
+      - $ref: "#/components/parameters/ContactId"
+    get:
+      tags: [automation]
+      operationId: getContactAutomationState
+      summary: Per-contact agent state
+      responses:
+        "200":
+          description: Contact state.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContactAutomationState"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/contacts/{contact_id}/automation/pause:
+    parameters:
+      - $ref: "#/components/parameters/ContactId"
+    post:
+      tags: [automation]
+      operationId: pauseContactAutomation
+      summary: Pause automated sends to one contact
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/AutomationActionBody"
+      responses:
+        "200":
+          $ref: "#/components/responses/ContactAutomationStateOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/contacts/{contact_id}/automation/resume:
+    parameters:
+      - $ref: "#/components/parameters/ContactId"
+    post:
+      tags: [automation]
+      operationId: resumeContactAutomation
+      summary: Resume automation for one contact (from paused or taken_over)
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/AutomationActionBody"
+      responses:
+        "200":
+          $ref: "#/components/responses/ContactAutomationStateOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/contacts/{contact_id}/automation/takeover:
+    parameters:
+      - $ref: "#/components/parameters/ContactId"
+    post:
+      tags: [automation]
+      operationId: takeoverContact
+      summary: User takes over the conversation; the agent stops immediately
+      description: |
+        Effective before the response returns: no further automated sends, no new
+        agent-initiated drafts or approvals for this contact (user-requested drafts via
+        `POST /v1/conversations/{id}/drafts` and user-authored sends still work), all `pending` approvals become
+        `canceled`, and automated messages still `queued` become `canceled`. Messages
+        already `sending` cannot be recalled and keep reporting their real outcome.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        $ref: "#/components/requestBodies/AutomationActionBody"
+      responses:
+        "200":
+          $ref: "#/components/responses/ContactAutomationStateOk"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/agent-actions:
+    get:
+      tags: [audit]
+      operationId: listAgentActions
+      summary: Audit timeline
+      description: |
+        Append-only record of everything the agent, user, dispatcher and connectors did.
+        Newest first. `details` is redacted: never contains message bodies, tokens, or
+        phone numbers.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: conversation_id
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Id"
+        - name: contact_id
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Id"
+        - name: type
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/AgentActionType"
+      responses:
+        "200":
+          description: A page of audit entries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentActionPage"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: |
+        OIDC access token. WING-004 verifies issuer, audience, expiry and signature.
+        The `sub` claim maps to exactly one Wingman user. A dev-only stub may exist but
+        must be impossible to enable when `WINGMAN_ENV=prod`.
+
+  parameters:
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque cursor from a previous page's `next_cursor`. Omit for the first page.
+      schema:
+        $ref: "#/components/schemas/Cursor"
+    Limit:
+      name: limit
+      in: query
+      required: false
+      description: Page size.
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+        default: 50
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Client-generated unique key (a fresh UUIDv4 is recommended) per logical action.
+        Scope: (user, HTTP method, route template). Retained at least 24 hours.
+        Same key + same body -> original response replayed with `Idempotent-Replayed:
+        true`, no second side effect. Same key + different body -> `422
+        idempotency_key_mismatch`. Same key while the first request is still running ->
+        `409 idempotency_key_in_progress` with `Retry-After`. Missing -> `400
+        idempotency_key_required`.
+      schema:
+        $ref: "#/components/schemas/IdempotencyKey"
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: Quoted current `version`, e.g. `"3"`. Mismatch -> `412 precondition_failed`.
+      schema:
+        type: string
+        pattern: '^"[0-9]+"$'
+    ContactId:
+      name: contact_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Id"
+    ConversationId:
+      name: conversation_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Id"
+    ApprovalId:
+      name: approval_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Id"
+
+  headers:
+    IdempotentReplayed:
+      description: Present and `true` when this response is a replay of an earlier request.
+      schema:
+        type: boolean
+    RetryAfter:
+      description: Seconds to wait before retrying.
+      schema:
+        type: integer
+        minimum: 0
+
+  requestBodies:
+    AutomationActionBody:
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/AutomationActionRequest"
+
+  responses:
+    Error:
+      description: Any error. See `ErrorCode`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    BadRequest:
+      description: Malformed request, e.g. missing `Idempotency-Key`.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Unauthenticated:
+      description: Missing, invalid or expired bearer token.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    NotFound:
+      description: Does not exist or belongs to another user.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Conflict:
+      description: State conflict (e.g. approval not pending, idempotency key in progress).
+      headers:
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    PreconditionFailed:
+      description: '`If-Match` did not match the current version.'
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    ValidationFailed:
+      description: Body or parameters failed validation, or capability/policy rejects the action.
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    RateLimited:
+      description: User send/generation limit reached.
+      headers:
+        Retry-After:
+          $ref: "#/components/headers/RetryAfter"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    GlobalAutomationStateOk:
+      description: State after the action (already in effect).
+      headers:
+        Idempotent-Replayed:
+          $ref: "#/components/headers/IdempotentReplayed"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/GlobalAutomationState"
+    ContactAutomationStateOk:
+      description: State after the action (already in effect).
+      headers:
+        Idempotent-Replayed:
+          $ref: "#/components/headers/IdempotentReplayed"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ContactAutomationState"
+
+  schemas:
+    # ---------------------------------------------------------------- primitives
+    Id:
+      description: |
+        Wingman resource ID. Lowercase canonical UUID (servers generate UUIDv7).
+        Opaque to clients: compare for equality only.
+      type: string
+      format: uuid
+      pattern: "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
+      examples: ["0192f3a0-7c1e-7b2a-9d4e-1a2b3c4d5e6f"]
+    Timestamp:
+      description: UTC instant, RFC 3339 with a literal `Z`. Up to microsecond precision.
+      type: string
+      format: date-time
+      pattern: '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]{1,6})?Z$'
+      examples: ["2026-10-31T18:04:05.123456Z"]
+    Cursor:
+      description: Opaque pagination cursor. Do not parse or construct.
+      type: string
+      minLength: 1
+      maxLength: 512
+    IdempotencyKey:
+      type: string
+      minLength: 8
+      maxLength: 128
+      pattern: "^[A-Za-z0-9._:-]{8,128}$"
+    Platform:
+      description: |
+        Messaging platform key: lowercase snake_case. Known values: `mock` (WING-006
+        simulator), `sms` (WING-016), `android_notification` (WING-017), `imessage`
+        (WING-020), `tinder`, `bumble`, `hinge` (WING-021 research only). Adding a
+        platform does not change this contract; its capabilities say what it can do.
+      type: string
+      pattern: "^[a-z][a-z0-9_]{1,31}$"
+      examples: [sms, mock]
+    ExternalId:
+      description: Platform-assigned identifier. Arbitrary, opaque, never a Wingman `Id`.
+      type: string
+      minLength: 1
+      maxLength: 256
+
+    # ---------------------------------------------------------------- enums
+    IntentMode:
+      description: |
+        User's dating intent (WING-007). `custom` requires `custom_description`.
+        Never inferred from the other person.
+      type: string
+      enum: [serious, casual_dating, casual_physical, open, custom]
+    AutomationMode:
+      description: |
+        (WING-011.) `manual`: agent never sends; drafts only on request.
+        `assisted`: agent may propose drafts into the approval queue; nothing is sent
+        without explicit approval. `autopilot`: agent may send without approval, only
+        on connections whose `send` capability is `VERIFIED`, within active hours and
+        limits, and still routes `approval_required_for` cases to the queue.
+        Default is `manual` (automation off until the user enables it).
+      type: string
+      enum: [manual, assisted, autopilot]
+    ConversationStage:
+      description: |
+        (WING-009.) Advisory classification only; never triggers a send.
+        `confirmed` requires explicit confirmation evidence, never just a proposed time.
+      type: string
+      enum: [new, introduction, rapport, interest, date_proposal, scheduling, confirmed, follow_up, paused]
+    DateProposalState:
+      description: |
+        (WING-018.) `suggested`: agent idea, not shared with the contact.
+        `offered`: sent to the contact. `accepted`: contact agreed in principle.
+        `confirmed`: explicit confirmation of time and place by both sides (never
+        inferred from a proposed time alone). `canceled`: terminal.
+      type: string
+      enum: [suggested, offered, accepted, confirmed, canceled]
+    DeliveryState:
+      description: |
+        Message lifecycle. Inbound messages are always `received`. Outbound:
+        `queued` (accepted by the dispatcher, not yet handed to a connector) ->
+        `sending` (handed to the connector, awaiting acknowledgement) -> `sent`
+        (connector acknowledged handoff to the transport) -> `delivered` (platform
+        delivery receipt observed; only for connectors that report receipts).
+        `failed`: an attempt failed; may be retried (back to `queued`) within the retry
+        budget. `dead_lettered`: retries exhausted; terminal. `canceled`: removed from
+        the queue before `sending` (e.g. by pause/takeover); terminal.
+        A message is never reported as `sent` or `delivered` without the matching
+        connector event.
+      type: string
+      enum: [received, queued, sending, sent, delivered, failed, dead_lettered, canceled]
+    MessageDirection:
+      type: string
+      enum: [inbound, outbound]
+    MessageOrigin:
+      description: |
+        `contact`: inbound from the other person. `user_manual`: typed and sent by the
+        user. `approved_draft`: agent draft sent after explicit approval.
+        `autopilot`: agent draft sent without per-message approval under autopilot policy.
+      type: string
+      enum: [contact, user_manual, approved_draft, autopilot]
+    ApprovalStatus:
+      description: |
+        `pending` -> `approved` | `rejected` | `expired` | `canceled`. All but `pending`
+        are terminal. `canceled`: superseded (newer inbound message, pause, or takeover).
+      type: string
+      enum: [pending, approved, rejected, expired, canceled]
+    ApprovalReason:
+      description: Why a draft needs human approval.
+      type: string
+      enum:
+        - assisted_mode
+        - sensitive_content
+        - date_or_commitment
+        - low_confidence
+        - first_message
+        - outside_active_hours
+        - capability_unverified
+        - send_limit_reached
+        - user_rule
+    DraftDecision:
+      description: |
+        `send_candidate`: `text` is a usable suggested reply. `no_send`: the agent
+        recommends not replying now. `ask_user`: the agent needs information only the
+        user has (see `question_for_user`); `text` is null.
+      type: string
+      enum: [send_candidate, no_send, ask_user]
+    ContactAutomationStatus:
+      description: |
+        `active`: effective automation mode applies. `paused`: no automated sends;
+        the agent may still queue drafts for approval. `taken_over`: the user is
+        driving; no automated sends and no agent-initiated drafts or approvals
+        until resumed (the user can still request drafts and send manually).
+      type: string
+      enum: [active, paused, taken_over]
+    GlobalAutomationStatus:
+      type: string
+      enum: [active, paused]
+    Actor:
+      type: string
+      enum: [user, agent, dispatcher, connector, system]
+    AgentActionType:
+      description: Audit entry kinds. Send-related types mirror `DeliveryState` transitions.
+      type: string
+      enum:
+        - message_received
+        - analysis_updated
+        - draft_generated
+        - approval_requested
+        - approval_approved
+        - approval_rejected
+        - approval_expired
+        - approval_canceled
+        - policy_blocked
+        - send_queued
+        - send_attempted
+        - send_acknowledged
+        - delivery_confirmed
+        - send_failed
+        - send_dead_lettered
+        - send_canceled
+        - automation_paused
+        - automation_resumed
+        - automation_takeover
+        - preferences_updated
+    ConnectionStatus:
+      type: string
+      enum: [connected, disconnected, error]
+    ErrorCode:
+      description: |
+        Stable machine-readable error codes. Clients that see an unknown code must fall
+        back to handling by HTTP status.
+      type: string
+      enum:
+        - validation_error            # 422 body/param invalid (incl. unknown enum values, unknown fields)
+        - idempotency_key_required    # 400
+        - idempotency_key_mismatch    # 422 same key, different body
+        - idempotency_key_in_progress # 409
+        - unauthenticated             # 401
+        - not_found                   # 404 (also for other users' resources)
+        - precondition_failed         # 412 If-Match mismatch
+        - approval_not_pending        # 409
+        - automation_paused           # 409 action not allowed in current automation state
+        - capability_unsupported      # 422 connection does not support the operation
+        - capability_unverified       # 422 operation needs a VERIFIED capability (e.g. autopilot)
+        - connection_unavailable      # 409 connection disconnected/error
+        - rate_limited                # 429
+        - upstream_unavailable        # 503 LLM provider/connector unreachable
+        - internal_error              # 500
+
+    # ---------------------------------------------------------------- errors
+    Problem:
+      description: RFC 9457 problem details plus Wingman extensions `code`, `request_id`, `errors`.
+      type: object
+      required: [type, title, status, code]
+      properties:
+        type:
+          description: URI reference identifying the problem type, `https://wingman.invalid/problems/<code>`.
+          type: string
+          format: uri-reference
+        title:
+          type: string
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+        code:
+          $ref: "#/components/schemas/ErrorCode"
+        request_id:
+          type: string
+        errors:
+          description: Field-level validation errors (only for `validation_error`).
+          type: array
+          items:
+            type: object
+            required: [pointer, message]
+            properties:
+              pointer:
+                description: JSON Pointer (RFC 6901) into the request body, or `query:<name>` / `header:<name>`.
+                type: string
+              message:
+                type: string
+
+    # ---------------------------------------------------------------- health
+    HealthResponse:
+      type: object
+      additionalProperties: false
+      required: [status, version, env, time]
+      properties:
+        status:
+          type: string
+          const: ok
+        version:
+          type: string
+        env:
+          type: string
+          enum: [dev, test, prod]
+        time:
+          $ref: "#/components/schemas/Timestamp"
+
+    # ---------------------------------------------------------------- users
+    User:
+      type: object
+      required: [id, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        email:
+          type: [string, "null"]
+          format: email
+        display_name:
+          type: [string, "null"]
+          maxLength: 120
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+
+    # ---------------------------------------------------------------- preferences
+    Intent:
+      type: object
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode:
+          $ref: "#/components/schemas/IntentMode"
+        custom_description:
+          description: Required (non-empty) when `mode` is `custom`; must be null otherwise.
+          type: [string, "null"]
+          maxLength: 500
+      if:
+        properties:
+          mode:
+            const: custom
+      then:
+        required: [custom_description]
+        properties:
+          custom_description:
+            type: string
+            minLength: 1
+      else:
+        properties:
+          custom_description:
+            type: "null"
+    StyleProfile:
+      description: |
+        (WING-007.) Every attribute is nullable: `null` means "not configured"; the
+        generator then uses a neutral default and must not infer a user-specific style.
+      type: object
+      additionalProperties: false
+      properties:
+        punctuation:
+          type: [string, "null"]
+          enum: [minimal, standard, expressive, null]
+        emoji_frequency:
+          type: [string, "null"]
+          enum: [none, rare, occasional, frequent, null]
+        brevity:
+          type: [string, "null"]
+          enum: [very_short, short, medium, long, null]
+        humor:
+          type: [string, "null"]
+          enum: [none, light, playful, witty, null]
+        tone:
+          type: [string, "null"]
+          enum: [warm, direct, playful, flirty, reserved, formal, null]
+        response_pace:
+          description: How quickly replies should go out under automation; bounds in `AutomationSettings.reply_delay_seconds`.
+          type: [string, "null"]
+          enum: [immediate, prompt, relaxed, slow, null]
+        style_samples:
+          description: Example messages the user wrote, provided explicitly by the user.
+          type: array
+          maxItems: 20
+          items:
+            type: string
+            minLength: 1
+            maxLength: 1000
+    ActiveHours:
+      description: Windows in which automated sends may go out. Outside them, drafts go to approval.
+      type: object
+      additionalProperties: false
+      required: [timezone, windows]
+      properties:
+        timezone:
+          description: IANA time zone name, e.g. `America/Chicago`.
+          type: string
+          minLength: 1
+          maxLength: 64
+        windows:
+          type: array
+          minItems: 1
+          maxItems: 14
+          items:
+            type: object
+            additionalProperties: false
+            required: [days, start, end]
+            properties:
+              days:
+                type: array
+                minItems: 1
+                uniqueItems: true
+                items:
+                  type: string
+                  enum: [mon, tue, wed, thu, fri, sat, sun]
+              start:
+                description: Local wall-clock `HH:MM` (24h), inclusive.
+                type: string
+                pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+              end:
+                description: Local wall-clock `HH:MM` (24h), exclusive. `end` < `start` wraps past midnight.
+                type: string
+                pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+    AutomationSettings:
+      type: object
+      additionalProperties: false
+      required: [mode]
+      properties:
+        mode:
+          $ref: "#/components/schemas/AutomationMode"
+        active_hours:
+          description: Null means no time restriction.
+          anyOf:
+            - $ref: "#/components/schemas/ActiveHours"
+            - type: "null"
+        reply_delay_seconds:
+          description: Random delay range applied to automated sends. Null means none.
+          type: [object, "null"]
+          additionalProperties: false
+          required: [min, max]
+          properties:
+            min:
+              type: integer
+              minimum: 0
+              maximum: 86400
+            max:
+              type: integer
+              minimum: 0
+              maximum: 86400
+        daily_send_limit:
+          description: Maximum automated sends per user per local day. Null means server default.
+          type: [integer, "null"]
+          minimum: 0
+          maximum: 1000
+        approval_required_for:
+          description: Situations that always go to the approval queue, even in autopilot.
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/ApprovalReason"
+    PreferencesUpdate:
+      type: object
+      additionalProperties: false
+      required: [intent, style, automation]
+      properties:
+        intent:
+          $ref: "#/components/schemas/Intent"
+        dealbreakers:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            minLength: 1
+            maxLength: 200
+        style:
+          $ref: "#/components/schemas/StyleProfile"
+        automation:
+          $ref: "#/components/schemas/AutomationSettings"
+    Preferences:
+      type: object
+      required: [version, intent, dealbreakers, style, automation, updated_at]
+      properties:
+        version:
+          description: Monotonic version. `0` = never saved (defaults).
+          type: integer
+          minimum: 0
+        intent:
+          $ref: "#/components/schemas/Intent"
+        dealbreakers:
+          type: array
+          items:
+            type: string
+        style:
+          $ref: "#/components/schemas/StyleProfile"
+        automation:
+          $ref: "#/components/schemas/AutomationSettings"
+        updated_at:
+          description: Time of this version (null only when `version` is 0).
+          anyOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+    PreferencesPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Preferences"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
+    ContactPreferenceOverrideUpdate:
+      description: Every field null = inherit from user-wide preferences.
+      type: object
+      additionalProperties: false
+      properties:
+        intent:
+          anyOf:
+            - $ref: "#/components/schemas/Intent"
+            - type: "null"
+        style:
+          anyOf:
+            - $ref: "#/components/schemas/StyleProfile"
+            - type: "null"
+        automation_mode:
+          anyOf:
+            - $ref: "#/components/schemas/AutomationMode"
+            - type: "null"
+    ContactPreferences:
+      type: object
+      required: [contact_id, override, effective]
+      properties:
+        contact_id:
+          $ref: "#/components/schemas/Id"
+        override:
+          description: The stored override (all-null when none). `version` 0 when never saved.
+          type: object
+          required: [version]
+          properties:
+            version:
+              type: integer
+              minimum: 0
+            intent:
+              anyOf:
+                - $ref: "#/components/schemas/Intent"
+                - type: "null"
+            style:
+              anyOf:
+                - $ref: "#/components/schemas/StyleProfile"
+                - type: "null"
+            automation_mode:
+              anyOf:
+                - $ref: "#/components/schemas/AutomationMode"
+                - type: "null"
+            updated_at:
+              anyOf:
+                - $ref: "#/components/schemas/Timestamp"
+                - type: "null"
+        effective:
+          $ref: "#/components/schemas/Preferences"
+
+    # ---------------------------------------------------------------- connections
+    Connection:
+      type: object
+      required: [id, platform, display_name, status, capabilities, created_at, updated_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        platform:
+          $ref: "#/components/schemas/Platform"
+        display_name:
+          type: string
+        status:
+          $ref: "#/components/schemas/ConnectionStatus"
+        capabilities:
+          $ref: "./schemas/connector_capabilities.v1.json"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+    ConnectionPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Connection"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
+
+    # ---------------------------------------------------------------- conversations
+    NextCursor:
+      description: Cursor for the next page, or null when there are no more items.
+      anyOf:
+        - $ref: "#/components/schemas/Cursor"
+        - type: "null"
+    ContactSummary:
+      type: object
+      required: [id, display_name]
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        display_name:
+          type: string
+    ConversationAutomation:
+      type: object
+      required: [effective_mode, contact_status, global_status]
+      properties:
+        effective_mode:
+          $ref: "#/components/schemas/AutomationMode"
+        contact_status:
+          $ref: "#/components/schemas/ContactAutomationStatus"
+        global_status:
+          $ref: "#/components/schemas/GlobalAutomationStatus"
+    Conversation:
+      type: object
+      required:
+        - id
+        - contact
+        - connection_id
+        - platform
+        - stage
+        - effective_intent
+        - automation
+        - unread_count
+        - pending_approval_count
+        - last_activity_at
+        - created_at
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        contact:
+          $ref: "#/components/schemas/ContactSummary"
+        connection_id:
+          $ref: "#/components/schemas/Id"
+        platform:
+          $ref: "#/components/schemas/Platform"
+        external_thread_id:
+          anyOf:
+            - $ref: "#/components/schemas/ExternalId"
+            - type: "null"
+        stage:
+          $ref: "#/components/schemas/ConversationStage"
+        effective_intent:
+          $ref: "#/components/schemas/IntentMode"
+        automation:
+          $ref: "#/components/schemas/ConversationAutomation"
+        unread_count:
+          type: integer
+          minimum: 0
+        pending_approval_count:
+          type: integer
+          minimum: 0
+        last_message_preview:
+          description: Short preview of the latest message (for the inbox row only).
+          type: [string, "null"]
+          maxLength: 160
+        last_activity_at:
+          $ref: "#/components/schemas/Timestamp"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+    ConversationAnalysis:
+      description: Advisory (WING-009). Never authorizes or triggers a send.
+      type: object
+      required: [stage, confidence, uncertain, interest_signals, next_action, analyzed_at, source_message_ids]
+      properties:
+        stage:
+          $ref: "#/components/schemas/ConversationStage"
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        uncertain:
+          description: True when confidence is below the analyzer's threshold.
+          type: boolean
+        interest_signals:
+          type: array
+          items:
+            type: object
+            required: [signal, polarity]
+            properties:
+              signal:
+                type: string
+              polarity:
+                type: string
+                enum: [positive, negative, neutral, uncertain]
+              source_message_id:
+                anyOf:
+                  - $ref: "#/components/schemas/Id"
+                  - type: "null"
+        next_action:
+          type: string
+          enum: [reply, wait, ask_question, suggest_date, confirm_details, give_space, stop, ask_user]
+        source_message_ids:
+          type: array
+          items:
+            $ref: "#/components/schemas/Id"
+        analyzed_at:
+          $ref: "#/components/schemas/Timestamp"
+    ConversationDetail:
+      allOf:
+        - $ref: "#/components/schemas/Conversation"
+        - type: object
+          required: [analysis]
+          properties:
+            analysis:
+              anyOf:
+                - $ref: "#/components/schemas/ConversationAnalysis"
+                - type: "null"
+    ConversationPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Conversation"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
+
+    # ---------------------------------------------------------------- messages
+    MessageFailure:
+      type: object
+      required: [code, retryable]
+      properties:
+        code:
+          description: Connector failure code (e.g. `capability_unsupported`, `transport_error`, `timeout`, `rejected_by_platform`).
+          type: string
+        detail:
+          type: [string, "null"]
+        retryable:
+          type: boolean
+    Message:
+      type: object
+      required: [id, conversation_id, direction, origin, text, delivery_state, attempt_count, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        conversation_id:
+          $ref: "#/components/schemas/Id"
+        direction:
+          $ref: "#/components/schemas/MessageDirection"
+        origin:
+          $ref: "#/components/schemas/MessageOrigin"
+        text:
+          type: string
+        delivery_state:
+          $ref: "#/components/schemas/DeliveryState"
+        external_message_id:
+          description: Platform ID. Inbound always set; outbound set once the connector acknowledges.
+          anyOf:
+            - $ref: "#/components/schemas/ExternalId"
+            - type: "null"
+        approval_id:
+          anyOf:
+            - $ref: "#/components/schemas/Id"
+            - type: "null"
+        attempt_count:
+          type: integer
+          minimum: 0
+        failure:
+          anyOf:
+            - $ref: "#/components/schemas/MessageFailure"
+            - type: "null"
+        created_at:
+          description: Inbound -> when the platform says it was sent; outbound -> when queued.
+          $ref: "#/components/schemas/Timestamp"
+        sent_at:
+          anyOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        delivered_at:
+          anyOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+      allOf:
+        - if:
+            properties:
+              direction:
+                const: inbound
+          then:
+            properties:
+              origin:
+                const: contact
+              delivery_state:
+                const: received
+          else:
+            properties:
+              origin:
+                enum: [user_manual, approved_draft, autopilot]
+              delivery_state:
+                enum: [queued, sending, sent, delivered, failed, dead_lettered, canceled]
+        - if:
+            properties:
+              delivery_state:
+                enum: [queued, sending, canceled]
+          then:
+            properties:
+              sent_at:
+                type: "null"
+              delivered_at:
+                type: "null"
+        - if:
+            properties:
+              delivery_state:
+                const: delivered
+          then:
+            required: [sent_at, delivered_at]
+            properties:
+              sent_at:
+                $ref: "#/components/schemas/Timestamp"
+              delivered_at:
+                $ref: "#/components/schemas/Timestamp"
+    MessagePage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Message"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
+    SendMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+          maxLength: 4000
+
+    # ---------------------------------------------------------------- drafts
+    DraftCreateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        guidance:
+          description: Optional user hint for this draft ("ask about her trip").
+          type: [string, "null"]
+          maxLength: 500
+    Draft:
+      description: An LLM suggestion. Not an authorization to send.
+      type: object
+      required:
+        - id
+        - conversation_id
+        - decision
+        - text
+        - rationale
+        - confidence
+        - requires_approval
+        - approval_reasons
+        - intent_mode
+        - grounding
+        - created_at
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        conversation_id:
+          $ref: "#/components/schemas/Id"
+        decision:
+          $ref: "#/components/schemas/DraftDecision"
+        text:
+          description: Suggested reply. Null unless `decision` is `send_candidate`.
+          type: [string, "null"]
+          maxLength: 4000
+        question_for_user:
+          description: Set when `decision` is `ask_user`.
+          type: [string, "null"]
+        rationale:
+          type: string
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        requires_approval:
+          type: boolean
+        approval_reasons:
+          type: array
+          items:
+            $ref: "#/components/schemas/ApprovalReason"
+        intent_mode:
+          $ref: "#/components/schemas/IntentMode"
+        grounding:
+          description: The memory facts and messages this draft relied on (attribution, WING-008).
+          type: object
+          required: [memory_ids, message_ids]
+          properties:
+            memory_ids:
+              type: array
+              items:
+                $ref: "#/components/schemas/Id"
+            message_ids:
+              type: array
+              items:
+                $ref: "#/components/schemas/Id"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+      if:
+        properties:
+          decision:
+            const: send_candidate
+      then:
+        properties:
+          text:
+            type: string
+            minLength: 1
+      else:
+        properties:
+          text:
+            type: "null"
+
+    # ---------------------------------------------------------------- approvals
+    Approval:
+      type: object
+      required: [id, conversation_id, contact_id, status, draft, reasons, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        conversation_id:
+          $ref: "#/components/schemas/Id"
+        contact_id:
+          $ref: "#/components/schemas/Id"
+        status:
+          $ref: "#/components/schemas/ApprovalStatus"
+        draft:
+          $ref: "#/components/schemas/Draft"
+        reasons:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/ApprovalReason"
+        final_text:
+          description: Text actually queued (draft text or the user's edit). Set when approved.
+          type: [string, "null"]
+        rejection_reason:
+          type: [string, "null"]
+        message_id:
+          description: Outbound message created on approval.
+          anyOf:
+            - $ref: "#/components/schemas/Id"
+            - type: "null"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        expires_at:
+          anyOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        decided_at:
+          anyOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+    ApprovalPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Approval"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
+    ApproveRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        edited_text:
+          description: Replaces the draft text. Null/absent sends the draft as-is.
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 4000
+    RejectRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: [string, "null"]
+          maxLength: 500
+    ApprovalDecisionResult:
+      type: object
+      required: [approval, message]
+      properties:
+        approval:
+          $ref: "#/components/schemas/Approval"
+        message:
+          description: The queued outbound message (approve) or null (reject).
+          anyOf:
+            - $ref: "#/components/schemas/Message"
+            - type: "null"
+
+    # ---------------------------------------------------------------- automation
+    AutomationActionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        reason:
+          type: [string, "null"]
+          maxLength: 500
+    GlobalAutomationState:
+      description: |
+        Global pause stops every automated send for the user immediately: queued
+        automated messages become `canceled`; drafts may still be queued for approval.
+      type: object
+      required: [status, changed_at]
+      properties:
+        status:
+          $ref: "#/components/schemas/GlobalAutomationStatus"
+        changed_at:
+          anyOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+    ContactAutomationState:
+      type: object
+      required: [contact_id, status, effective_mode, global_status, changed_at, canceled_approval_count, canceled_message_count]
+      properties:
+        contact_id:
+          $ref: "#/components/schemas/Id"
+        status:
+          $ref: "#/components/schemas/ContactAutomationStatus"
+        effective_mode:
+          $ref: "#/components/schemas/AutomationMode"
+        global_status:
+          $ref: "#/components/schemas/GlobalAutomationStatus"
+        changed_at:
+          anyOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        canceled_approval_count:
+          description: Approvals canceled by this action (takeover); 0 otherwise.
+          type: integer
+          minimum: 0
+        canceled_message_count:
+          description: Queued automated messages canceled by this action.
+          type: integer
+          minimum: 0
+
+    # ---------------------------------------------------------------- audit
+    AgentAction:
+      type: object
+      required: [id, type, actor, occurred_at, details]
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        type:
+          $ref: "#/components/schemas/AgentActionType"
+        actor:
+          $ref: "#/components/schemas/Actor"
+        conversation_id:
+          anyOf:
+            - $ref: "#/components/schemas/Id"
+            - type: "null"
+        contact_id:
+          anyOf:
+            - $ref: "#/components/schemas/Id"
+            - type: "null"
+        message_id:
+          anyOf:
+            - $ref: "#/components/schemas/Id"
+            - type: "null"
+        approval_id:
+          anyOf:
+            - $ref: "#/components/schemas/Id"
+            - type: "null"
+        reason_code:
+          description: Machine-readable reason (an `ErrorCode`, `ApprovalReason`, or connector failure code).
+          type: [string, "null"]
+        occurred_at:
+          $ref: "#/components/schemas/Timestamp"
+        details:
+          description: Redacted structured metadata. Never message text, tokens, or phone numbers.
+          type: object
+    AgentActionPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentAction"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
+
+    # ---------------------------------------------------------------- dates (shape only)
+    DateProposal:
+      description: |
+        Shared shape for WING-003 storage and WING-018. Endpoints for date proposals
+        are not part of v1.0.0 and will be added by an additive contract PR.
+      type: object
+      required: [id, conversation_id, state, created_at, updated_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        conversation_id:
+          $ref: "#/components/schemas/Id"
+        state:
+          $ref: "#/components/schemas/DateProposalState"
+        proposed_start:
+          anyOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        proposed_end:
+          anyOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        venue_text:
+          type: [string, "null"]
+          maxLength: 300
+        confirmation_message_ids:
+          description: Messages carrying explicit confirmation from both sides. Required non-empty when `confirmed`.
+          type: array
+          items:
+            $ref: "#/components/schemas/Id"
+        calendar_event_id:
+          description: Set only after an authorized calendar write (`calendar_write` capability).
+          anyOf:
+            - $ref: "#/components/schemas/ExternalId"
+            - type: "null"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+      if:
+        properties:
+          state:
+            const: confirmed
+      then:
+        required: [confirmation_message_ids, proposed_start]
+        properties:
+          confirmation_message_ids:
+            minItems: 1
+          proposed_start:
+            $ref: "#/components/schemas/Timestamp"

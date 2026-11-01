@@ -1,0 +1,21 @@
+{
+  "id": "0192f3a0-0000-7000-8000-0000000000e2",
+  "conversation_id": "0192f3a0-0000-7000-8000-0000000000b1",
+  "decision": "ask_user",
+  "text": null,
+  "question_for_user": "Sam asked if you're free Saturday. Are you?",
+  "rationale": "Availability is unknown; inventing it would be an unauthorized commitment.",
+  "confidence": 0.9,
+  "requires_approval": true,
+  "approval_reasons": [
+    "date_or_commitment"
+  ],
+  "intent_mode": "custom",
+  "grounding": {
+    "memory_ids": [],
+    "message_ids": [
+      "0192f3a0-0000-7000-8000-0000000000d1"
+    ]
+  },
+  "created_at": "2026-10-31T18:01:12Z"
+}

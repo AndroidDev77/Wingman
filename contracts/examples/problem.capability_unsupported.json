@@ -1,0 +1,7 @@
+{
+  "type": "https://wingman.invalid/problems/capability_unsupported",
+  "title": "Connection does not support sending",
+  "status": 422,
+  "code": "capability_unsupported",
+  "detail": "Connection capability 'send' is UNSUPPORTED."
+}

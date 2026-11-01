@@ -1,0 +1,223 @@
+{
+  "description": "Maps every example to the schema it must satisfy. Entries under invalid/ MUST fail validation. Schema refs are relative to contracts/.",
+  "examples": [
+    {
+      "file": "capabilities.sms.json",
+      "schema": "schemas/connector_capabilities.v1.json"
+    },
+    {
+      "file": "capabilities.mock.json",
+      "schema": "schemas/connector_capabilities.v1.json"
+    },
+    {
+      "file": "capabilities.android_notification.json",
+      "schema": "schemas/connector_capabilities.v1.json"
+    },
+    {
+      "file": "health.response.json",
+      "schema": "openapi.yaml#/components/schemas/HealthResponse"
+    },
+    {
+      "file": "me.response.json",
+      "schema": "openapi.yaml#/components/schemas/User"
+    },
+    {
+      "file": "preferences.put.request.json",
+      "schema": "openapi.yaml#/components/schemas/PreferencesUpdate"
+    },
+    {
+      "file": "preferences.response.json",
+      "schema": "openapi.yaml#/components/schemas/Preferences"
+    },
+    {
+      "file": "preferences.defaults.response.json",
+      "schema": "openapi.yaml#/components/schemas/Preferences"
+    },
+    {
+      "file": "contact_preferences.put.request.json",
+      "schema": "openapi.yaml#/components/schemas/ContactPreferenceOverrideUpdate"
+    },
+    {
+      "file": "contact_preferences.response.json",
+      "schema": "openapi.yaml#/components/schemas/ContactPreferences"
+    },
+    {
+      "file": "connections.page.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionPage"
+    },
+    {
+      "file": "conversations.page.json",
+      "schema": "openapi.yaml#/components/schemas/ConversationPage"
+    },
+    {
+      "file": "conversation.detail.json",
+      "schema": "openapi.yaml#/components/schemas/ConversationDetail"
+    },
+    {
+      "file": "messages.page.json",
+      "schema": "openapi.yaml#/components/schemas/MessagePage"
+    },
+    {
+      "file": "send_message.request.json",
+      "schema": "openapi.yaml#/components/schemas/SendMessageRequest"
+    },
+    {
+      "file": "send_message.response.json",
+      "schema": "openapi.yaml#/components/schemas/Message"
+    },
+    {
+      "file": "draft.create.request.json",
+      "schema": "openapi.yaml#/components/schemas/DraftCreateRequest"
+    },
+    {
+      "file": "draft.response.json",
+      "schema": "openapi.yaml#/components/schemas/Draft"
+    },
+    {
+      "file": "draft.ask_user.response.json",
+      "schema": "openapi.yaml#/components/schemas/Draft"
+    },
+    {
+      "file": "approvals.page.json",
+      "schema": "openapi.yaml#/components/schemas/ApprovalPage"
+    },
+    {
+      "file": "approval.approve.request.json",
+      "schema": "openapi.yaml#/components/schemas/ApproveRequest"
+    },
+    {
+      "file": "approval.approve.response.json",
+      "schema": "openapi.yaml#/components/schemas/ApprovalDecisionResult"
+    },
+    {
+      "file": "approval.reject.request.json",
+      "schema": "openapi.yaml#/components/schemas/RejectRequest"
+    },
+    {
+      "file": "approval.reject.response.json",
+      "schema": "openapi.yaml#/components/schemas/ApprovalDecisionResult"
+    },
+    {
+      "file": "automation.action.request.json",
+      "schema": "openapi.yaml#/components/schemas/AutomationActionRequest"
+    },
+    {
+      "file": "automation.takeover.response.json",
+      "schema": "openapi.yaml#/components/schemas/ContactAutomationState"
+    },
+    {
+      "file": "automation.global_pause.response.json",
+      "schema": "openapi.yaml#/components/schemas/GlobalAutomationState"
+    },
+    {
+      "file": "agent_actions.page.json",
+      "schema": "openapi.yaml#/components/schemas/AgentActionPage"
+    },
+    {
+      "file": "problem.idempotency_mismatch.json",
+      "schema": "openapi.yaml#/components/schemas/Problem"
+    },
+    {
+      "file": "problem.validation_error.json",
+      "schema": "openapi.yaml#/components/schemas/Problem"
+    },
+    {
+      "file": "problem.capability_unsupported.json",
+      "schema": "openapi.yaml#/components/schemas/Problem"
+    },
+    {
+      "file": "event.mock_inbound_message_injected.json",
+      "schema": "schemas/connector_event.v1.json"
+    },
+    {
+      "file": "event.mock_outbound_send_acknowledged.json",
+      "schema": "schemas/connector_event.v1.json"
+    },
+    {
+      "file": "event.mock_outbound_send_failed.json",
+      "schema": "schemas/connector_event.v1.json"
+    },
+    {
+      "file": "event.mock_delivery_receipt_simulated.json",
+      "schema": "schemas/connector_event.v1.json"
+    },
+    {
+      "file": "event.sms_message_received.json",
+      "schema": "schemas/connector_event.v1.json"
+    },
+    {
+      "file": "event.connection_capabilities_changed.json",
+      "schema": "schemas/connector_event.v1.json"
+    },
+    {
+      "file": "invalid/message.queued_claims_sent.json",
+      "schema": "openapi.yaml#/components/schemas/Message",
+      "why_invalid": "queued message must not carry sent_at (never claim a send on a queued message)"
+    },
+    {
+      "file": "invalid/message.delivered_without_receipt_time.json",
+      "schema": "openapi.yaml#/components/schemas/Message",
+      "why_invalid": "delivered requires sent_at and delivered_at timestamps"
+    },
+    {
+      "file": "invalid/message.inbound_with_outbound_state.json",
+      "schema": "openapi.yaml#/components/schemas/Message",
+      "why_invalid": "inbound messages are always delivery_state=received"
+    },
+    {
+      "file": "invalid/capabilities.verified_without_evidence.json",
+      "schema": "schemas/connector_capabilities.v1.json",
+      "why_invalid": "VERIFIED capability needs evidence and verified_at"
+    },
+    {
+      "file": "invalid/capabilities.send_omitted.json",
+      "schema": "schemas/connector_capabilities.v1.json",
+      "why_invalid": "every capability is advertised explicitly; send cannot be left implicit"
+    },
+    {
+      "file": "invalid/capabilities.bad_label.json",
+      "schema": "schemas/connector_capabilities.v1.json",
+      "why_invalid": "verification label must be VERIFIED/UNVERIFIED/UNSUPPORTED"
+    },
+    {
+      "file": "invalid/event.mock_type_on_real_platform.json",
+      "schema": "schemas/connector_event.v1.json",
+      "why_invalid": "mock.* events are only valid with platform=mock"
+    },
+    {
+      "file": "invalid/event.live_type_on_mock_platform.json",
+      "schema": "schemas/connector_event.v1.json",
+      "why_invalid": "live message.* events are never valid with platform=mock"
+    },
+    {
+      "file": "invalid/event.received_without_external_id.json",
+      "schema": "schemas/connector_event.v1.json",
+      "why_invalid": "dedup key requires external_message_id on received events"
+    },
+    {
+      "file": "invalid/event.offset_timestamp.json",
+      "schema": "schemas/connector_event.v1.json",
+      "why_invalid": "timestamps must be UTC with a literal Z"
+    },
+    {
+      "file": "invalid/preferences.unknown_intent.json",
+      "schema": "openapi.yaml#/components/schemas/PreferencesUpdate",
+      "why_invalid": "unknown intent mode"
+    },
+    {
+      "file": "invalid/preferences.custom_without_description.json",
+      "schema": "openapi.yaml#/components/schemas/PreferencesUpdate",
+      "why_invalid": "custom intent requires custom_description"
+    },
+    {
+      "file": "invalid/draft.no_send_with_text.json",
+      "schema": "openapi.yaml#/components/schemas/Draft",
+      "why_invalid": "only send_candidate drafts carry text"
+    },
+    {
+      "file": "invalid/problem.unknown_code.json",
+      "schema": "openapi.yaml#/components/schemas/Problem",
+      "why_invalid": "error code must be a stable ErrorCode value"
+    }
+  ]
+}

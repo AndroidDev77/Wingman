@@ -1,0 +1,21 @@
+{
+  "schema_version": "connector_capabilities.v1",
+  "platform": "android_notification",
+  "connector_version": "0.1.0",
+  "capabilities": {
+    "read": {
+      "status": "UNVERIFIED",
+      "notes": "Notification text only; may be truncated."
+    },
+    "draft": {
+      "status": "UNSUPPORTED"
+    },
+    "swipe": {
+      "status": "UNSUPPORTED"
+    },
+    "calendar_write": {
+      "status": "UNSUPPORTED"
+    }
+  },
+  "assessed_at": "2026-10-31T18:00:00Z"
+}

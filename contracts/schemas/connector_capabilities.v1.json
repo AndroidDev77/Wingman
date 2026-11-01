@@ -1,0 +1,105 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wingman.invalid/contracts/schemas/connector_capabilities.v1.json",
+  "title": "ConnectorCapabilities",
+  "description": "What one connector instance can do. The five capabilities are INDEPENDENT: no capability implies another. In particular, notification access gives at most `read` (and only reply-via-RemoteInput where actually tested gives `send`); it never implies `send` or `swipe`. Callers (the dispatcher, the Android UI) must check the specific capability they need. `UNSUPPORTED` operations must return a typed unsupported result, never silently succeed. Autopilot sends require `send.status == VERIFIED`; `UNVERIFIED` send is allowed only through explicit user approval. See docs/adr/0005-connector-capability-model.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "platform", "connector_version", "capabilities", "assessed_at"],
+  "properties": {
+    "schema_version": {
+      "const": "connector_capabilities.v1"
+    },
+    "platform": {
+      "description": "Lowercase snake_case platform key, e.g. `mock`, `sms`, `android_notification`.",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]{1,31}$"
+    },
+    "connector_version": {
+      "description": "Version of the connector implementation that made this assessment.",
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["read", "draft", "send", "swipe", "calendar_write"],
+      "properties": {
+        "read": {
+          "$ref": "#/$defs/capability",
+          "description": "Can observe inbound messages and/or read conversation history."
+        },
+        "draft": {
+          "$ref": "#/$defs/capability",
+          "description": "Can place a draft into the platform's compose field for the user to send by hand. Wingman-internal drafts (the approval queue) do not need this capability."
+        },
+        "send": {
+          "$ref": "#/$defs/capability",
+          "description": "Can transmit an outbound message and report an acknowledgement."
+        },
+        "swipe": {
+          "$ref": "#/$defs/capability",
+          "description": "Can like/pass profiles. No v1 HTTP endpoint requires this."
+        },
+        "calendar_write": {
+          "$ref": "#/$defs/capability",
+          "description": "Can create calendar events (WING-018). Still requires user authorization per event unless opted in."
+        }
+      }
+    },
+    "assessed_at": {
+      "$ref": "#/$defs/timestamp"
+    }
+  },
+  "$defs": {
+    "verification": {
+      "description": "VERIFIED: reproduced on a real device/account and evidence recorded. UNVERIFIED: implemented or plausible but not reproduced; must not be used for autopilot. UNSUPPORTED: not available; calls must fail with a typed unsupported result.",
+      "type": "string",
+      "enum": ["VERIFIED", "UNVERIFIED", "UNSUPPORTED"]
+    },
+    "capability": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": {
+          "$ref": "#/$defs/verification"
+        },
+        "evidence": {
+          "description": "Where the verification is recorded (doc path, test ID, device log reference). Required when VERIFIED.",
+          "type": ["string", "null"],
+          "maxLength": 500
+        },
+        "verified_at": {
+          "description": "When the capability was last verified. Required when VERIFIED.",
+          "anyOf": [{ "$ref": "#/$defs/timestamp" }, { "type": "null" }]
+        },
+        "notes": {
+          "type": ["string", "null"],
+          "maxLength": 1000
+        },
+        "reports_delivery_receipts": {
+          "description": "Only meaningful for `send`: true if the transport reports delivery (enables the `delivered` state). Absent/false means messages stop at `sent`.",
+          "type": "boolean"
+        }
+      },
+      "if": {
+        "properties": { "status": { "const": "VERIFIED" } }
+      },
+      "then": {
+        "required": ["evidence", "verified_at"],
+        "properties": {
+          "evidence": { "type": "string", "minLength": 1 },
+          "verified_at": { "$ref": "#/$defs/timestamp" }
+        }
+      }
+    },
+    "timestamp": {
+      "description": "UTC RFC 3339 with literal Z.",
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]{1,6})?Z$"
+    }
+  }
+}

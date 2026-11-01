@@ -1,0 +1,29 @@
+{
+  "schema_version": "connector_capabilities.v1",
+  "platform": "mock",
+  "connector_version": "0.1.0",
+  "capabilities": {
+    "read": {
+      "status": "VERIFIED",
+      "evidence": "backend/tests/connectors (deterministic simulator)",
+      "verified_at": "2026-10-31T18:00:00Z"
+    },
+    "draft": {
+      "status": "UNSUPPORTED"
+    },
+    "send": {
+      "status": "VERIFIED",
+      "evidence": "backend/tests/connectors (deterministic simulator)",
+      "verified_at": "2026-10-31T18:00:00Z",
+      "reports_delivery_receipts": true,
+      "notes": "Simulated transport. VERIFIED means the simulator contract is tested, not a real platform."
+    },
+    "swipe": {
+      "status": "UNSUPPORTED"
+    },
+    "calendar_write": {
+      "status": "UNSUPPORTED"
+    }
+  },
+  "assessed_at": "2026-10-31T18:00:00Z"
+}
