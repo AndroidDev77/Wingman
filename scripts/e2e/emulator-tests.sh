@@ -108,7 +108,7 @@ grep -h "WING025-SMS\|WING025-UI" "$art/phaseB-logcat.txt" > "$art/phaseB-observ
 log "phase B observations (logcat/instrumentation lines prefixed WING025-SMS):"
 cat "$art/phaseB-observations.txt"
 echo "system SMS provider (sent box, newest first; address and date only):"
-adb shell content query --uri content://sms/sent --projection address:date --sort "date DESC" 2>&1 | head -3 | tee -a "$art/phaseB-setup.txt" || true
+adb shell "content query --uri content://sms/sent --projection address:date --sort 'date DESC'" 2>&1 | head -3 | tee -a "$art/phaseB-setup.txt" || true
 
 log "summary: phaseA=$([[ $a_ok -eq 1 ]] && echo PASS || echo FAIL) phaseB(emulator SMS stack exercised)=$([[ $b_ok -eq 1 ]] && echo PASS || echo FAIL)"
 printf 'phaseA=%s\nphaseB=%s\n' "$a_ok" "$b_ok" > "$art/summary.txt"

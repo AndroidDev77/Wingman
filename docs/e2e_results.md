@@ -109,7 +109,28 @@ Each UI step is cross-checked against the server:
 | A5 Activity (audit timeline from the server) | Rows "Message received", "Draft proposed for your approval", "Draft approved (not sent yet)", "Queued, not sent yet", "Handed to the messaging app, not confirmed yet", "Sent (delivery not confirmed)" | audit has `send_queued`, `send_attempted`, `send_acknowledged`, `approval_approved` |
 | A6 Takeover | Controls: flip "I'm taking over", confirm "Take over with ...?", see "You've taken over." and "You're in control: Wingman is off for this person" | contact `taken_over`, audit `automation_takeover` |
 
-Result: see [Evidence](#evidence).
+**Observed: PASS** in CI job
+[124930492429](https://github.com/AndroidDev77/Wingman/actions/runs/41334216255/job/124930492429)
+(commit `5c6feea`, `OK (1 test)`, 29 s). Logcat (`WING025-APP`):
+
+```
+18:03:12.243 WING025-APP signed in; onboarding opened
+18:03:20.592 WING025-APP onboarding saved: version=1 intent=serious mode=assisted
+18:03:21.833 WING025-APP inbox shows Emu3342162551 with the message preview
+18:03:23.456 WING025-APP approved in the app; server message 01a19847-c616-73b1-8825-d0db6c856c71 is sent
+18:03:27.533 WING025-APP activity tab shows: message received, proposed, approved, queued, handed over, sent; server audit=[send_acknowledged, send_attempted, send_queued, approval_approved, approval_requested, draft_generated, analysis_updated, message_received]
+18:03:30.729 WING025-APP takeover confirmed in the app and on the server (status=taken_over, audit automation_takeover)
+```
+
+How it got there (all failures were in the test harness, none in the app; each fix is its own
+commit on the PR):
+| Run (commit) | Phase A | Cause | Fix |
+|---|---|---|---|
+| 1 (`3d2d78e`) | FAIL | Under `createAndroidComposeRule` the Compose test environment replaces the Recomposer's dispatcher; the first-launch onboarding `LaunchedEffect` resumed on OkHttp's thread and `NavController.navigate` threw "setCurrentState must be called on the main thread" | Launch the unmodified `MainActivity` with `ActivityScenario` and drive it with UiAutomator |
+| 2 (`0b1ebd5`) | FAIL | "UI never showed Next" after onboarding opened. Suspected the soft keyboard (opened by tapping the token field) covering the bottom; not confirmed, run 3 shows the real cause was the selector below | Set the token without a tap; hide the keyboard if shown; dump the UI hierarchy on a failed wait (kept: it is what diagnosed run 3) |
+| 3 (`ed89a86`) | FAIL | The hierarchy dump showed the app in the expected state (onboarding saved, Inbox open, bottom bar visible). The bottom-nav label is a plain Text node and its clickable parent has no text, so `textContains(..).clickable(true)` matched nothing (the same selector style explains run 2's "Next") | Match the exact label; tap the takeover dialog's button below its title |
+| 4 (`5c6feea`) | PASS | | |
+
 
 ### Real channel: SMS on the CI emulator ("emulator SMS stack exercised")
 
@@ -128,23 +149,28 @@ Result: see [Evidence](#evidence).
    per-part "sent" result arrives; the next sync uploads `message.send_acknowledged`; the server
    reports the reply sent.
 
-**Observed (first CI run, commit `3d2d78e`, job
-[124922334161](https://github.com/AndroidDev77/Wingman/actions/runs/41331480134/job/124922334161)):
-PASS.** Logcat (`WING025-SMS` lines, verbatim apart from the timestamp prefix):
+**Observed: PASS** in CI job
+[124930492429](https://github.com/AndroidDev77/Wingman/actions/runs/41334216255/job/124930492429)
+(commit `5c6feea`), and earlier also in the first run
+([124922334161](https://github.com/AndroidDev77/Wingman/actions/runs/41331480134/job/124922334161),
+commit `3d2d78e`). Script and logcat lines from the passing run (`WING025-SMS`, timestamps kept):
 
 ```
-device state: telephony=true role=true receive=true send=true
-paired connection=01a1982a-a78e-7bbd-af09-cf9d6d8557e4 install=14ea04e9-6586-40e8-ac55-e82080b78400 send=UNVERIFIED
-READY_FOR_SMS (waiting for adb emu sms send 5551234567 ...)
-sync -> uploaded 0, sent 0
-sync -> uploaded 1, sent 0
-inbound ingested: conversation=01a1982a-b148-7868-b5d6-4c7cb00efdef thread=sms:5551234567 text_matches=true
-approval reasons=[assisted_mode, capability_unverified, first_message]
-sync -> uploaded 0, sent 1
-sync -> uploaded 0, sent 0
-sync -> uploaded 2, sent 0
-outbound state=delivered external_message_id=sms:out:send:01a1982a-b770-74df-ade3-6a4f09477cd7:1 attempt=1
-audit=[delivery_confirmed, send_acknowledged, send_attempted, send_queued, approval_approved, approval_requested, draft_generated, analysis_updated, message_received]
+default SMS role holder before: com.google.android.apps.messaging
+add-role-holder attempt 1:
+default SMS role holder after: com.wingman
+18:03:38.862 WING025-SMS device state: telephony=true role=true receive=true send=true default_sms_package=com.wingman
+18:03:59.190 WING025-SMS paired connection=01a19848-512e-719f-9018-a97fc4f38828 install=705b1122-4fe7-4f0c-9ee2-3e38d97e40a0 send=UNVERIFIED
+18:03:59.190 WING025-SMS READY_FOR_SMS (waiting for adb emu sms send 5551234567 ...)
+[18:04:00] ==> test is ready: adb emu sms send 5551234567 WING025-emulator-hello
+18:04:01.355 WING025-SMS sync -> uploaded 1, sent 0
+18:04:01.384 WING025-SMS inbound ingested: conversation=01a19848-5c35-7698-942a-642c82142312 thread=sms:5551234567 text_matches=true
+18:04:01.406 WING025-SMS approval reasons=[assisted_mode, capability_unverified, first_message]
+18:04:02.951 WING025-SMS sync -> uploaded 0, sent 1
+18:04:06.061 WING025-SMS sync -> uploaded 2, sent 0
+18:04:06.072 WING025-SMS outbound state=delivered external_message_id=sms:out:send:01a19848-5fd4-7006-b72a-f1a484b50569:1 attempt=1
+18:04:06.083 WING025-SMS audit=[delivery_confirmed, send_acknowledged, send_attempted, send_queued, approval_approved, approval_requested, draft_generated, analysis_updated, message_received]
+OK (1 test)
 ```
 
 What this shows and what it does not:
@@ -159,11 +185,12 @@ What this shows and what it does not:
 - It is **not** a physical device: no SIM, no radio, no carrier, no second phone received anything.
   Per AGENT_RULES.md and the I-003 rule, that is not VERIFIED. The operator `verify` CLI was **not**
   run and SMS capabilities were **not** changed.
-- In that first run, `cmd role add-role-holder` printed `java.util.concurrent.TimeoutException`
+- In the first run, `cmd role add-role-holder` printed `java.util.concurrent.TimeoutException`
   and `get-role-holders` still listed `com.google.android.apps.messaging` right after it, while the
-  app's own check (`RoleManager.isRoleHeld`) said `role=true` about 10 s later and SMS_DELIVER was
-  delivered to the app. The script now retries until `get-role-holders` prints `com.wingman`, and
-  the test also logs `Telephony.Sms.getDefaultSmsPackage`.
+  app's own check (`RoleManager.isRoleHeld`) said `role=true` about 10 s later and `SMS_DELIVER`
+  reached the app. The script now retries until `get-role-holders` prints `com.wingman`; in the
+  passing run it did on the first attempt, and `Telephony.Sms.getDefaultSmsPackage` was
+  `com.wingman`.
 
 ## Connector matrix
 
@@ -225,4 +252,27 @@ affected; `MockConnector` is never used in prod.
 
 ## Evidence
 
-Filled in with the CI runs of the final head commit of PR #34 (see the PR for the latest).
+CI on PR [#34](https://github.com/AndroidDev77/Wingman/pull/34). Run links for the commit that
+first passed every job (`5c6feea`); the PR description lists the conclusion of every job on the
+final head commit.
+
+| Job | Run (commit `5c6feea`) | Result |
+|---|---|---|
+| E2E backend (HTTP flows + failure injection) | [job 124930492384](https://github.com/AndroidDev77/Wingman/actions/runs/41334216255/job/124930492384) | success: 17 passed in 189 s, zero-duplicate summary identical to the local run |
+| E2E Android emulator (app drives backend + emulator SMS) | [job 124930492429](https://github.com/AndroidDev77/Wingman/actions/runs/41334216255/job/124930492429) | success: phase A PASS, phase B (emulator SMS stack exercised) PASS |
+| Backend, Migrations, Contracts, Docker, Android (`ci.yml`) | same commit, workflow CI | success (all five) |
+
+Artifacts uploaded by each E2E job (14 days): `e2e-backend` (`server.log`, `junit.xml`,
+`zero_duplicate_sends.json`) and `e2e-emulator` (instrumentation output, logcat, observations,
+server log).
+
+Local runs in the agent sandbox, final code:
+
+| Command | Result |
+|---|---|
+| `scripts/e2e/run.sh` | 17 passed in 192 s, `E2E SUITE PASSED`, zero-duplicate summary as above |
+| `scripts/backend-check.sh` | ruff, format, mypy clean; 953 passed (952 before + 1 regression test) |
+| `contracts/validate.sh` | `CONTRACT VALIDATION PASSED` (63 valid + 34 invalid examples) |
+| `scripts/migration-check.sh` | `MIGRATION CHECK PASSED (18 tables at head)` |
+| `./gradlew :app:assembleDebug :app:testDebugUnitTest :app:assembleDebugAndroidTest -Pwingman.useMockApi=false` | BUILD SUCCESSFUL, 398 JVM tests, 0 failures; the merged release manifest has no network-security config |
+| Emulator tests | Not run locally: no `/dev/kvm` in the sandbox. CI only |
