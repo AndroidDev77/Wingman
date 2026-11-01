@@ -16,6 +16,7 @@ from app import __version__
 from app.api.auth import create_auth_router
 from app.api.demo_connector import create_demo_connector_router
 from app.api.errors import register_error_handlers
+from app.api.preferences import router as preferences_router
 from app.config import get_settings
 from app.db.session import dispose_engine
 from app.security.factory import check_auth_config
@@ -45,6 +46,8 @@ def create_app() -> FastAPI:
 
     # WING-004: GET /v1/me.
     app.include_router(create_auth_router())
+    # WING-007: /v1/preferences and /v1/contacts/{id}/preferences.
+    app.include_router(preferences_router)
 
     # WING-006 simulator: unauthenticated, in-memory, single demo user. Never in prod.
     if settings.env != "prod":
