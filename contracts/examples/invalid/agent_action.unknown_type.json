@@ -1,0 +1,18 @@
+{
+  "id": "0192f3a0-0000-7000-8000-000000000300",
+  "type": "lease_lapsed",
+  "actor": "system",
+  "conversation_id": "0192f3a0-0000-7000-8000-0000000000b1",
+  "contact_id": "0192f3a0-0000-7000-8000-0000000000c1",
+  "message_id": "0192f3a0-0000-7000-8000-0000000000d4",
+  "approval_id": null,
+  "reason_code": "outcome_unknown",
+  "occurred_at": "2026-11-01T18:10:00Z",
+  "details": {
+    "instruction_id": "0192f3a0-0000-7000-8000-000000000401",
+    "connection_id": "0192f3a0-0000-7000-8000-0000000000a3",
+    "attempt": 1,
+    "outcome": "unknown",
+    "retried": false
+  }
+}

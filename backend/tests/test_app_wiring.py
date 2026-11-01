@@ -255,3 +255,42 @@ def test_wing011_operation_ids_match_the_contract(monkeypatch: pytest.MonkeyPatc
         for method, op in item.items():
             if isinstance(op, dict) and op.get("operationId") in ops:
                 assert served[path][method]["operationId"] == op["operationId"], (path, method)
+
+
+_CONTRACT_V12_ROUTES = [
+    ("GET", "/v1/connections"),
+    ("POST", "/v1/connections"),
+    ("GET", "/v1/connections/00000000-0000-0000-0000-000000000001"),
+    ("POST", "/v1/connections/00000000-0000-0000-0000-000000000001/unpair"),
+]
+
+
+@pytest.mark.parametrize(("method", "path"), _CONTRACT_V12_ROUTES)
+@pytest.mark.parametrize("env", ["dev", "prod"])
+def test_connection_routes_are_mounted_and_require_a_token(
+    monkeypatch: pytest.MonkeyPatch, env: str, method: str, path: str
+) -> None:
+    # Contract 1.2.0 (I-017, ADR 0007): mounted in every environment.
+    with _client(monkeypatch, env) as client:
+        resp = client.request(method, path, json={}, headers={"Idempotency-Key": "wiring-key-0001"})
+        assert resp.status_code == 401, resp.text
+        assert resp.headers["content-type"].startswith("application/problem+json")
+        assert resp.json()["code"] == "unauthenticated"
+
+
+def test_connection_operation_ids_match_the_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    import yaml
+
+    from tests.automation.conftest import OPENAPI
+
+    contract = yaml.safe_load(OPENAPI.read_text())["paths"]
+    with _client(monkeypatch, "prod") as client:
+        served = client.get("/openapi.json").json()["paths"]
+    ops = {"listConnections", "createConnection", "getConnection", "unpairConnection"}
+    found = set()
+    for path, item in contract.items():
+        for method, op in item.items():
+            if isinstance(op, dict) and op.get("operationId") in ops:
+                assert served[path][method]["operationId"] == op["operationId"], (path, method)
+                found.add(op["operationId"])
+    assert found == ops

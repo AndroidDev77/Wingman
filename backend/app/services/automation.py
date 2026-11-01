@@ -21,7 +21,8 @@ Policy checks, in order (``docs/architecture.md`` step 5; the first stop wins):
    ``VERIFIED``), ``outside_active_hours``, ``send_limit_reached``, the draft's content
    reasons, and ``user_rule`` (an ``approval_required_for`` entry matched, or an enabled
    ``require_approval`` rule); global pause or contact ``paused`` also forces approval
-   (``ContactAutomationStatus``: "the agent may still queue drafts for approval").
+   with reason ``paused`` (contract 1.2.0; ``ContactAutomationStatus``: "the agent may
+   still queue drafts for approval").
    Any reason -> **approval queue**.
 6. otherwise (autopilot, all clear)                     -> **dispatch** (``autopilot``)
 
@@ -262,11 +263,11 @@ def evaluate_policy(p: PolicyInput) -> PolicyDecision:
         or p.contact_status is ContactAutomationStatus.PAUSED
     )
     checks["paused"] = paused
-    if paused and not reasons:
-        # No automated send while paused; the draft may still be queued for approval.
-        # The contract has no ``paused`` ApprovalReason, so the user's pause is reported
-        # as ``user_rule`` (``checks.paused`` says why). Reported as a contract gap.
-        reasons.append(ApprovalReason.USER_RULE)
+    if paused:
+        # No automated send while paused; the draft may still be queued for approval
+        # (D-014). Contract 1.2.0 reports it as ``paused`` (D-015's ``user_rule`` interim
+        # is retired), alongside any other reason that applies.
+        reasons.append(ApprovalReason.PAUSED)
     unique = tuple(dict.fromkeys(reasons))
     if unique:
         return PolicyDecision(PolicyOutcome.APPROVAL, reasons=unique, checks=checks)

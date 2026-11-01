@@ -1,0 +1,80 @@
+{
+  "items": [
+    {
+      "id": "0192f3a0-0000-7000-8000-000000000301",
+      "type": "connection_unpaired",
+      "actor": "user",
+      "conversation_id": null,
+      "contact_id": null,
+      "message_id": null,
+      "approval_id": null,
+      "reason_code": "connection_unavailable",
+      "occurred_at": "2026-11-02T09:00:00Z",
+      "details": {
+        "connection_id": "0192f3a0-0000-7000-8000-0000000000a3",
+        "platform": "sms",
+        "canceled_messages": 1,
+        "canceled_instructions": 1,
+        "canceled_approvals": 1,
+        "in_flight_messages": 0
+      }
+    },
+    {
+      "id": "0192f3a0-0000-7000-8000-000000000300",
+      "type": "lease_expired",
+      "actor": "system",
+      "conversation_id": "0192f3a0-0000-7000-8000-0000000000b1",
+      "contact_id": "0192f3a0-0000-7000-8000-0000000000c1",
+      "message_id": "0192f3a0-0000-7000-8000-0000000000d4",
+      "approval_id": null,
+      "reason_code": "outcome_unknown",
+      "occurred_at": "2026-11-01T18:10:00Z",
+      "details": {
+        "instruction_id": "0192f3a0-0000-7000-8000-000000000401",
+        "connection_id": "0192f3a0-0000-7000-8000-0000000000a3",
+        "attempt": 1,
+        "outcome": "unknown",
+        "retried": false
+      }
+    },
+    {
+      "id": "0192f3a0-0000-7000-8000-0000000002ff",
+      "type": "approval_requested",
+      "actor": "agent",
+      "conversation_id": "0192f3a0-0000-7000-8000-0000000000b1",
+      "contact_id": "0192f3a0-0000-7000-8000-0000000000c1",
+      "message_id": "0192f3a0-0000-7000-8000-0000000000d3",
+      "approval_id": "0192f3a0-0000-7000-8000-0000000000f2",
+      "reason_code": "paused",
+      "occurred_at": "2026-11-01T18:05:00Z",
+      "details": {
+        "draft_id": "0192f3a0-0000-7000-8000-0000000000e2",
+        "reasons": [
+          "paused"
+        ],
+        "checks": {
+          "paused": true
+        }
+      }
+    },
+    {
+      "id": "0192f3a0-0000-7000-8000-0000000002fe",
+      "type": "connection_paired",
+      "actor": "user",
+      "conversation_id": null,
+      "contact_id": null,
+      "message_id": null,
+      "approval_id": null,
+      "reason_code": null,
+      "occurred_at": "2026-11-01T18:00:01Z",
+      "details": {
+        "connection_id": "0192f3a0-0000-7000-8000-0000000000a3",
+        "platform": "sms",
+        "device_side": true,
+        "send_capability": "UNVERIFIED",
+        "client_claimed_verified": []
+      }
+    }
+  ],
+  "next_cursor": null
+}

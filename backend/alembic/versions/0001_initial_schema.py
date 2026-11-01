@@ -59,6 +59,7 @@ ENUMS: dict[str, tuple[str, ...]] = {
         "capability_unverified",
         "send_limit_reached",
         "user_rule",
+        "paused",
     ),
     "approval_status": ("pending", "approved", "rejected", "expired", "canceled"),
     "draft_decision": ("send_candidate", "no_send", "ask_user"),
@@ -87,6 +88,9 @@ ENUMS: dict[str, tuple[str, ...]] = {
         "automation_resumed",
         "automation_takeover",
         "preferences_updated",
+        "lease_expired",
+        "connection_paired",
+        "connection_unpaired",
     ),
     "connection_status": ("connected", "disconnected", "error"),
     "capability_verification": ("VERIFIED", "UNVERIFIED", "UNSUPPORTED"),
@@ -290,6 +294,10 @@ def upgrade() -> None:
             ),
             nullable=False,
         ),
+        # Contract 1.2.0 pairing (ADR 0007).
+        sa.Column("device_install_id", sa.UUID(), nullable=True),
+        sa.Column("paired_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("unpaired_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -338,6 +346,10 @@ def upgrade() -> None:
             "char_length(display_name) >= 1",
             name=op.f("ck_platform_connections_display_name_nonempty"),
         ),
+        sa.CheckConstraint(
+            "unpaired_at IS NULL OR status = 'disconnected'",
+            name=op.f("ck_platform_connections_unpaired_is_disconnected"),
+        ),
         sa.ForeignKeyConstraint(
             ["user_id"],
             ["users.id"],
@@ -355,6 +367,13 @@ def upgrade() -> None:
         "platform_connections",
         ["user_id", "created_at", "id"],
         unique=False,
+    )
+    op.create_index(
+        op.f("ix_platform_connections_user_id_platform_device_install_id"),
+        "platform_connections",
+        ["user_id", "platform", "device_install_id"],
+        unique=True,
+        postgresql_where=sa.text("device_install_id IS NOT NULL AND unpaired_at IS NULL"),
     )
     op.create_table(
         "style_profiles",

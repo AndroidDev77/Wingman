@@ -1,0 +1,13 @@
+{
+  "type": "https://wingman.invalid/problems/validation_error",
+  "title": "Request validation failed",
+  "status": 422,
+  "code": "validation_error",
+  "detail": "the mock platform cannot be paired in production",
+  "errors": [
+    {
+      "pointer": "/platform",
+      "message": "'mock' is not available in prod"
+    }
+  ]
+}

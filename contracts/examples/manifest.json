@@ -218,6 +218,42 @@
       "schema": "openapi.yaml#/components/schemas/Memory"
     },
     {
+      "file": "connection.create.sms.request.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionCreateRequest"
+    },
+    {
+      "file": "connection.create.mock.request.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionCreateRequest"
+    },
+    {
+      "file": "connection.create.sms.response.json",
+      "schema": "openapi.yaml#/components/schemas/Connection"
+    },
+    {
+      "file": "connection.create.claimed_verified.response.json",
+      "schema": "openapi.yaml#/components/schemas/Connection"
+    },
+    {
+      "file": "connection.unpair.request.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionUnpairRequest"
+    },
+    {
+      "file": "connection.unpair.response.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionUnpairResult"
+    },
+    {
+      "file": "approvals.paused.page.json",
+      "schema": "openapi.yaml#/components/schemas/ApprovalPage"
+    },
+    {
+      "file": "agent_actions.v1_2.page.json",
+      "schema": "openapi.yaml#/components/schemas/AgentActionPage"
+    },
+    {
+      "file": "problem.connection_mock_in_prod.json",
+      "schema": "openapi.yaml#/components/schemas/Problem"
+    },
+    {
       "file": "invalid/message.queued_claims_sent.json",
       "schema": "openapi.yaml#/components/schemas/Message",
       "why_invalid": "queued message must not carry sent_at (never claim a send on a queued message)"
@@ -346,6 +382,66 @@
       "schema": "openapi.yaml#/components/schemas/MemoryCorrection",
       "why_invalid": "correction bodies reject unknown fields (confidence is server-set)",
       "expect_error": "'confidence' was unexpected"
+    },
+    {
+      "file": "invalid/connection.create.sms_without_install.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionCreateRequest",
+      "why_invalid": "a device-side platform must name its device_install_id",
+      "expect_error": "'device_install_id' is a required property"
+    },
+    {
+      "file": "invalid/connection.create.mock_with_capabilities.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionCreateRequest",
+      "why_invalid": "mock takes no client capabilities (the server uses the simulator's own document)",
+      "expect_error": "False schema does not allow"
+    },
+    {
+      "file": "invalid/connection.create.unpairable_platform.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionCreateRequest",
+      "why_invalid": "only sms, android_notification and mock are pairable in 1.2.0",
+      "expect_error": "'tinder' is not one of"
+    },
+    {
+      "file": "invalid/connection.create.unknown_field.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionCreateRequest",
+      "why_invalid": "request bodies reject unknown fields (no client-set verification flag)",
+      "expect_error": "'verified' was unexpected"
+    },
+    {
+      "file": "invalid/connection.create.verified_without_evidence.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionCreateRequest",
+      "why_invalid": "a claimed VERIFIED capability must still be a valid v1 document (evidence, verified_at); the server then stores it UNVERIFIED",
+      "expect_error": "'evidence' is a required property"
+    },
+    {
+      "file": "invalid/connection.unpair.with_body.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionUnpairRequest",
+      "why_invalid": "unpair takes no options in 1.2.0",
+      "expect_error": "'force' was unexpected"
+    },
+    {
+      "file": "invalid/connection.unpair_result.negative_count.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionUnpairResult",
+      "why_invalid": "counts are never negative",
+      "expect_error": "less than the minimum of 0"
+    },
+    {
+      "file": "invalid/approval.unknown_reason.json",
+      "schema": "openapi.yaml#/components/schemas/Approval",
+      "why_invalid": "approval reasons are a closed enum (1.2.0 adds paused only)",
+      "expect_error": "'paused_forever' is not one of"
+    },
+    {
+      "file": "invalid/agent_action.unknown_type.json",
+      "schema": "openapi.yaml#/components/schemas/AgentAction",
+      "why_invalid": "audit types are a closed enum (the 1.2.0 type is lease_expired)",
+      "expect_error": "'lease_lapsed' is not one of"
+    },
+    {
+      "file": "invalid/connection.bad_device_install_id.json",
+      "schema": "openapi.yaml#/components/schemas/Connection",
+      "why_invalid": "device_install_id is a Wingman-format UUID",
+      "expect_error": "'phone-1' is not valid under any of the given schemas"
     }
   ]
 }

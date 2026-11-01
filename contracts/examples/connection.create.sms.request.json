@@ -1,0 +1,31 @@
+{
+  "platform": "sms",
+  "display_name": "Pixel 8 SMS",
+  "device_install_id": "0192f3a0-0000-4000-8000-0000000000aa",
+  "capabilities": {
+    "schema_version": "connector_capabilities.v1",
+    "platform": "sms",
+    "connector_version": "0.2.0",
+    "capabilities": {
+      "read": {
+        "status": "UNVERIFIED",
+        "notes": "RECEIVE_SMS granted; default SMS app role held."
+      },
+      "draft": {
+        "status": "UNSUPPORTED"
+      },
+      "send": {
+        "status": "UNVERIFIED",
+        "reports_delivery_receipts": true,
+        "notes": "SEND_SMS granted. Not yet device-tested."
+      },
+      "swipe": {
+        "status": "UNSUPPORTED"
+      },
+      "calendar_write": {
+        "status": "UNSUPPORTED"
+      }
+    },
+    "assessed_at": "2026-11-01T18:00:00Z"
+  }
+}

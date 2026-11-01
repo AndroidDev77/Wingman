@@ -2,7 +2,7 @@ openapi: 3.1.0
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
   title: Wingman AI API
-  version: 1.1.0
+  version: 1.2.0
   summary: Canonical HTTP contract between the Wingman backend and its clients.
   description: |
     Source of truth for the Wingman backend <-> Android (and any other client) HTTP API.
@@ -53,6 +53,15 @@ info:
 
     ## Changelog
 
+    * **1.2.0** (additive, I-017, ADR 0007). Connection pairing: `createConnection`
+      (`POST /v1/connections`), `getConnection`, `unpairConnection`
+      (`POST /v1/connections/{connection_id}/unpair`). New schemas
+      `ConnectionCreateRequest`, `ConnectionUnpairRequest`, `ConnectionUnpairResult`;
+      new optional `Connection` fields `device_install_id`, `paired_at`, `unpaired_at`.
+      New enum values: `ApprovalReason.paused`; `AgentActionType.lease_expired`,
+      `connection_paired`, `connection_unpaired`. Capabilities submitted by a client are
+      never stored as `VERIFIED` (ADR 0007). No existing operation, schema, field or enum
+      value changed meaning. No new `ErrorCode` values.
     * **1.1.0** (additive). Device event ingest (`ingestConnectorEvent`), device outbox
       (`listOutboxInstructions`, `claimOutboxInstructions`), memory routes
       (`listContactMemories`, `correctMemory`, `deleteMemory`). New schemas
@@ -277,6 +286,162 @@ paths:
                 $ref: "#/components/schemas/ConnectionPage"
         "401":
           $ref: "#/components/responses/Unauthenticated"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+    post:
+      tags: [connections]
+      operationId: createConnection
+      summary: Pair a connector with the caller's account (added in 1.2.0)
+      description: |
+        The authenticated app pairs a connector to the caller's account. See ADR 0007.
+
+        * **Device-side platforms** (`sms`, `android_notification`): the request names
+          the app installation (`device_install_id`, the same random per-install UUID
+          later sent to `claimOutboxInstructions`) and the capabilities the connector
+          claims on this device. The server records the platform, display name and
+          `device_install_id` binding.
+        * **`mock`** (WING-006 simulator, backend-side): only when the server's
+          environment is not `prod`; in `prod` the request is `422 validation_error`
+          with pointer `/platform`. `device_install_id` and `capabilities` must be
+          absent: the server uses the simulator's own capability document.
+        * Any other platform is not pairable in 1.2.0 (`422`, schema enum).
+
+        **Capability trust (ADR 0005, ADR 0007).** Capabilities sent by a client are a
+        *claim*, never evidence. The server stores each claimed capability as
+        `UNSUPPORTED` if claimed `UNSUPPORTED`, otherwise as `UNVERIFIED`; a claimed
+        `VERIFIED` (with or without `evidence`) is stored as `UNVERIFIED`, its client
+        `evidence` and `verified_at` dropped and a `notes` entry saying so. No API
+        operation can make a capability `VERIFIED`; only the server's operator path that
+        records a reproduced device run (ADR 0007) can. Therefore a newly paired
+        device connection is never eligible for autopilot (its `send` is not
+        `VERIFIED`), whatever the request says. The same rule applies to later
+        `connection.capabilities_changed` events: a device may lower a capability, never
+        raise one to `VERIFIED`.
+
+        **Re-pairing.** While a connection for the same `platform` and
+        `device_install_id` is still paired, a new request (new `Idempotency-Key`)
+        returns that connection unchanged with `200`: one install has at most one
+        paired connection per platform. After `unpairConnection`, pairing again creates
+        a new connection. Audit: `connection_paired` (IDs and codes only).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectionCreateRequest"
+      responses:
+        "201":
+          description: Paired. Capabilities as stored by the server (never client-`VERIFIED`).
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Connection"
+        "200":
+          description: This install is already paired for this platform; the existing connection, unchanged.
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Connection"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/connections/{connection_id}:
+    parameters:
+      - $ref: "#/components/parameters/ConnectionId"
+    get:
+      tags: [connections]
+      operationId: getConnection
+      summary: One connection, paired or unpaired (added in 1.2.0)
+      responses:
+        "200":
+          description: The connection.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Connection"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/connections/{connection_id}/unpair:
+    parameters:
+      - $ref: "#/components/parameters/ConnectionId"
+    post:
+      tags: [connections]
+      operationId: unpairConnection
+      summary: Unpair a connection and cancel its pending automated work (added in 1.2.0)
+      description: |
+        Effective before the response, in one transaction (ADR 0007):
+
+        * The connection becomes `status: disconnected` with `unpaired_at` set, and every
+          capability is stored as `UNSUPPORTED` (notes: unpaired). The dispatcher and the
+          claim-time re-check (ADR 0006) therefore cancel anything that still reaches
+          them, and `sendMessage` on its conversations is `422 capability_unsupported`.
+        * Every **unclaimed** (`pending`) outbox instruction of the connection becomes
+          `canceled`, and every `queued` outbound message of the connection (any
+          origin: no transport remains for it) becomes `canceled` (audit
+          `send_canceled`, reason `connection_unavailable`).
+        * Every `pending` approval for the connection's conversations becomes
+          `canceled` (audit `approval_canceled`, reason `connection_unavailable`).
+        * An instruction a device has already leased cannot be recalled: its message
+          stays `sending` and is counted in `in_flight_message_count`. A late outcome
+          event for it is still accepted (results are the truth). Other events
+          (inbound messages, capability or status changes) on an unpaired connection
+          are `422 validation_error` with pointer `/connection_id`.
+        * Audit `connection_unpaired` with the counts.
+
+        Nothing is deleted: conversations, messages and audit history stay readable.
+        Unpairing an already unpaired connection changes nothing and returns `200` with
+        zero counts. Another user's connection is `404`.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectionUnpairRequest"
+      responses:
+        "200":
+          description: Unpaired (already in effect).
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionUnpairResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
         default:
           $ref: "#/components/responses/Error"
 
@@ -1418,7 +1583,11 @@ components:
       type: string
       enum: [pending, approved, rejected, expired, canceled]
     ApprovalReason:
-      description: Why a draft needs human approval.
+      description: |
+        Why a draft needs human approval. `paused` (1.2.0): global or contact automation
+        is paused, so nothing is sent without approval (D-014); before 1.2.0 this was
+        reported as `user_rule`. Clients must tolerate values added in later minor
+        versions.
       type: string
       enum:
         - assisted_mode
@@ -1430,6 +1599,7 @@ components:
         - capability_unverified
         - send_limit_reached
         - user_rule
+        - paused
     DraftDecision:
       description: |
         `send_candidate`: `text` is a usable suggested reply. `no_send`: the agent
@@ -1452,7 +1622,13 @@ components:
       type: string
       enum: [user, agent, dispatcher, connector, system]
     AgentActionType:
-      description: Audit entry kinds. Send-related types mirror `DeliveryState` transitions.
+      description: |
+        Audit entry kinds. Send-related types mirror `DeliveryState` transitions.
+        Added in 1.2.0: `lease_expired` (a device lease lapsed with no outcome; the
+        outcome is unknown, the message stays `sending` and is never retried
+        automatically, ADR 0006; actor `system`), `connection_paired` and
+        `connection_unpaired` (ADR 0007). Clients must tolerate values added in later
+        minor versions.
       type: string
       enum:
         - message_received
@@ -1475,6 +1651,9 @@ components:
         - automation_resumed
         - automation_takeover
         - preferences_updated
+        - lease_expired
+        - connection_paired
+        - connection_unpaired
     ConnectionStatus:
       type: string
       enum: [connected, disconnected, error]
@@ -1823,6 +2002,94 @@ components:
           $ref: "#/components/schemas/Timestamp"
         updated_at:
           $ref: "#/components/schemas/Timestamp"
+        device_install_id:
+          description: |
+            (1.2.0, optional.) The app installation this device-side connection is bound
+            to; null for backend-side connections (`mock`). Only that install's claims
+            are meaningful for this connection.
+          anyOf:
+            - $ref: "#/components/schemas/Id"
+            - type: "null"
+        paired_at:
+          description: (1.2.0, optional.) When `createConnection` paired it; null for connections created outside the API.
+          anyOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        unpaired_at:
+          description: (1.2.0, optional.) Set by `unpairConnection`; null while paired.
+          anyOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+    ConnectionCreateRequest:
+      description: |
+        (1.2.0) Pair a connector (ADR 0007). Device-side platforms need
+        `device_install_id` and the claimed `capabilities`; `mock` takes neither.
+        Claimed capabilities are never stored as `VERIFIED`.
+      type: object
+      additionalProperties: false
+      required: [platform, display_name]
+      properties:
+        platform:
+          description: Pairable platforms in 1.2.0. `mock` only outside `prod`.
+          type: string
+          enum: [sms, android_notification, mock]
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 120
+        device_install_id:
+          description: The app's per-install random UUID (the one used for `claimOutboxInstructions`).
+          $ref: "#/components/schemas/Id"
+        capabilities:
+          description: What the connector claims on this device. A claim, not evidence.
+          $ref: "./schemas/connector_capabilities.v1.json"
+      allOf:
+        - if:
+            properties:
+              platform:
+                enum: [sms, android_notification]
+          then:
+            required: [device_install_id, capabilities]
+        - if:
+            properties:
+              platform:
+                const: mock
+          then:
+            properties:
+              device_install_id: false
+              capabilities: false
+    ConnectionUnpairRequest:
+      description: (1.2.0) Empty body; reserved for future options.
+      type: object
+      additionalProperties: false
+      properties: {}
+    ConnectionUnpairResult:
+      type: object
+      required:
+        - connection
+        - canceled_message_count
+        - canceled_instruction_count
+        - canceled_approval_count
+        - in_flight_message_count
+      properties:
+        connection:
+          $ref: "#/components/schemas/Connection"
+        canceled_message_count:
+          description: Queued outbound messages of this connection canceled by this action.
+          type: integer
+          minimum: 0
+        canceled_instruction_count:
+          description: Unclaimed (`pending`) outbox instructions canceled by this action.
+          type: integer
+          minimum: 0
+        canceled_approval_count:
+          description: Pending approvals for this connection's conversations canceled by this action.
+          type: integer
+          minimum: 0
+        in_flight_message_count:
+          description: Messages already leased to a device (`sending`); not recallable, their outcome is still recorded.
+          type: integer
+          minimum: 0
     ConnectionPage:
       type: object
       required: [items, next_cursor]

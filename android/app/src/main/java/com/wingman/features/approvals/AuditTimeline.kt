@@ -60,6 +60,10 @@ object AuditLabels {
         AgentActionType.AUTOMATION_RESUMED -> AuditLabel("Automation resumed", LabelTone.NEUTRAL, SendStage.NONE)
         AgentActionType.AUTOMATION_TAKEOVER -> AuditLabel("You took over", LabelTone.WARNING, SendStage.NONE)
         AgentActionType.PREFERENCES_UPDATED -> AuditLabel("Settings changed", LabelTone.NEUTRAL, SendStage.NONE)
+        // Contract 1.2.0: a device lease lapsed with no result. The outcome is UNKNOWN: never "sent", never "failed".
+        AgentActionType.LEASE_EXPIRED -> AuditLabel("Phone didn't confirm; outcome unknown", LabelTone.WARNING, SendStage.NONE)
+        AgentActionType.CONNECTION_PAIRED -> AuditLabel("Messaging app connected", LabelTone.NEUTRAL, SendStage.NONE)
+        AgentActionType.CONNECTION_UNPAIRED -> AuditLabel("Messaging app disconnected", LabelTone.WARNING, SendStage.NONE)
     }
 
     fun actor(a: Actor): String = when (a) {
@@ -78,6 +82,8 @@ object AuditLabels {
             "automation_paused" -> "Because automation was paused."
             "automation_takeover" -> "Because you took over."
             "superseded" -> "A newer message replaced it."
+            "outcome_unknown" -> "The phone never reported whether it sent, so Wingman won't retry it."
+            "connection_unavailable" -> "Because the messaging app was disconnected."
             else -> "Reason: ${code.replace('_', ' ')}"
         }
     }

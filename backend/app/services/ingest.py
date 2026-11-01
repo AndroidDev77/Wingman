@@ -14,7 +14,10 @@
   applied by the dispatcher when the acknowledgement lands). A late outcome for an
   ``expired`` lease is accepted: the device may really have sent.
 * ``connection.capabilities_changed`` / ``connection.status_changed``: stored as
-  reported; they authorize nothing.
+  reported, except that a claimed ``VERIFIED`` is never raised above what the server
+  already holds (ADR 0007, ``trust_claimed_capabilities``); they authorize nothing.
+* an unpaired connection (contract 1.2.0) accepts only send outcomes (``422`` at
+  ``/connection_id`` otherwise).
 
 Dedup is permanent on ``(user_id, event_id)`` (``connector_event_ingests``) and, for
 inbound messages, on ``(user_id, platform, external_message_id)``. A repeat changes
@@ -64,6 +67,7 @@ from app.db.repositories import (
     fingerprint,
 )
 from app.db.scope import UserScope
+from app.services.connections import trust_claimed_capabilities
 from app.services.dispatcher import Dispatcher
 
 __all__ = ["IngestError", "IngestOutcome", "IngestResult", "IngestService"]
@@ -130,6 +134,19 @@ class IngestService:
                 "envelope platform does not match the connection",
                 pointer="/platform",
                 message="must equal the connection's platform",
+            )
+        if connection.unpaired_at is not None and not (
+            event.type in SEND_ACKNOWLEDGED_TYPES
+            or event.type in SEND_FAILED_TYPES
+            or event.type in DELIVERY_RECEIPT_TYPES
+        ):
+            # Contract 1.2.0 (ADR 0007): an unpaired connection accepts only late
+            # outcomes of sends it was already leased (results are the truth).
+            raise IngestError(
+                422,
+                "the connection is unpaired",
+                pointer="/connection_id",
+                message="connection is unpaired; only send outcomes are accepted",
             )
         if event.type.is_mock and connection.platform != MOCK_PLATFORM:
             raise IngestError(
@@ -273,7 +290,10 @@ class IngestService:
                     pointer="/payload/capabilities/platform",
                     message="must equal the connection's platform",
                 )
-            await connections.set_capabilities(connection.id, caps.to_contract_dict())
+            # A device's report is a claim (ADR 0007): never raised to VERIFIED here.
+            await connections.set_capabilities(
+                connection.id, trust_claimed_capabilities(caps, connection.capabilities)
+            )
         elif isinstance(payload, ConnectionStatusPayload):
             await connections.set_status(connection.id, ConnectionStatus(payload.status.value))
 

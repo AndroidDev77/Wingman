@@ -4,7 +4,7 @@ Canonical, versioned interfaces shared by backend, Android and connector work. *
 
 | File | What it defines |
 |---|---|
-| `openapi.yaml` | OpenAPI 3.1 HTTP API (v1.1.0): health, `/v1/me`, preferences (user-wide and per-contact), connections, device event ingest and device outbox (ADR 0006), conversations, messages, drafts, approvals, automation (pause, resume, takeover), memories, audit log |
+| `openapi.yaml` | OpenAPI 3.1 HTTP API (v1.2.0): health, `/v1/me`, preferences (user-wide and per-contact), connections and connection pairing (ADR 0007), device event ingest and device outbox (ADR 0006), conversations, messages, drafts, approvals, automation (pause, resume, takeover), memories, audit log |
 | `schemas/connector_capabilities.v1.json` | JSON Schema 2020-12 for `ConnectorCapabilities`: `read`, `draft`, `send`, `swipe`, `calendar_write`, each labeled `VERIFIED` / `UNVERIFIED` / `UNSUPPORTED` |
 | `schemas/connector_event.v1.json` | JSON Schema 2020-12 for the connector event envelope, including the explicit `mock.*` event types used by the WING-006 simulator |
 | `examples/` | Example requests, responses and events. `manifest.json` maps each file to its schema |
@@ -39,6 +39,7 @@ The details live in `openapi.yaml` (`info.description`) and in `docs/adr/`.
 - **Idempotency:** every `POST` requires `Idempotency-Key`. A replay returns the original response with `Idempotent-Replayed: true`. ([ADR 0004](../docs/adr/0004-idempotency.md))
 - **Capabilities:** each capability is independent and verification-labeled. Notification access never implies `send`. Autopilot requires a `VERIFIED` send. ([ADR 0005](../docs/adr/0005-connector-capability-model.md))
 - **Device connectors:** report events via `POST /v1/connections/{id}/events` and execute only instructions leased from `POST /v1/connections/{id}/outbox/claim`. One lease per instruction, never renewed; a retry is a new instruction with a new key. ([ADR 0006](../docs/adr/0006-device-outbox-leases.md))
+- **Connection pairing:** the app pairs a connector with `POST /v1/connections` and unpairs it with `POST /v1/connections/{id}/unpair`. Capabilities a client submits are a claim and are never stored as `VERIFIED`; only a recorded, reproduced device run (an operator path, no API) can set `VERIFIED`. `mock` is never pairable in `prod`. ([ADR 0007](../docs/adr/0007-connection-pairing-and-capability-trust.md))
 - **Delivery states:** `queued -> sending -> sent -> delivered`, plus `failed`, `dead_lettered` and `canceled`. A state changes only when the matching connector event arrives.
 
 ## Changing a contract

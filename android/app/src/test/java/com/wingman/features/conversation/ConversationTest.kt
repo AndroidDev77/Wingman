@@ -364,4 +364,13 @@ class ConversationTest {
         // Text on a non-send_candidate is never offered as a suggestion.
         assertNull(DraftPanel.ready(base.copy(decision = DraftDecision.NO_SEND, text = "leaked")).suggestion)
     }
+
+    @Test fun everyApprovalReasonHasALabelIncludingPaused() {
+        // Contract 1.2.0: `paused` gets its own wording in the draft panel and the settings screen.
+        ApprovalReason.entries.forEach { assertTrue(DraftPanel.reasonLabel(it).isNotBlank()) }
+        assertEquals("automation is paused", DraftPanel.reasonLabel(ApprovalReason.PAUSED))
+        assertEquals("Automation is paused", com.wingman.features.settings.PreferenceLabels.approvalReason(ApprovalReason.PAUSED))
+        // `paused` is system-applied, never a kind the user toggles in settings.
+        assertFalse(ApprovalReason.PAUSED in com.wingman.features.settings.PreferenceLabels.userApprovalReasons)
+    }
 }

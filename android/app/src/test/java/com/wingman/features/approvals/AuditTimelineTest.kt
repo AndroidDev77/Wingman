@@ -125,6 +125,26 @@ class AuditTimelineTest {
         assertTrue(t.state.value is UiState.Error)
     }
 
+    @Test fun contractV12TypesHaveHonestLabels() {
+        // lease_expired: the phone never reported a result, so the outcome is UNKNOWN: never "sent", never "failed".
+        val lease = AuditLabels.of(AgentActionType.LEASE_EXPIRED)
+        assertEquals("Phone didn't confirm; outcome unknown", lease.title)
+        assertEquals(SendStage.NONE, lease.stage)
+        assertFalse(lease.title.lowercase().contains("sent"))
+        assertFalse(lease.title.lowercase().contains("fail"))
+        assertTrue(lease.title.lowercase().contains("unknown"))
+        assertEquals("The phone never reported whether it sent, so Wingman won't retry it.", AuditLabels.reason("outcome_unknown"))
+
+        assertEquals("Messaging app connected", AuditLabels.of(AgentActionType.CONNECTION_PAIRED).title)
+        assertEquals("Messaging app disconnected", AuditLabels.of(AgentActionType.CONNECTION_UNPAIRED).title)
+        assertEquals(SendStage.NONE, AuditLabels.of(AgentActionType.CONNECTION_PAIRED).stage)
+        assertEquals(SendStage.NONE, AuditLabels.of(AgentActionType.CONNECTION_UNPAIRED).stage)
+        assertEquals("Because the messaging app was disconnected.", AuditLabels.reason("connection_unavailable"))
+
+        // The `paused` approval reason reads as a pause in the audit reason column too.
+        assertEquals(ReasonText.of(com.wingman.core.model.ApprovalReason.PAUSED), AuditLabels.reason("paused"))
+    }
+
     private companion object {
         val LADDER = setOf(AgentActionType.SEND_QUEUED, AgentActionType.SEND_ATTEMPTED, AgentActionType.SEND_ACKNOWLEDGED, AgentActionType.DELIVERY_CONFIRMED)
     }

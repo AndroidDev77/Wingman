@@ -142,6 +142,7 @@ enum class ApprovalReason {
     @SerialName("capability_unverified") CAPABILITY_UNVERIFIED,
     @SerialName("send_limit_reached") SEND_LIMIT_REACHED,
     @SerialName("user_rule") USER_RULE,
+    @SerialName("paused") PAUSED,
 }
 
 @Serializable
@@ -195,6 +196,9 @@ enum class AgentActionType {
     @SerialName("automation_resumed") AUTOMATION_RESUMED,
     @SerialName("automation_takeover") AUTOMATION_TAKEOVER,
     @SerialName("preferences_updated") PREFERENCES_UPDATED,
+    @SerialName("lease_expired") LEASE_EXPIRED,
+    @SerialName("connection_paired") CONNECTION_PAIRED,
+    @SerialName("connection_unpaired") CONNECTION_UNPAIRED,
 }
 
 @Serializable

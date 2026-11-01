@@ -296,7 +296,8 @@ class ApprovalsStateTest {
 
     @Test fun everyReasonHasPlainText() {
         ApprovalReason.entries.forEach { assertTrue(ReasonText.of(it).endsWith(".")) }
-        // D-015: `user_rule` also covers "paused".
-        assertTrue(ReasonText.of(ApprovalReason.USER_RULE).contains("paused"))
+        // Contract 1.2.0 (D-016): a pause has its own `paused` reason; `user_rule` is only the user's rules.
+        assertTrue(ReasonText.of(ApprovalReason.PAUSED).startsWith("Automation is paused"))
+        assertFalse(ReasonText.of(ApprovalReason.USER_RULE).contains("paused"))
     }
 }

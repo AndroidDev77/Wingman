@@ -80,6 +80,7 @@ class ApprovalReason(StrEnum):
     CAPABILITY_UNVERIFIED = "capability_unverified"
     SEND_LIMIT_REACHED = "send_limit_reached"
     USER_RULE = "user_rule"
+    PAUSED = "paused"  # contract 1.2.0
 
 
 class ApprovalStatus(StrEnum):
@@ -146,6 +147,10 @@ class AgentActionType(StrEnum):
     AUTOMATION_RESUMED = "automation_resumed"
     AUTOMATION_TAKEOVER = "automation_takeover"
     PREFERENCES_UPDATED = "preferences_updated"
+    # contract 1.2.0
+    LEASE_EXPIRED = "lease_expired"
+    CONNECTION_PAIRED = "connection_paired"
+    CONNECTION_UNPAIRED = "connection_unpaired"
 
 
 class ConnectionStatus(StrEnum):
