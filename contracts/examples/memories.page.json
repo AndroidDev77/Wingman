@@ -1,0 +1,66 @@
+{
+  "items": [
+    {
+      "id": "0192f3a0-0000-7000-8000-000000000504",
+      "contact_id": "0192f3a0-0000-7000-8000-0000000000c1",
+      "conversation_id": "0192f3a0-0000-7000-8000-0000000000b1",
+      "kind": "fact",
+      "key": "travel.recent_trip",
+      "category": "plans",
+      "content": "Just got back from Porto, not Lisbon",
+      "basis": "stated",
+      "origin": "user_correction",
+      "confidence": 1,
+      "sensitive": false,
+      "source_message_ids": [
+        "0192f3a0-0000-7000-8000-0000000000d1"
+      ],
+      "stated_at": "2026-10-31T18:30:00Z",
+      "expires_at": null,
+      "superseded_by_id": null,
+      "created_at": "2026-10-31T18:30:00Z"
+    },
+    {
+      "id": "0192f3a0-0000-7000-8000-000000000503",
+      "contact_id": "0192f3a0-0000-7000-8000-0000000000c1",
+      "conversation_id": "0192f3a0-0000-7000-8000-0000000000b1",
+      "kind": "summary",
+      "key": null,
+      "category": null,
+      "content": "Sam just got back from a trip and asked how the week went. Friendly, quick replies.",
+      "basis": "stated",
+      "origin": "extracted",
+      "confidence": 1,
+      "sensitive": false,
+      "source_message_ids": [
+        "0192f3a0-0000-7000-8000-0000000000d1",
+        "0192f3a0-0000-7000-8000-0000000000d2"
+      ],
+      "stated_at": "2026-10-31T18:02:00Z",
+      "expires_at": null,
+      "superseded_by_id": null,
+      "created_at": "2026-10-31T18:03:10Z"
+    },
+    {
+      "id": "0192f3a0-0000-7000-8000-000000000502",
+      "contact_id": "0192f3a0-0000-7000-8000-0000000000c1",
+      "conversation_id": "0192f3a0-0000-7000-8000-0000000000b1",
+      "kind": "fact",
+      "key": "interests.travel",
+      "category": "interests",
+      "content": "Enjoys travelling abroad",
+      "basis": "inferred",
+      "origin": "extracted",
+      "confidence": 0.6,
+      "sensitive": false,
+      "source_message_ids": [
+        "0192f3a0-0000-7000-8000-0000000000d1"
+      ],
+      "stated_at": "2026-10-31T18:01:00Z",
+      "expires_at": null,
+      "superseded_by_id": null,
+      "created_at": "2026-10-31T18:03:00Z"
+    }
+  ],
+  "next_cursor": "eyJrIjoiMjAyNi0xMC0zMVQxODowMzowMFoifQ"
+}

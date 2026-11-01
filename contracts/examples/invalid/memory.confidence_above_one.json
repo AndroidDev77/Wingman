@@ -1,0 +1,20 @@
+{
+  "id": "0192f3a0-0000-7000-8000-000000000501",
+  "contact_id": "0192f3a0-0000-7000-8000-0000000000c1",
+  "conversation_id": "0192f3a0-0000-7000-8000-0000000000b1",
+  "kind": "fact",
+  "key": "travel.recent_trip",
+  "category": "plans",
+  "content": "Just got back from Lisbon",
+  "basis": "stated",
+  "origin": "extracted",
+  "confidence": 1.2,
+  "sensitive": false,
+  "source_message_ids": [
+    "0192f3a0-0000-7000-8000-0000000000d1"
+  ],
+  "stated_at": "2026-10-31T18:01:00Z",
+  "expires_at": "2026-11-07T23:59:59.999999Z",
+  "superseded_by_id": null,
+  "created_at": "2026-10-31T18:03:00Z"
+}
