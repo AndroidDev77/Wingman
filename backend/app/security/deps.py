@@ -9,7 +9,7 @@ signature. Protected handlers use it like this::
     async def get_thing(
         id: UUID,
         scope: UserScope = Depends(get_current_user_scope),
-        session: AsyncSession = Depends(get_session),
+        session: AsyncSession = Depends(get_session, scope="function"),
     ) -> Thing:
         return await ThingRepository(session, scope).require(id)  # 404 if not owned
 
@@ -66,7 +66,7 @@ def bearer_token(request: Request) -> str:
 async def get_current_user(
     token: Annotated[str, Depends(bearer_token)],
     verifier: Annotated[TokenVerifier, Depends(get_token_verifier)],
-    session: Annotated[AsyncSession, Depends(get_session)],
+    session: Annotated[AsyncSession, Depends(get_session, scope="function")],
 ) -> User:
     """The authenticated, non-deleted user (created on first login)."""
     try:

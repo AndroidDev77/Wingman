@@ -140,7 +140,7 @@ def create_memories_router(
     """
     router = APIRouter(tags=["memories"])
     Scope = Annotated[UserScope, Depends(get_current_user_scope)]
-    Session = Annotated[AsyncSession, Depends(get_session)]
+    Session = Annotated[AsyncSession, Depends(get_session, scope="function")]
     Service = Annotated[MemoryService, Depends(get_memory_service)]
 
     @router.get(

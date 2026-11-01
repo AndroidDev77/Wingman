@@ -351,3 +351,27 @@ def test_every_contract_operation_is_mounted_with_its_operation_id(
     assert set(served.values()) == set(contract.values())
     dev_only = set(served_all) - set(served)
     assert (dev_only != set()) is (env != "prod")
+
+
+def test_request_sessions_commit_before_the_response_is_sent() -> None:
+    """WING-025 regression. With FastAPI's default ``request`` scope, a ``yield``
+    dependency runs its exit code (for ``get_session``: ``session.commit()``) only after
+    the response has been sent, so a client could read its own write before it was
+    committed (the E2E X2 scenario saw a just-claimed message still ``queued``). Every
+    ``Depends(get_session...)`` in the app must therefore be ``scope="function"``.
+
+    Checked in the source because FastAPI's route internals differ across versions
+    (see the module docstring); the uvicorn behavior itself is shown by
+    ``tests/e2e`` (X2 reads its claim back immediately)."""
+    import re
+    from pathlib import Path
+
+    app_dir = Path(__file__).resolve().parents[1] / "app"
+    uses = []
+    for path in sorted(app_dir.rglob("*.py")):
+        for n, line in enumerate(path.read_text().splitlines(), 1):
+            if re.search(r"Depends\(\s*get_session\b", line):
+                uses.append((path.relative_to(app_dir).as_posix(), n, line.strip()))
+    assert len(uses) >= 10, uses
+    wrong = [u for u in uses if 'scope="function"' not in u[2]]
+    assert not wrong, wrong

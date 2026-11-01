@@ -334,6 +334,30 @@ async def test_concurrent_distinct_keys_each_send(mock: MockConnector) -> None:
     assert len({r.external_message_id for r in results}) == 5
 
 
+async def test_outbound_ids_are_unique_across_connector_instances() -> None:
+    """WING-025 regression: the backend stores outbound IDs under a unique
+    (user_id, platform, external_message_id). Two simulators for the same user (a second
+    mock connection, or the same connection after a process restart) used to number
+    their acknowledgements from 1 and collide, leaving the second send stuck."""
+    first = MockConnector(user_id=USER_ID, connection_id=CONNECTION_ID)
+    restarted = MockConnector(user_id=USER_ID, connection_id=CONNECTION_ID)
+    other = MockConnector(user_id=USER_ID, connection_id=UUID(int=0xA3))
+    for connector in (first, restarted, other):
+        await _with_thread(connector)
+    a = await first.send_message(_send("send:aaaaaaaa:1", message_id=UUID(int=1)))
+    b = await restarted.send_message(_send("send:bbbbbbbb:1", message_id=UUID(int=2)))
+    c = await other.send_message(_send("send:cccccccc:1", message_id=UUID(int=3)))
+    ids = [r.external_message_id for r in (a, b, c)]
+    assert None not in ids
+    assert len(set(ids)) == 3
+    # Stable per attempt key: a replay (and a restarted simulator retrying the same key)
+    # reports the same ID, so the stored message never changes its platform ID.
+    again = MockConnector(user_id=USER_ID, connection_id=CONNECTION_ID)
+    await _with_thread(again)
+    a2 = await again.send_message(_send("send:aaaaaaaa:1", message_id=UUID(int=1)))
+    assert a2.external_message_id == a.external_message_id
+
+
 async def test_reused_key_with_different_body_conflicts(mock: MockConnector) -> None:
     await _with_thread(mock)
     await mock.send_message(_send())

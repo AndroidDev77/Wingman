@@ -1,0 +1,163 @@
+# WING-025 end-to-end acceptance (gate G6). Two jobs, each calling a script a developer runs
+# locally too:
+#   e2e       scripts/e2e/run.sh: backend black-box suite over HTTP (dev-run.sh server:
+#             API + worker, dev auth stub, labeled dev mock LLM, mock connector; real
+#             Postgres 16 migrated by Alembic), failure injection, zero-duplicate-sends check
+#   emulator  the debug app (-Pwingman.useMockApi=false) on an Android emulator drives the
+#             same backend running on the runner (10.0.2.2:8000), plus the "emulator SMS
+#             stack exercised" round trip. An emulator is NOT a physical device or a carrier:
+#             G5 stays blocked on I-003 whatever this job does (docs/e2e_results.md).
+# Third-party actions are pinned to full commit SHAs (tag in the trailing comment).
+name: E2E
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_VERSION: "0.11.32"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  e2e:
+    name: E2E backend (HTTP flows + failure injection)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: wingman
+          POSTGRES_PASSWORD: wingman # CI-only throwaway credential
+          POSTGRES_DB: wingman_e2e
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U wingman"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      # An EMPTY database: run.sh migrates it with `alembic upgrade head`.
+      WINGMAN_E2E_DATABASE_URL: postgresql+asyncpg://wingman:wingman@localhost:5432/wingman_e2e
+      WINGMAN_E2E_ARTIFACTS: ${{ github.workspace }}/e2e-artifacts
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - name: scripts/e2e/run.sh
+        run: scripts/e2e/run.sh
+      - name: Upload E2E artifacts (server log, junit, zero-duplicate summary)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: e2e-backend
+          path: e2e-artifacts/
+          if-no-files-found: warn
+          retention-days: 14
+
+  emulator:
+    name: E2E Android emulator (app drives backend + emulator SMS)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: wingman
+          POSTGRES_PASSWORD: wingman # CI-only throwaway credential
+          POSTGRES_DB: wingman_emu
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U wingman"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      WINGMAN_DATABASE_URL: postgresql+asyncpg://wingman:wingman@localhost:5432/wingman_emu
+      WINGMAN_ENV: dev
+      WINGMAN_LLM_PROVIDER: mock
+      WINGMAN_AUTH_DEV_STUB_ENABLED: "true"
+      WINGMAN_E2E_ARTIFACTS: ${{ github.workspace }}/e2e-artifacts
+      # Short worker ticks, as in the backend suite.
+      WINGMAN_WORKER_DISPATCH_INTERVAL_S: "1"
+      WINGMAN_WORKER_LEASE_EXPIRY_INTERVAL_S: "5"
+      API_LEVEL: "34"
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5.7.0
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3.2.2
+        with:
+          packages: "platforms;android-35 build-tools;35.0.0 platform-tools"
+      - uses: gradle/actions/setup-gradle@0723195856401067f7a2779048b490ace7a47d7c # v5.0.2
+        with:
+          cache-read-only: ${{ github.ref != 'refs/heads/main' }}
+      - name: Build the debug app against the real API, and the instrumented test APK
+        working-directory: android
+        run: ./gradlew --no-daemon :app:assembleDebug :app:assembleDebugAndroidTest -Pwingman.useMockApi=false
+      - name: Start the backend (migrate, then scripts/dev-run.sh in the background)
+        run: |
+          set -euo pipefail
+          mkdir -p "$WINGMAN_E2E_ARTIFACTS"
+          # Fresh random dev-stub secret for this run; masked in logs.
+          secret="$(python3 -c 'import secrets; print(secrets.token_urlsafe(48))')"
+          echo "::add-mask::$secret"
+          echo "WINGMAN_AUTH_DEV_SECRET=$secret" >> "$GITHUB_ENV"
+          export WINGMAN_AUTH_DEV_SECRET="$secret"
+          (cd backend && uv sync --quiet && uv run alembic upgrade head)
+          # 0.0.0.0 is not needed: the emulator's 10.0.2.2 is the host loopback.
+          nohup scripts/dev-run.sh > "$WINGMAN_E2E_ARTIFACTS/server.log" 2>&1 &
+          for _ in $(seq 1 60); do curl -fsS http://127.0.0.1:8000/health && break; sleep 1; done
+          curl -fsS http://127.0.0.1:8000/health
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+      - name: Run instrumented E2E tests on the emulator
+        uses: reactivecircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d # v2.38.0
+        with:
+          api-level: ${{ env.API_LEVEL }}
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim -camera-back none
+          script: scripts/e2e/emulator-tests.sh
+      - name: Server log tail
+        if: ${{ !cancelled() }}
+        run: tail -n 200 "$WINGMAN_E2E_ARTIFACTS/server.log" || true
+      - name: Upload emulator artifacts (instrumentation output, logcat, server log)
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        with:
+          name: e2e-emulator
+          path: e2e-artifacts/
+          if-no-files-found: warn
+          retention-days: 14

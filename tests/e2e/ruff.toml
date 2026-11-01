@@ -1,0 +1,16 @@
+# Lint settings for the WING-025 E2E suite (run by scripts/e2e/run.sh). Same rule set as
+# backend/pyproject.toml; asserts and subprocess calls are the point of a test harness.
+line-length = 120
+target-version = "py312"
+
+[lint]
+select = ["E", "F", "I", "B", "UP", "S", "ASYNC"]
+ignore = ["S101", "S603", "S607"]
+
+[lint.isort]
+known-first-party = ["tests", "app"]
+
+[lint.per-file-ignores]
+# The invariant queries splice in only the module constant RUN_USERS (a fixed subquery);
+# the one variable (the run's subject prefix) is always a bound parameter ($1).
+"test_zz_invariants.py" = ["S608"]

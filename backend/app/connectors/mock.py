@@ -453,7 +453,12 @@ class MockConnector(BaseConnector):
 
         assert thread is not None  # noqa: S101 - unknown thread handled above
         self._outbound_counter += 1
-        external_message_id = f"mock-msg-out-{self._outbound_counter:04d}"
+        # Derived from the per-attempt key (D-006), not from a per-instance counter: the
+        # backend stores it under a unique (user_id, platform, external_message_id), and
+        # a counter restarts at 1 for every MockConnector (a second mock connection of the
+        # same user, or any process restart), which collided with an earlier send and left
+        # the message stuck (WING-025). Like SMS (`sms:out:<key>`), one ID per attempt.
+        external_message_id = f"mock-msg-out:{request.idempotency_key}"
         event = self._event(
             ConnectorEventType.MOCK_OUTBOUND_SEND_ACKNOWLEDGED,
             external_message_id=external_message_id,

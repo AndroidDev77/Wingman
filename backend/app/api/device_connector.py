@@ -54,7 +54,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["connections"])
 
 Scope = Annotated[UserScope, Depends(get_current_user_scope)]
-Session = Annotated[AsyncSession, Depends(get_session)]
+Session = Annotated[AsyncSession, Depends(get_session, scope="function")]
 Services = Annotated[AutomationServices, Depends(get_services)]
 IdemKey = Annotated[str | None, Header(alias="Idempotency-Key")]
 

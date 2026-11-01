@@ -38,7 +38,7 @@ def scoped_repository[RepoT: ScopedRepository[Any]](
     """FastAPI dependency factory: ``repo_cls(session, current_user_scope)``."""
 
     async def _dep(
-        session: Annotated[AsyncSession, Depends(get_session)],
+        session: Annotated[AsyncSession, Depends(get_session, scope="function")],
         scope: Annotated[UserScope, Depends(get_current_user_scope)],
     ) -> RepoT:
         return repo_cls(session, scope)
