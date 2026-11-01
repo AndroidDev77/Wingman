@@ -141,8 +141,8 @@ curl -s -X POST $API/v1/connections/$CID/events -H "$H" -H "Idempotency-Key: $EV
   \"external_message_id\":\"beta-in-1\",\"external_thread_id\":\"thread-alex\",\"occurred_at\":\"$NOW\",\"observed_at\":\"$NOW\",
   \"payload\":{\"sender\":{\"external_contact_id\":\"alex\",\"display_name\":\"Alex (fictional)\"},
                \"text\":\"Hey! How was the hike on Saturday?\",\"mock\":{\"scenario_id\":\"beta_install\",\"sequence\":1}}}"
-curl -s "$API/v1/approvals?state=pending" -H "$H"            # one approval, draft "[dev mock] ..."
-AP=$(curl -s "$API/v1/approvals?state=pending" -H "$H" | python3 -c 'import sys,json;print(json.load(sys.stdin)["items"][0]["id"])')
+curl -s "$API/v1/approvals?status=pending" -H "$H"            # one approval, draft "[dev mock] ..."
+AP=$(curl -s "$API/v1/approvals?status=pending" -H "$H" | python3 -c 'import sys,json;print(json.load(sys.stdin)["items"][0]["id"])')
 curl -s -X POST $API/v1/approvals/$AP/approve -H "$H" -H "Idempotency-Key: $(key)" -H 'Content-Type: application/json' \
   -d '{"edited_text":"It was great, thanks! Clear skies the whole way up. How was your weekend?"}'
 curl -s "$API/v1/agent-actions?limit=20" -H "$H"             # the audit timeline, newest first
@@ -244,3 +244,21 @@ this branch's scripts:
 | Another tester's token on the first tester's conversation | `404` (isolation) |
 | Account deletion by SQL ([checklist §5](release_checklist.md#5-privacy-and-data-handling)) | PASS: every user-owned row removed |
 | §3.2, §4, §5 in the app; §1 `adb install` | **Not run here** (no emulator, no phone). The emulator equivalents run in CI (`e2e_results.md` A1 to A6, SMS steps 1 to 4); the phone steps are UNVERIFIED |
+
+### 7.1 Integrator re-run (2026-11-01, PR #36 head `c3cdd08`)
+
+Re-run by the integrator from this document as written, in the same kind of sandbox (no Docker
+daemon, so an empty Postgres 16 cluster with role and database `wingman`/`wingman` on
+`localhost:5432` stood in for `docker compose up -d postgres`):
+
+| Step | Result |
+|---|---|
+| §2.2 `cp .env.example .env`, the four exports, `uv sync`, `alembic upgrade head`, `scripts/dev-run.sh` | PASS: migrated to `0001`; `/health` `{"status":"ok","version":"0.1.0","env":"dev",...}` |
+| §3.1 / §3.3 token: `GET /v1/me` | PASS: `200` with the token, `401` without |
+| §3.3 every command, copied verbatim | PASS after one fix: preferences `version 1` (`serious`, `assisted`); mock connection; inbound `202 accepted`; one pending approval with a `[dev mock]` draft (reasons `assisted_mode`, `first_message`); approve-with-edit; outbound `sent`, origin `approved_draft`, exactly the edited text; audit `preferences_updated, connection_paired, message_received, analysis_updated, draft_generated, approval_requested, approval_approved, send_queued, send_attempted, send_acknowledged` |
+| **Fix** | The listing used `?state=pending`; the contract's parameter is `status` (`listApprovals`). The unknown parameter was silently ignored, so the command only worked on a fresh account. Now `?status=pending` |
+| SMS pairing over HTTP (`contracts/examples/connection.create.sms.request.json`, which claims nothing VERIFIED) then unpair | PASS: `connected`, `read`/`send` UNVERIFIED, others UNSUPPORTED; unpair gave `disconnected`, every capability UNSUPPORTED |
+| A second tester's token on the first tester's conversation | `404` |
+| `metrics.md` queries (`psql -v ON_ERROR_STOP=1`) on that database | All execute: WAU 2, one approved draft sent and edited, 1 assisted conversation, 0 confirmed dates |
+| `scripts/release/check.sh` | `PRE-RELEASE CHECKS PASSED (4/4)`: 954 backend tests, contracts, migrations (18 tables), E2E 17 passed in 190 s. `check.sh --dry-run --paid`: exit 3. A stub repository whose `migration-check.sh` fails stops at `[3/4]`, exit 1, E2E not run |
+| §1 APK build, §3.2 / §4 / §5 in the app, `adb install` | Not run by the integrator (no Android SDK or emulator in this sandbox); the emulator equivalents are CI (`E2E Android emulator`) |
