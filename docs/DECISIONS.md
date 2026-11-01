@@ -28,22 +28,30 @@ WING-006 reads ADR 0004 literally: each `Idempotency-Key` gets exactly one trans
 ### D-008 (2026-11-01): Integrator wiring for wave 2
 `app/main.py` mounts the WING-006 demo router only when `WINGMAN_ENV != "prod"`, and disposes the DB engine on shutdown. Covered by `tests/test_app_wiring.py` over HTTP.
 
-### D-009 (2026-11-01): New migrations are proposed in feature PRs, reviewed by the integrator
+### D-009 (2026-11-01, superseded by D-010): New migrations are proposed in feature PRs, reviewed by the integrator
 WING-003 is merged, so the integrator owns migration ordering. A feature ticket that needs a schema change adds a NEW numbered migration in its PR and flags it in the handoff; never edit `0001`. At most one wave-3 ticket (WING-008) may add `0002` to avoid divergent heads.
+
+### D-010 (2026-11-01): One initial migration until the first production deployment (supersedes D-009)
+Repo-owner decision. The app has never been deployed, so until the first production deployment there is exactly ONE Alembic migration, `0001_initial_schema.py`, and schema tickets amend it directly instead of adding `0002`+. CI's migrations job (`scripts/migration-check.sh`) enforces a single head, up/down/up on an empty database, and `alembic check` (no model drift). WING-008 (PR #13) was the first ticket to amend `0001` under this rule (4 provenance columns, 2 CHECKs and 1 index on `conversation_memories`). After the first real deploy, normal additive migrations resume and `0001` is frozen.
+
+### D-011 (2026-11-01): A dedicated integrator agent reviews and merges; green CI is required
+The repo owner does not review PRs. A dedicated integrator agent reviews each PR on the owner's behalf: it merges the latest `main` into the branch, checks file ownership and the `AGENT_RULES.md` red lines in the code itself, re-runs the checks locally, pushes, and squash-merges only after **every** GitHub Actions job (`backend`, `migrations`, `contracts`, `docker`, `android`) has concluded `success` on that exact head commit (the merge call pins the head SHA). Agent reports are treated as claims, not evidence. A PR that cannot be made green stays open with a comment explaining why.
 
 ## Open issues
 
 | ID | Issue | Owner | Status |
 |---|---|---|---|
-| I-001 | No Android SDK in the cloud sandbox, so Android builds are UNVERIFIED until a runner has the SDK (WING-023) or a developer builds locally | Integrator / WING-023 | Open |
-| I-002 | No Docker daemon in the cloud sandbox; `docker-compose.yml` is UNVERIFIED here. Mitigated: Postgres 16 server binaries are at `/usr/lib/postgresql/16/bin` for tests | Integrator | Mitigated |
-| I-004 | One problem+json exception handler should replace FastAPI's default 422 body, and datetimes must serialize with `Z` | WING-004 | Open |
-| I-005 | Run `contracts/validate.sh` in CI | WING-023 | Open |
-| I-006 | Merged branches can't be deleted through the sandbox proxy; delete `wing-001-bootstrap`, `wing-002-contracts`, `wing-003-persistence`, `wing-005-llm-gateway`, `wing-006-connector-sdk`, `wing-012-android-shell` in the GitHub UI | Repo owner | Open |
+| I-001 | No Android SDK in the cloud sandbox, so Android builds were UNVERIFIED. **Closed:** the CI `android` job (`scripts/android-build.sh`: `assembleDebug` + `testDebugUnitTest`) passes on GitHub runners, on every wave-3 PR and on `main` | Integrator / WING-023 | Closed (PR #8) |
+| I-002 | No Docker daemon in the cloud sandbox. Now: the image builds and is smoke-tested in CI (`docker` job, `scripts/docker-smoke.sh`), and `dockerd` can be started in the sandbox (the local build needs the sandbox proxy CA injected into a throwaway Dockerfile copy, never committed). Postgres 16 binaries at `/usr/lib/postgresql/16/bin` remain the default for local DB tests | Integrator | Mitigated |
+| I-004 | One problem+json exception handler replaces FastAPI's default 422 body, and datetimes serialize with `Z`. **Closed:** `register_error_handlers(app)` is called in `create_app()`; `tests/test_app_wiring.py` checks 401/404 bodies are `application/problem+json` | WING-004 | Closed (PR #10) |
+| I-005 | Run `contracts/validate.sh` in CI. **Closed:** CI `contracts` job | WING-023 | Closed (PR #8) |
+| I-006 | Merged branches can't be deleted through the sandbox proxy; delete `wing-001-bootstrap`, `wing-002-contracts`, `wing-003-persistence`, `wing-005-llm-gateway`, `wing-006-connector-sdk`, `wing-012-android-shell`, `wing-int-wave2`, `wing-004-auth`, `wing-007-preferences`, `wing-008-memory`, `wing-014-inbox`, `wing-016-sms`, `wing-023-ci` (and `wing-int-wave3` once merged) in the GitHub UI | Repo owner | Open |
 | I-003 | G5 (physical-device SMS verification) needs a human with an Android device; cloud agents cannot satisfy it | Repo owner | Open |
 | I-007 | WING-011 needs `approvals` and `drafts` tables plus FKs on the existing `approval_id` columns (new migration, never edit `0001`) | WING-011 | Open |
-| I-008 | Installing the Android SDK in the sandbox was denied by permissions during WING-012. With the repo owner's approval it could be installed to verify G3 here; otherwise a developer runs `scripts/android-build.sh` | Repo owner | Open |
+| I-008 | Installing the Android SDK in the sandbox was denied by permissions during WING-012. Superseded by CI: the `android` job builds on GitHub runners (I-001 closed). Still no SDK in the sandbox; local Android checks use the pure-Kotlin JVM verifiers | Repo owner | Mitigated |
 | I-009 | `OpenAICompatibleProvider` has never called a real endpoint; the Anthropic provider is not implemented (raises `LLMConfigError`) | Post-MVP | Open |
-| I-010 | No contract route yet for device-side connectors (WING-016 SMS) to push `connector_event` envelopes to the backend. Needs an additive contract PR (e.g. `POST /v1/connector-events`) before the real SMS vertical slice can run end to end | Integrator / WING-011 | Open |
-| I-011 | Android `AppContainer` needs a real `tokenProvider` once WING-004 lands; until then real-backend calls carry no `Authorization` header | WING-004 follow-up | Open |
+| I-010 | No contract route for device-side connectors (WING-016 SMS) to push `connector_event` envelopes to the backend, **and no backend-to-device route to deliver a dispatched send** to the device. WING-016 proposes `POST /v1/connections/{connection_id}/events` (`docs/integrations/android_sms.md` §8, `event_id` as `Idempotency-Key`); the downlink still needs a design. Until both exist, `NoIngestRouteUploader` keeps envelopes queued on the device, and device sends come only from the debug harness | Integrator / WING-011 | Open |
+| I-011 | Android `AppContainer` needs a real `tokenProvider`; real-backend calls carry no `Authorization` header yet. Design from WING-004 (PR #10): AppAuth authorization code + PKCE, tokens in encrypted storage, `tokenProvider` returns the current access token and refreshes near expiry; on a 401, refresh once and retry, then sign out. Debug builds may use a dev-stub token (`python -m app.security.dev_stub`); the dev secret never ships | WING-013 / Android follow-up | Open |
+| I-013 | Memory endpoints are not in the contract, so the WING-008 router (`app/api/memories.py`) is deliberately unmounted (`tests/test_app_wiring.py` and `tests/ai/memory/test_api.py` assert no memory routes). Needs an additive contract PR (v1.1.0) using the proposal in PR #13's body (`GET /v1/contacts/{id}/memories`, `PUT`/`DELETE /v1/memories/{id}`, `Memory`/`MemoryPage`/`MemoryCorrection` schemas), then mounting plus cursor pagination | Integrator / WING-008 follow-up | Open |
+| I-014 | No identity provider chosen. Prod must set `WINGMAN_AUTH_ISSUER`, `WINGMAN_AUTH_AUDIENCE` and `WINGMAN_AUTH_JWKS_URL`; until then every authenticated call returns 401 (fails closed). JWKS fetching is tested only with a mock transport | Repo owner | Open |
 | I-012 | `mypy tests/db` reports 27 errors (not part of the check script; `mypy app` is strict-clean) | Low | Open |
