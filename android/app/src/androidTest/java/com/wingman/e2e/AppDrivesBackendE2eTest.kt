@@ -115,7 +115,8 @@ class AppDrivesBackendE2eTest {
             ui.scrollTo(By.text("I'm taking over"), "takeover switch")
             ui.switchBeside("I'm taking over").click()
             ui.waitText("Take over with $contact?")
-            ui.clickText("Take over")
+            // "Take over" is also a heading in the Controls explainer: tap the dialog's button.
+            ui.clickBelow("Take over with $contact?", "Take over")
             ui.waitFor(By.textStartsWith("You've taken over."), "takeover confirmation")
             ui.waitText("You're in control: Wingman is off for this person")
             val state: JSONObject = eventually(what = "server reports taken_over") {

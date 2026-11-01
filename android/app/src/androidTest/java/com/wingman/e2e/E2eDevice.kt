@@ -88,11 +88,14 @@ class E2eDevice(private val timeoutMs: Long = UI_TIMEOUT_MS) {
         device.waitForIdle()
     }
 
-    /** Bottom navigation item (merged node; the Approvals one may carry a badge count). */
-    fun openTab(label: String) = clickBottomMost(By.textContains(label).clickable(true), "bottom nav \"$label\"")
+    /**
+     * Bottom navigation item. Its label is a plain Text node (the clickable parent has no text),
+     * so match the exact label and tap the bottom-most one: a click on the label lands on the item.
+     */
+    fun openTab(label: String) = clickBottomMost(By.text(label), "bottom nav \"$label\"")
 
-    /** A TabRow tab: the top-most clickable node with exactly [title]. */
-    fun openInnerTab(title: String) = clickTopMost(By.text(title).clickable(true), "tab \"$title\"")
+    /** A TabRow tab: the top-most node with exactly [title] (a tab's label may also be on a button). */
+    fun openInnerTab(title: String) = clickTopMost(By.text(title), "tab \"$title\"")
 
     /** Scrolls the largest scrollable container until [sel] is on screen (down, then back up). */
     fun scrollTo(sel: BySelector, what: String, maxSwipes: Int = 15): UiObject2 {
@@ -115,6 +118,18 @@ class E2eDevice(private val timeoutMs: Long = UI_TIMEOUT_MS) {
             device.findObjects(By.text("Refresh")).minByOrNull { bounds(it).top }?.click()
         }
         waitFor(sel, what, stepMs)
+    }
+
+    /** Taps the first [text] node below the node [anchor] (e.g. a dialog's button below its title). */
+    fun clickBelow(anchor: String, text: String) {
+        val top = bounds(waitText(anchor)).bottom
+        val target = device.findObjects(By.text(text)).filter { bounds(it).top >= top }.minByOrNull { bounds(it).top }
+            ?: run {
+                dumpHierarchy("no \"$text\" below \"$anchor\"")
+                throw AssertionError("no \"$text\" below \"$anchor\"")
+            }
+        target.click()
+        device.waitForIdle()
     }
 
     /** The Switch whose row is the label [labelText] (closest vertical center). */
