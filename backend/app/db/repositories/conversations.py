@@ -1,6 +1,7 @@
 """Conversations and messages, including idempotent inbound ingest."""
 
 import uuid
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
@@ -49,6 +50,56 @@ class ConversationRepository(ScopedRepository[Conversation]):
             )
         )
         return row
+
+    async def get_or_create_for_thread(
+        self,
+        *,
+        contact_id: uuid.UUID,
+        connection_id: uuid.UUID,
+        platform: str,
+        external_thread_id: str | None,
+        last_activity_at: datetime,
+    ) -> Conversation:
+        """The conversation for this thread (or, without a thread ID, for this contact),
+        created on first sight. Safe under concurrent first messages on one thread."""
+        if external_thread_id is None:
+            existing = await self.get_for_contact(contact_id)
+            if existing is not None:
+                return existing
+            return await self.create(
+                contact_id=contact_id,
+                connection_id=connection_id,
+                platform=platform,
+                last_activity_at=last_activity_at,
+            )
+        stmt = (
+            insert(Conversation)
+            .values(
+                user_id=self.scope.user_id,
+                contact_id=contact_id,
+                connection_id=connection_id,
+                platform=platform,
+                external_thread_id=external_thread_id,
+                stage=ConversationStage.NEW,
+                last_activity_at=last_activity_at,
+            )
+            .on_conflict_do_nothing(
+                index_elements=[
+                    Conversation.user_id,
+                    Conversation.connection_id,
+                    Conversation.external_thread_id,
+                ],
+                index_where=Conversation.external_thread_id.is_not(None),
+            )
+            .returning(Conversation)
+        )
+        created: Conversation | None = await self.session.scalar(stmt)
+        if created is not None:
+            return created
+        found = await self.get_by_external_thread(connection_id, external_thread_id)
+        if found is None:  # pragma: no cover - only if deleted concurrently
+            raise LookupError("conversation vanished during get_or_create")
+        return found
 
     async def get_for_contact(self, contact_id: uuid.UUID) -> Conversation | None:
         """Oldest conversation with this contact (one per contact in v1)."""
@@ -182,8 +233,13 @@ class MessageRepository(ScopedRepository[Message]):
         origin: MessageOrigin,
         text: str,
         approval_id: uuid.UUID | None = None,
+        send_after: datetime | None = None,
+        created_at: datetime | None = None,
     ) -> Message:
         """Queue an outbound message (dispatcher only, WING-011)."""
+        extra: dict[str, Any] = {}
+        if created_at is not None:
+            extra = {"created_at": created_at, "updated_at": created_at}
         return await self._add(
             conversation_id=conversation_id,
             platform=platform,
@@ -192,7 +248,89 @@ class MessageRepository(ScopedRepository[Message]):
             text=text,
             delivery_state=DeliveryState.QUEUED,
             approval_id=approval_id,
+            send_after=send_after,
+            **extra,
         )
+
+    async def lock(self, message_id: uuid.UUID) -> Message | None:
+        """The message, row-locked (``FOR UPDATE``) and refreshed from the database.
+
+        The dispatcher holds this lock across one transport attempt, so a concurrent
+        dispatch of the same message waits and then sees the new state.
+        """
+        row: Message | None = await self.session.scalar(
+            self._select()
+            .where(Message.id == message_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        return row
+
+    async def get_by_approval(self, approval_id: uuid.UUID) -> Message | None:
+        row: Message | None = await self.session.scalar(
+            self._select().where(Message.approval_id == approval_id)
+        )
+        return row
+
+    async def queued_automated(
+        self, *, contact_id: uuid.UUID | None, origins: Sequence[MessageOrigin]
+    ) -> list[Message]:
+        """Queued outbound messages with one of ``origins`` (optionally one contact's)."""
+        stmt = self._select().where(
+            Message.direction == MessageDirection.OUTBOUND,
+            Message.delivery_state == DeliveryState.QUEUED,
+            Message.origin.in_(list(origins)),
+        )
+        if contact_id is not None:
+            stmt = stmt.join(
+                Conversation,
+                (Conversation.user_id == Message.user_id)
+                & (Conversation.id == Message.conversation_id),
+            ).where(Conversation.contact_id == contact_id)
+        return list((await self.session.scalars(stmt.order_by(Message.created_at))).all())
+
+    async def due_outbound(
+        self, *, now: datetime, limit: int = 50, connection_id: uuid.UUID | None = None
+    ) -> list[Message]:
+        """Queued outbound messages whose ``send_after`` has passed, oldest first."""
+        stmt = self._select().where(
+            Message.direction == MessageDirection.OUTBOUND,
+            Message.delivery_state == DeliveryState.QUEUED,
+            (Message.send_after.is_(None)) | (Message.send_after <= now),
+        )
+        if connection_id is not None:
+            stmt = stmt.join(
+                Conversation,
+                (Conversation.user_id == Message.user_id)
+                & (Conversation.id == Message.conversation_id),
+            ).where(Conversation.connection_id == connection_id)
+        stmt = stmt.order_by(Message.created_at, Message.id).limit(limit)
+        return list((await self.session.scalars(stmt)).all())
+
+    async def count_automated_since(self, since: datetime) -> int:
+        """Automated sends (autopilot) queued at or after ``since`` and not canceled."""
+        rows = await self.session.scalars(
+            self._select().where(
+                Message.direction == MessageDirection.OUTBOUND,
+                Message.origin == MessageOrigin.AUTOPILOT,
+                Message.created_at >= since,
+                Message.delivery_state.not_in([DeliveryState.CANCELED]),
+            )
+        )
+        return len(rows.all())
+
+    async def latest_outbound(self, conversation_id: uuid.UUID) -> Message | None:
+        row: Message | None = await self.session.scalar(
+            self._select()
+            .where(
+                Message.conversation_id == conversation_id,
+                Message.direction == MessageDirection.OUTBOUND,
+                Message.delivery_state.not_in([DeliveryState.CANCELED]),
+            )
+            .order_by(Message.created_at.desc(), Message.id.desc())
+            .limit(1)
+        )
+        return row
 
     async def update_delivery(self, message_id: uuid.UUID, **values: Any) -> Message:
         """Scoped update of delivery fields (``delivery_state``, ``sent_at``, ``failure_*``,
@@ -207,6 +345,7 @@ class MessageRepository(ScopedRepository[Message]):
             "failure_retryable",
             "sent_at",
             "delivered_at",
+            "send_after",
         }
         unknown = set(values) - allowed
         if unknown:

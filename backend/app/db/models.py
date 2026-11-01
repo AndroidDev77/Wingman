@@ -47,6 +47,7 @@ from app.db.enums import (
     Actor,
     AgentActionType,
     ApprovalReason,
+    ApprovalStatus,
     AutomationMode,
     Brevity,
     CapabilityVerification,
@@ -55,12 +56,14 @@ from app.db.enums import (
     ConversationStage,
     DateProposalState,
     DeliveryState,
+    DraftDecision,
     EmojiFrequency,
     GlobalAutomationStatus,
     Humor,
     IntentMode,
     MessageDirection,
     MessageOrigin,
+    OutboxInstructionState,
     Punctuation,
     ResponsePace,
     Tone,
@@ -405,7 +408,27 @@ class Message(UserOwnedMixin, Base):
         Index(None, "user_id", "conversation_id", "created_at", "id"),
         # Dispatcher work queue / takeover cancellation.
         Index(None, "user_id", "delivery_state", "created_at", "id"),
+        # WING-011: the approval a message was sent under; an approval yields at most one
+        # outbound message (approve can never queue two sends).
+        # use_alter: messages -> approvals -> drafts -> messages is a cycle; the
+        # migration adds this FK after all three tables exist.
+        ForeignKeyConstraint(
+            ["user_id", "approval_id"],
+            ["approvals.user_id", "approvals.id"],
+            ondelete="SET NULL (approval_id)",
+            use_alter=True,
+        ),
+        Index(
+            "uq_messages_user_id_approval_id",
+            "user_id",
+            "approval_id",
+            unique=True,
+            postgresql_where=sql("approval_id IS NOT NULL"),
+        ),
         CheckConstraint("attempt_count >= 0", name="attempt_count_nonnegative"),
+        CheckConstraint(
+            "send_after IS NULL OR direction = 'outbound'", name="send_after_outbound_only"
+        ),
         CheckConstraint(
             f"external_message_id IS NULL OR char_length(external_message_id)"
             f" BETWEEN 1 AND {EXTERNAL_ID_LEN}",
@@ -445,7 +468,7 @@ class Message(UserOwnedMixin, Base):
     text: Mapped[str] = mapped_column(Text, nullable=False)
     delivery_state: Mapped[DeliveryState] = mapped_column(pg_enum("delivery_state"), nullable=False)
     external_message_id: Mapped[str | None] = mapped_column(String(EXTERNAL_ID_LEN), nullable=True)
-    # References an Approval (WING-011 table, not yet defined): no FK until it exists.
+    # The Approval this message was queued under (WING-011), tenant-scoped FK.
     approval_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     attempt_count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default=sql("0")
@@ -457,6 +480,257 @@ class Message(UserOwnedMixin, Base):
     sent_at: Mapped[datetime | None] = mapped_column(nullable=True)
     delivered_at: Mapped[datetime | None] = mapped_column(nullable=True)
     ingested_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
+    # WING-011 dispatcher: a queued outbound message is not handed to a transport before
+    # this instant (reply delay, retry backoff). Null = due immediately.
+    send_after: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+# --------------------------------------------------------------------------- drafts and approvals
+
+
+class Draft(UserOwnedMixin, Base):
+    """A ``Draft`` the automation pipeline generated (WING-011, I-007).
+
+    Stored exactly as the reply generator returned it: ``approval_reasons`` are its
+    content-based reasons only (D-013); the policy reasons live on the approval. A draft
+    is advisory data and authorizes nothing.
+    """
+
+    __tablename__ = "drafts"
+    __table_args__ = (
+        tenant_key(),
+        tenant_fk("conversation_id", "conversations"),
+        tenant_fk("contact_id", "contacts"),
+        tenant_fk("trigger_message_id", "messages", ondelete="SET NULL"),
+        Index(None, "user_id", "conversation_id", "created_at", "id"),
+        # One agent-initiated draft per inbound message: re-running the pipeline for the
+        # same message can never produce a second draft, approval or send.
+        Index(
+            "uq_drafts_user_id_trigger_message_id",
+            "user_id",
+            "trigger_message_id",
+            unique=True,
+            postgresql_where=sql("trigger_message_id IS NOT NULL"),
+        ),
+        CheckConstraint(
+            "(decision = 'send_candidate') = (text IS NOT NULL)", name="text_iff_send_candidate"
+        ),
+        CheckConstraint("text IS NULL OR char_length(text) BETWEEN 1 AND 4000", name="text_len"),
+        CheckConstraint(
+            "decision <> 'ask_user' OR question_for_user IS NOT NULL", name="ask_user_question"
+        ),
+        CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence_range"),
+        CheckConstraint(
+            "requires_approval = (cardinality(approval_reasons) > 0)",
+            name="requires_approval_matches_reasons",
+        ),
+    )
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    contact_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    decision: Mapped[DraftDecision] = mapped_column(pg_enum("draft_decision"), nullable=False)
+    text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    question_for_user: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rationale: Mapped[str] = mapped_column(Text, nullable=False)
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    requires_approval: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    approval_reasons: Mapped[list[ApprovalReason]] = mapped_column(
+        postgresql.ARRAY(pg_enum("approval_reason")),
+        nullable=False,
+        default=list,
+        server_default=_empty_array(),
+    )
+    intent_mode: Mapped[IntentMode] = mapped_column(pg_enum("intent_mode"), nullable=False)
+    grounding_memory_ids: Mapped[list[uuid.UUID]] = mapped_column(
+        UUID_ARRAY, nullable=False, default=list, server_default=_empty_array()
+    )
+    grounding_message_ids: Mapped[list[uuid.UUID]] = mapped_column(
+        UUID_ARRAY, nullable=False, default=list, server_default=_empty_array()
+    )
+    # DraftReason code from the generator (``model_decision``, ``model_unavailable``, ...).
+    reason: Mapped[str] = mapped_column(String(64), nullable=False)
+    # The inbound message that triggered an agent-initiated draft (null otherwise).
+    trigger_message_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+
+
+class Approval(UserOwnedMixin, Base):
+    """``Approval``: a draft waiting for the user's explicit decision (WING-011).
+
+    ``reasons`` = the draft's content reasons plus the controller's policy reasons. At
+    most one ``pending`` approval per conversation: a newer one cancels the older. The
+    outbound message created on approval points back here (``messages.approval_id``,
+    unique), so one approval can never queue two sends.
+    """
+
+    __tablename__ = "approvals"
+    __table_args__ = (
+        tenant_key(),
+        ForeignKeyConstraint(
+            ["user_id", "conversation_id"],
+            ["conversations.user_id", "conversations.id"],
+            ondelete="CASCADE",
+        ),
+        tenant_fk("contact_id", "contacts"),
+        tenant_fk("draft_id", "drafts"),
+        UniqueConstraint("user_id", "draft_id"),
+        # Queue keyset: created_at DESC, id DESC (optionally by status).
+        Index(
+            "ix_approvals_user_id_status_created_at_id",
+            "user_id",
+            "status",
+            sql("created_at DESC"),
+            sql("id DESC"),
+        ),
+        Index(None, "user_id", "contact_id", "status"),
+        Index(
+            "uq_approvals_user_id_conversation_id_pending",
+            "user_id",
+            "conversation_id",
+            unique=True,
+            postgresql_where=sql("status = 'pending'"),
+        ),
+        CheckConstraint("cardinality(reasons) >= 1", name="reasons_nonempty"),
+        CheckConstraint(
+            "(status = 'pending') = (decided_at IS NULL)", name="decided_iff_not_pending"
+        ),
+        CheckConstraint(
+            "(status = 'approved') = (final_text IS NOT NULL)", name="final_text_iff_approved"
+        ),
+        CheckConstraint(
+            "final_text IS NULL OR char_length(final_text) BETWEEN 1 AND 4000",
+            name="final_text_len",
+        ),
+        CheckConstraint(
+            "rejection_reason IS NULL OR (status = 'rejected'"
+            " AND char_length(rejection_reason) <= 500)",
+            name="rejection_reason_shape",
+        ),
+    )
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    contact_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    draft_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    status: Mapped[ApprovalStatus] = mapped_column(
+        pg_enum("approval_status"),
+        nullable=False,
+        default=ApprovalStatus.PENDING,
+        server_default=ApprovalStatus.PENDING.value,
+    )
+    reasons: Mapped[list[ApprovalReason]] = mapped_column(
+        postgresql.ARRAY(pg_enum("approval_reason")), nullable=False
+    )
+    final_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
+    expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+# --------------------------------------------------------------------------- device outbox
+
+
+class OutboxInstruction(UserOwnedMixin, Base):
+    """One authorized send attempt for a device-side connector (ADR 0006, contract v1.1.0).
+
+    Created only by the dispatcher (WING-011). ``idempotency_key`` is the per-attempt
+    connector key ``send:<message_id>:<attempt>`` (D-006). Leased at most once, never
+    renewed: ``leased`` / ``completed`` / ``expired`` rows always carry the lease, and
+    ``pending`` / ``canceled`` rows never do. At most one live (pending or leased)
+    instruction per outbound message.
+    """
+
+    __tablename__ = "outbox_instructions"
+    __table_args__ = (
+        tenant_key(),
+        tenant_fk("connection_id", "platform_connections"),
+        tenant_fk("outbound_message_id", "messages"),
+        UniqueConstraint("user_id", "idempotency_key"),
+        UniqueConstraint("user_id", "outbound_message_id", "attempt"),
+        Index(
+            "uq_outbox_instructions_user_id_outbound_message_id_live",
+            "user_id",
+            "outbound_message_id",
+            unique=True,
+            postgresql_where=sql("state IN ('pending', 'leased')"),
+        ),
+        # Claim / listing keyset: created_at ASC, id ASC per connection and state.
+        Index(None, "user_id", "connection_id", "state", "created_at", "id"),
+        Index(
+            "ix_outbox_instructions_user_id_lease_expires_at",
+            "user_id",
+            "lease_expires_at",
+            postgresql_where=sql("state = 'leased'"),
+        ),
+        CheckConstraint("attempt >= 1", name="attempt_positive"),
+        CheckConstraint(
+            f"idempotency_key ~ '{IDEMPOTENCY_KEY_PATTERN}'", name="idempotency_key_format"
+        ),
+        CheckConstraint(
+            "(state IN ('pending', 'canceled')) = (leased_at IS NULL)"
+            " AND (leased_at IS NULL) = (lease_expires_at IS NULL)"
+            " AND (leased_at IS NULL) = (device_install_id IS NULL)",
+            name="lease_shape",
+        ),
+        CheckConstraint(
+            "lease_expires_at IS NULL OR lease_expires_at > leased_at", name="lease_after_start"
+        ),
+        CheckConstraint(
+            "(state = 'completed') = (completed_at IS NOT NULL)", name="completed_shape"
+        ),
+    )
+
+    connection_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    outbound_message_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    attempt: Mapped[int] = mapped_column(Integer, nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    state: Mapped[OutboxInstructionState] = mapped_column(
+        pg_enum("outbox_instruction_state"),
+        nullable=False,
+        default=OutboxInstructionState.PENDING,
+        server_default=OutboxInstructionState.PENDING.value,
+    )
+    device_install_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    leased_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    lease_expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class ConnectorEventIngest(UserOwnedMixin, Base):
+    """Permanent record of every ``connector_event.v1`` accepted (ADR 0006).
+
+    Keyed ``(user_id, event_id)``: a repeated ``event_id`` is a duplicate forever (not
+    only for the 24 h idempotency window). ``request_hash`` detects a reused key with a
+    different body. A delivery receipt that arrives before its acknowledgement is kept
+    with ``deferred = true`` and applied when the acknowledgement lands. No message text
+    is stored here.
+    """
+
+    __tablename__ = "connector_event_ingests"
+    __table_args__ = (
+        tenant_key(),
+        UniqueConstraint("user_id", "event_id"),
+        tenant_fk("connection_id", "platform_connections"),
+        tenant_fk("message_id", "messages", ondelete="SET NULL"),
+        Index(
+            "ix_connector_event_ingests_user_id_message_id_deferred",
+            "user_id",
+            "message_id",
+            postgresql_where=sql("deferred"),
+        ),
+        CheckConstraint("outcome IN ('accepted', 'duplicate_message')", name="outcome_values"),
+        CheckConstraint("request_hash ~ '^[0-9a-f]{64}$'", name="request_hash_sha256"),
+        CheckConstraint("event_type ~ '^[a-z][a-z_.]{1,63}$'", name="event_type_format"),
+    )
+
+    event_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    connection_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    event_type: Mapped[str] = mapped_column(String(64), nullable=False)
+    request_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(32), nullable=False)
+    message_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    occurred_at: Mapped[datetime] = mapped_column(nullable=False)
+    deferred: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sql("false")
+    )
 
 
 # --------------------------------------------------------------------------- memory
@@ -533,6 +807,7 @@ class AgentAction(UserOwnedMixin, Base):
         tenant_fk("conversation_id", "conversations", ondelete="SET NULL"),
         tenant_fk("contact_id", "contacts", ondelete="SET NULL"),
         tenant_fk("message_id", "messages", ondelete="SET NULL"),
+        tenant_fk("approval_id", "approvals", ondelete="SET NULL"),
         # Audit keyset: occurred_at DESC, id DESC (optionally filtered).
         Index(
             "ix_agent_actions_user_id_occurred_at_id",
@@ -562,7 +837,6 @@ class AgentAction(UserOwnedMixin, Base):
     conversation_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     contact_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     message_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
-    # References an Approval (WING-011 table, not yet defined): no FK until it exists.
     approval_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     reason_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     occurred_at: Mapped[datetime] = mapped_column(nullable=False, server_default=func.now())
@@ -790,6 +1064,10 @@ USER_OWNED_MODELS: tuple[type[UserOwnedMixin], ...] = (
     Contact,
     Conversation,
     Message,
+    Draft,
+    Approval,
+    OutboxInstruction,
+    ConnectorEventIngest,
     ConversationMemory,
     AgentAction,
     AutomationRule,
