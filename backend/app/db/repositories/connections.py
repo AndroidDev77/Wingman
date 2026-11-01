@@ -72,7 +72,7 @@ class ConnectionRepository(ScopedRepository[PlatformConnection]):
         row: PlatformConnection | None = await self.session.scalar(
             self._select()
             .where(PlatformConnection.id == connection_id)
-            .with_for_update()
+            .with_for_update(key_share=True)  # FOR NO KEY UPDATE: see UserRepository.lock
             .execution_options(populate_existing=True)
         )
         return row
@@ -180,7 +180,7 @@ class ContactRepository(ScopedRepository[Contact]):
         row: Contact | None = await self.session.scalar(
             self._select()
             .where(Contact.id == contact_id)
-            .with_for_update()
+            .with_for_update(key_share=True)  # FOR NO KEY UPDATE: see UserRepository.lock
             .execution_options(populate_existing=True)
         )
         return row

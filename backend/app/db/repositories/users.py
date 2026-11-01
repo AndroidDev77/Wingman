@@ -62,15 +62,25 @@ class UserRepository:
     async def lock(self, scope: UserScope, *, shared: bool = False) -> User | None:
         """The user row, locked and refreshed.
 
-        ``FOR UPDATE`` (default): the automation controller holds it while deciding a
-        send, so concurrent decisions for one user (daily limit) and a global pause are
+        Exclusive (default): the automation controller holds it while deciding a send,
+        so concurrent decisions for one user (daily limit) and a global pause are
         serialised. ``shared=True`` (``FOR SHARE``): the dispatcher's last-moment
         re-check; a global pause waits until the dispatch transaction ends.
+
+        The exclusive lock is ``FOR NO KEY UPDATE``, never ``FOR UPDATE`` (I-028). Every
+        insert of a user-owned row runs a foreign-key check that takes ``FOR KEY SHARE``
+        on this row; ``FOR UPDATE`` conflicts with it, ``FOR NO KEY UPDATE`` does not.
+        With ``FOR UPDATE``, a pipeline that had already updated a conversation and then
+        locked the user waited for a concurrent ingest (holding its FK lock on the
+        user) that was itself waiting on that conversation row: a deadlock. ``FOR NO KEY
+        UPDATE`` still conflicts with itself and with ``FOR SHARE``, so decisions, pause,
+        takeover, claims and dispatch re-checks serialise exactly as before. Nothing
+        here changes the user's key (``id``).
         """
         user: User | None = await self.session.scalar(
             select(User)
             .where(User.id == scope.user_id)
-            .with_for_update(read=shared)
+            .with_for_update(read=shared, key_share=not shared)
             .execution_options(populate_existing=True)
         )
         return user
