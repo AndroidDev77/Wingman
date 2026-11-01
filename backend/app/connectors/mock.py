@@ -12,8 +12,11 @@
   dispatcher uses a new key per attempt, e.g. `send:<message_id>:<attempt>`.
 - Failures can be injected (`inject_send_failures`) for retry/dead-letter tests.
 
-IDs and timestamps are deterministic by default (UUIDv5 from the connection ID plus
-a counter, and a clock that ticks one second per event).
+IDs are deterministic (UUIDv5 from the connection ID plus a counter). Timestamps
+(`occurred_at`/`observed_at`, and so the `sent_at`/`delivered_at` the dispatcher records
+from them) come from wall-clock UTC by default (I-021), so a dev run never shows a send
+in the past. Tests that need reproducible timestamps inject a clock, e.g.
+`SimulatedClock()` (starts 2026-01-01, ticks one second per event).
 """
 
 from __future__ import annotations
@@ -91,8 +94,14 @@ def default_mock_capabilities(*, assessed_at: datetime = MOCK_VERIFIED_AT) -> Co
     )
 
 
+def wall_clock() -> datetime:
+    """Default `MockConnector` clock: the current UTC time."""
+    return datetime.now(UTC)
+
+
 class SimulatedClock:
-    """Deterministic clock: returns `start`, then advances by `step` on every call."""
+    """Deterministic clock: returns `start`, then advances by `step` on every call.
+    Inject it (`MockConnector(clock=SimulatedClock())`) for reproducible timestamps."""
 
     def __init__(
         self, start: datetime = DEFAULT_START_TIME, step: timedelta = timedelta(seconds=1)
@@ -167,7 +176,8 @@ class MockConnector(BaseConnector):
         self.connection_id = connection_id
         self.scenario_id = scenario_id
         self._capabilities = caps
-        self._clock: Callable[[], datetime] = clock if clock is not None else SimulatedClock()
+        # Wall-clock UTC unless a test injects one (I-021: no fixed simulated date).
+        self._clock: Callable[[], datetime] = clock if clock is not None else wall_clock
         self._dedup = deduplicator if deduplicator is not None else InboundDeduplicator()
         self._latency_ms = simulated_latency_ms
         self._auto_receipts = auto_delivery_receipts
