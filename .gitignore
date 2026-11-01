@@ -1,0 +1,26 @@
+# Secrets
+.env
+*.keystore
+*.jks
+local.properties
+google-services.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+
+# Android / Gradle
+.gradle/
+build/
+.idea/
+*.iml
+captures/
+.kotlin/
+
+# Worktrees used by parallel agents
+.worktrees/
