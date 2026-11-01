@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Integrator-owned (D-003). DEBUG builds only: the WING-016 device-test harness never ships in
+     release. The activity also refuses to run when the build is not debuggable. -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <activity
+            android:name="com.wingman.integrations.sms.android.SmsDemoActivity"
+            android:exported="true"
+            android:label="Wingman SMS test" />
+    </application>
+</manifest>
