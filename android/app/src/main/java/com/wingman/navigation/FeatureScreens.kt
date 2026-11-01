@@ -23,8 +23,8 @@ typealias ScreenContent = @Composable (args: ScreenArgs, navigator: Navigator) -
  * Destinations without a registration render the shell's placeholder screen.
  */
 fun featureScreens(): ScreenRegistry<ScreenContent> = ScreenRegistry<ScreenContent>()
-// .register(Destination.Inbox, com.wingman.features.inbox.InboxScreenEntry)                  // WING-014
-// .register(Destination.Conversation, com.wingman.features.conversation.ConversationScreenEntry) // WING-014
+    .register(Destination.Inbox, com.wingman.features.inbox.InboxScreenEntry) // WING-014
+    .register(Destination.Conversation, com.wingman.features.conversation.ConversationScreenEntry) // WING-014
 // .register(Destination.Approvals, com.wingman.features.approvals.ApprovalsScreenEntry)      // WING-015
 // .register(Destination.Settings, com.wingman.features.settings.SettingsScreenEntry)         // WING-013
 // .register(Destination.Discovery, com.wingman.features.discovery.DiscoveryScreenEntry)      // WING-019
