@@ -9,7 +9,10 @@ Owner: WING-026. This folder is everything a beta operator and a beta tester nee
 >   UNVERIFIED, D-016);
 > - there is **no paid launch** and no public release (see the go/no-go in
 >   [`release_checklist.md`](release_checklist.md));
-> - Tinder, Bumble, Hinge, iMessage and notification reply are **UNSUPPORTED** (not built).
+> - Tinder, Bumble and Hinge (notification drafts) are **assisted only**, and Hinge's experimental
+>   API and the iMessage Mac companion are **experimental, approval only**; all are **UNVERIFIED**
+>   and none ran on a real account, phone or Mac. No swiping, no direct notification reply
+>   ([`known_limitations.md`](known_limitations.md), [feature gates](../../config/release/feature_gates.json)).
 
 ## Who the beta is for
 
@@ -33,7 +36,9 @@ Labels follow `AGENT_RULES.md`. "Evidence" points at what proved it; nothing her
 | **SMS** read and send | **UNVERIFIED**: emulator SMS stack exercised only | `e2e_results.md` "Real channel: SMS on the CI emulator" |
 | Draft quality with a real LLM | **UNVERIFIED** (I-009): only the labeled `[dev mock]` has run | |
 | Sign-in | Debug-build dev token only (no IdP, I-014) | A1 |
-| Tinder / Bumble / Hinge / iMessage / notification reply | **UNSUPPORTED** (not built) | `e2e_results.md` connector matrix |
+| Tinder / Bumble / Hinge (notifications) | **Assisted only, UNVERIFIED** (you send by hand) | Mock E2E P2, [`cross_platform_test_matrix.md`](../integrations/cross_platform_test_matrix.md) |
+| Hinge experimental API / iMessage Mac companion | **Experimental, approval only, UNVERIFIED**; not in the beta build | Mock E2E P3, P4 (same) |
+| Notification direct reply, swiping | **Disabled** (not available) | `config/release/feature_gates.json` |
 
 Full table: [`known_limitations.md`](known_limitations.md).
 

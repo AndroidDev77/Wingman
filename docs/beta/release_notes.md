@@ -100,7 +100,13 @@ Anything not listed here is not claimed. For what does not work, see
 
 ## Not in this beta
 
-UNSUPPORTED (not built): Tinder, Bumble, Hinge, iMessage, notification reply, swiping/discovery,
-date proposals and calendar, subscriptions. UNVERIFIED: anything on a physical phone, draft quality
+Not in the beta.1 build (`266243a`): Tinder, Bumble, Hinge, iMessage, notification reply,
+swiping/discovery, date proposals and calendar, subscriptions. **Update 2026-11-02:** Tinder, Bumble
+and Hinge (notification-assisted), Hinge (experimental API), the iMessage Mac companion and the
+discovery review have since been built (WING-027 to 031). They are **assisted-only or experimental
+and UNVERIFIED** (never run on a real account, phone or Mac); swiping, direct notification reply,
+dating autopilot and calendar stay disabled. Evidence and modes:
+[`cross_platform_test_matrix.md`](../integrations/cross_platform_test_matrix.md),
+[`config/release/feature_gates.json`](../../config/release/feature_gates.json). UNVERIFIED: anything on a physical phone, draft quality
 with a real LLM (I-009), OIDC sign-in. Known gaps: no background sync (I-024), no mark-read (I-022),
 MMS dropped while Wingman is the default SMS app. Details: [`known_limitations.md`](known_limitations.md).

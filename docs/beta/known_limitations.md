@@ -1,7 +1,12 @@
 # Known limitations and supported platforms
 
-Owner: WING-026. State as of v0.1.0-beta.1 (`main` @ `266243a`, 2026-11-01). Labels per
-`AGENT_RULES.md`:
+Owner: WING-026. State as of v0.1.0-beta.1 (`main` @ `266243a`, 2026-11-01); platform rows
+updated 2026-11-02 from WING-032 ([`release_gates.md`](../integrations/release_gates.md) §6,
+[`cross_platform_test_matrix.md`](../integrations/cross_platform_test_matrix.md)). What is enabled,
+and in which mode, is defined by [`config/release/feature_gates.json`](../../config/release/feature_gates.json):
+`scripts/release/check.sh` and `build.sh` refuse any feature marked autonomous without VERIFIED
+device evidence. **Nothing below has run on a real dating account, Mac or (except SMS on the CI
+emulator) any phone.** Labels per `AGENT_RULES.md`:
 
 - **VERIFIED**: a reproducible run proved it, in the place that matters.
 - **UNVERIFIED**: built, maybe tested elsewhere (unit tests, an emulator), but not proven on the
@@ -15,13 +20,15 @@ Owner: WING-026. State as of v0.1.0-beta.1 (`main` @ `266243a`, 2026-11-01). Lab
 | `mock` (simulated platform, WING-006) | VERIFIED (simulator only) | VERIFIED (simulator only) | **Dev and operator testing only.** Not a messaging platform; no real person receives anything | Every backend E2E flow F1 to F9, X1 to X5 (`docs/e2e_results.md`). Refused in `prod`. Its state lives in process memory (I-016, below) |
 | **Android SMS**, CI emulator | Exercised | Exercised | "Emulator SMS stack exercised" | PASS in CI job `E2E Android emulator` (inbound, approve, `SmsManager` send, server `sent`; "delivered" came from the emulator's fake modem). Does not change any label |
 | **Android SMS**, physical phone | **UNVERIFIED** | **UNVERIFIED** | **The only real channel in the beta, used with approval on every reply** | Never run on a phone with a SIM (I-003, gate G5 ⛔). Autopilot impossible while `send` is UNVERIFIED (D-016) |
-| Tinder | UNSUPPORTED | UNSUPPORTED | Not built | WING-021 is research only and not started; not pairable in contract 1.2.0 |
-| Bumble | UNSUPPORTED | UNSUPPORTED | Not built | As Tinder |
-| Hinge | UNSUPPORTED | UNSUPPORTED | Not built | As Tinder |
-| iMessage | UNSUPPORTED | UNSUPPORTED | Not built | WING-020 (Mac companion feasibility) not started |
-| Android notification reply (any app) | UNSUPPORTED | UNSUPPORTED | Not built | WING-017 spike not started. The contract accepts `android_notification` pairing, but no app code pairs it |
-| Swipe, discovery, compatibility scores | UNSUPPORTED | | Not built | WING-019. The **Discovery** tab in the app is a placeholder screen |
-| Calendar, date proposals | UNSUPPORTED | | Not built | WING-018. Wingman never creates calendar events |
+| Tinder (notifications) | UNVERIFIED | UNSUPPORTED (assisted only: you send by hand) | **Assisted only**, opt-in per app | WING-027 (PR #50); mock E2E P2 ([matrix](../integrations/cross_platform_test_matrix.md) §4); never run on a phone (I-003); API path BLOCKED (D-023, I-032) |
+| Bumble (notifications) | UNVERIFIED | UNSUPPORTED (assisted only) | **Assisted only**, opt-in per app | WING-028 (PR #50); as Tinder |
+| Hinge (notifications) | UNVERIFIED | UNSUPPORTED (assisted only) | Built; drafts held pending I-030 | WING-029 (PR #51); Hinge's terms restrict AI-written content (I-030) |
+| Hinge (experimental API) | UNVERIFIED | UNVERIFIED, approval only | **Experimental**, not in the beta build | WING-029 (PR #51, #55), sideloaded experimental build only (D-026, D-027, I-031); owner live test L0-L10 not run; ban-risk consent required (D-021) |
+| iMessage (Mac companion) | UNVERIFIED | UNVERIFIED, approval only | **Experimental**, not distributed (unsigned) | WING-030 (PR #54, D-028); never run on a Mac (I-034, I-035); groups are notices only |
+| Android notification direct reply | n/a | Not available | Disabled | No RemoteInput reply verified for any app (I-033); replies are assisted (you send by hand) |
+| Discovery, compatibility scores | Manual import only | n/a | **Assisted only**: decisions recorded in Wingman | WING-019 (PR #49), WING-031 (PR #55); mock E2E P5 |
+| Swipe / auto-swipe | n/a | Not available | Disabled | No swipe path: Execute is refused (`swipe_execution_disabled`), nothing sets `executed` (D-027) |
+| Calendar, date proposals | UNSUPPORTED | | Not built | WING-018. Wingman never creates calendar events; date suggestions always need approval (mock E2E C8) |
 | iOS app | UNSUPPORTED | | Not built | |
 
 ## Features
@@ -55,7 +62,11 @@ Owner: WING-026. State as of v0.1.0-beta.1 (`main` @ `266243a`, 2026-11-01). Lab
   the app. If the phone claims a reply and then never reports back for 120 s, the server marks the
   outcome **unknown** (`lease_expired`, "Phone didn't confirm; outcome unknown"), never `sent` and
   never retried, so it cannot double-send; check your phone's sent messages.
-- **No mark-read (I-022).** The contract has no mark-read operation, so unread counts only grow.
+- **Mark-read** exists in the backend since contract 1.3.0 (I-022 closed, PR #47); the beta.1 app
+  build predates it, so unread counts only grow in that build.
+- **A phone that reports `error` or `disconnected` holds its sends** (D-030, PR #58): approved and
+  manual replies stay queued (nothing is canceled by the hold) and go out once when it reports
+  `connected` again.
 - **Delivery reports** depend on the carrier; many messages stay at "Sent (delivery not
   confirmed)", which is correct.
 - **Dual SIM**: a reply may go out from the default SMS SIM rather than the one the text came in
@@ -86,8 +97,10 @@ Owner: WING-026. State as of v0.1.0-beta.1 (`main` @ `266243a`, 2026-11-01). Lab
 
 ### Backend and operations
 
-- **Intermittent deadlock on concurrent duplicate inbound events (found by WING-026 CI, not
-  fixed here).** On PR #36 the CI job `E2E backend` failed twice in a row in scenario X1 and passed
+- **Fixed after beta.1 (I-028 closed, PR #38, D-020):** the deadlock below. Root cause was the
+  per-user `FOR UPDATE` lock; exclusive row locks are now `FOR NO KEY UPDATE`, covered by
+  `backend/tests/automation/test_ingest_deadlock.py`. Original report kept for the record:
+- **Intermittent deadlock on concurrent duplicate inbound events (found by WING-026 CI).** On PR #36 the CI job `E2E backend` failed twice in a row in scenario X1 and passed
   on the third attempt, with no backend code changed by the PR (`main` @ `266243a` had passed). Two
   of the 12 parallel deliveries of the same message under different event IDs got HTTP `500`:
   Postgres `DeadlockDetectedError` in `ConversationRepository.get_or_create_for_thread`
