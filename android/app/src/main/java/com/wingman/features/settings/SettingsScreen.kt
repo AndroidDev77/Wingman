@@ -118,14 +118,11 @@ fun SettingsScreen() {
             // WING-027/028 (I-033): dating apps through their notifications, assisted only.
             SectionTitle("Dating apps (notifications)")
             com.wingman.features.connections.NotificationConnectionSection()
-<<<<<<< HEAD
             // WING-029 (D-021, D-023, D-026): only in the experimental build with the client identity.
             if (com.wingman.integrations.hinge.android.HingeModule.connector() != null) {
                 SectionTitle("Hinge (experimental)")
                 HingeExperimentalRow()
             }
-=======
->>>>>>> origin/main
             HorizontalDivider()
             SectionTitle("Account")
             SignOutButton()
