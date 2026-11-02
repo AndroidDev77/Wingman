@@ -28,7 +28,7 @@ cloud iMessage integration.
 | Messages accepting that command on any macOS version | **UNVERIFIED** | manual M8 to M12 |
 | Send ledger: one attempt per key, claimed before the transport, lease deadline, ack only after the sent row appears | VERIFIED (fixture + fake executor) | `tests/test_sendplan.py` |
 | Envelopes and the capability document validate against `connector_event.v1` / `connector_capabilities.v1` | VERIFIED | `tests/test_contract.py` |
-| Pairing `platform: imessage` with the backend | **BLOCKED** until contract v1.3 | `test_imessage_not_yet_pairable_in_current_contract` |
+| Pairing `platform: imessage` with the backend | Contract v1.3.0 accepts it (`transport: companion`, ADR 0008); a real pairing is UNVERIFIED | `test_imessage_is_pairable_with_companion_transport` |
 
 ## 1. Architecture
 
@@ -257,9 +257,9 @@ schema or the dictionary in any release without notice.
 3. **Pair.** `createConnection` with `platform: "imessage"`, `display_name` (for example "Chris's
    MacBook Pro iMessage"), `device_install_id` and the capability document. The `Idempotency-Key`
    and the body are persisted before the request and replayed after a lost response, as in
-   `SmsPairingManager`. **BLOCKED:** contract v1.2.0 enumerates only `sms`,
-   `android_notification` and `mock` as pairable. Contract **v1.3** (parallel work) adds `imessage`,
-   and `test_imessage_not_yet_pairable_in_current_contract` changes its assertion when it lands.
+   `SmsPairingManager`. Contract **v1.3.0** (ADR 0008) pairs `imessage` with
+   `transport: companion`, `device_install_id` and the capability document
+   (`test_imessage_is_pairable_with_companion_transport`).
 4. **Sync.** Upload the outbox, then claim (`max_instructions` 1 to 5). Run each instruction and
    upload the results. There is **no inbound port.** Polling every 30 to 60 s is enough for
    replies a human approves. An APNs wake-up hint can come later, as FCM can for Android

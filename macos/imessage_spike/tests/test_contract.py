@@ -1,9 +1,8 @@
 """Every envelope and the capability document validate against the frozen contract.
 
 Platform ``imessage`` matches ``connector_event.v1``'s platform pattern, so these
-validate today. Pairing (``ConnectionCreateRequest.platform``) does not accept
-``imessage`` until contract v1.3: that is asserted here too, so this test fails loudly
-(and must be updated) when v1.3 lands.
+validate. Since contract v1.3.0 (ADR 0008) ``ConnectionCreateRequest`` also pairs
+``imessage`` with ``transport: companion``; that is asserted here too.
 """
 
 from __future__ import annotations
@@ -110,13 +109,23 @@ def test_capabilities_document_validates(validators, fda, auto) -> None:  # type
     assert statuses["draft"] == statuses["swipe"] == statuses["calendar_write"] == "UNSUPPORTED"
 
 
-def test_imessage_not_yet_pairable_in_current_contract() -> None:
+def test_imessage_is_pairable_with_companion_transport() -> None:
+    """Contract v1.3.0 (ADR 0008): `imessage` pairs as a device-side connection with
+    `transport: companion` (the Mac is the device install), needing `device_install_id`
+    and a claimed capability document like `sms`."""
     spec = yaml.safe_load((CONTRACTS / "openapi.yaml").read_text())
-    version = spec["info"]["version"]
-    enum = spec["components"]["schemas"]["ConnectionCreateRequest"]["properties"]["platform"]["enum"]
-    major, minor, _ = (int(x) for x in version.split("."))
-    if (major, minor) < (1, 3):
-        assert "imessage" not in enum, "contract < 1.3 unexpectedly pairs imessage"
-    else:
-        # Contract v1.3 (parallel work) is expected to add it. Update the doc if this fails.
-        assert "imessage" in enum
+    major, minor, _ = (int(x) for x in spec["info"]["version"].split("."))
+    assert (major, minor) >= (1, 3)
+    schemas = spec["components"]["schemas"]
+    request = schemas["ConnectionCreateRequest"]
+    assert "imessage" in request["properties"]["platform"]["enum"]
+    assert "companion" in schemas["ConnectionTransport"]["enum"]
+    rules = request["allOf"]
+    device_side = [
+        r for r in rules if "imessage" in (r.get("if", {}).get("properties", {}).get("platform", {}).get("enum") or [])
+    ]
+    assert device_side and set(device_side[0]["then"]["required"]) >= {"device_install_id", "capabilities"}
+    transport = [
+        r for r in rules if r.get("if", {}).get("properties", {}).get("platform", {}).get("const") == "imessage"
+    ]
+    assert transport and transport[0]["then"]["properties"]["transport"] == {"const": "companion"}
