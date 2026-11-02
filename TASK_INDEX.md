@@ -1,6 +1,6 @@
 # Wingman AI: Task Index
 
-This package contains 26 independently assignable engineering tickets. Each ticket has precise dependencies, file ownership, deliverables, and acceptance criteria. Ticket IDs are stable; use their IDs in git branches and pull requests.
+This package contains 32 independently assignable engineering tickets (WING-027..032 added 2026-11-01). Each ticket has precise dependencies, file ownership, deliverables, and acceptance criteria. Ticket IDs are stable; use their IDs in git branches and pull requests.
 
 **Priority:** Complete the real message receive -> AI draft -> approval/auto-send -> audit workflow before chasing unsupported dating-app swipes.
 
@@ -48,11 +48,13 @@ Read `EXECUTION_PLAN.md` for concurrency waves and MVP cutline.
 
 Order: prerequisites WING-017, WING-019, WING-020, WING-021 and contract v1.3 first; then WING-027/028/029 (after 017 + 021), WING-030 (after 020), WING-031 (after 019); WING-032 last. A tested mock is not evidence of a working commercial-app integration; every capability carries VERIFIED / UNVERIFIED / UNSUPPORTED / BLOCKED.
 
+**Status (2026-11-01):** WING-017 (PR #46), WING-020 (PR #44), WING-021 (PR #45) and contract v1.3.0 (PR #47, ADR 0008) are merged; WING-019 is still pending. Per D-023, WING-027 (Tinder) and WING-028 (Bumble) are **notification-assisted only** (their API paths are BLOCKED); **WING-029 (Hinge) is next**, pending owner decisions I-030 and I-031. WING-030 is a conditional GO (D-024). `BLOCKED` is a test-result word in handoffs, not a capability label: in the contract a blocked capability is UNVERIFIED or UNSUPPORTED with the blocker in `notes` (ADR 0008 §8). Live status: [`docs/STATUS.md`](docs/STATUS.md).
+
 | Ticket | Task | Depends on | Phase |
 |---|---|---|---|
-| [WING-027](tasks/WING-027_tinder-message-connector.md) | Tinder message connector | WING-006, 011, 017, 021 | 7 |
-| [WING-028](tasks/WING-028_bumble-message-connector.md) | Bumble message connector | WING-006, 011, 017, 021 | 7 |
-| [WING-029](tasks/WING-029_hinge-message-connector.md) | Hinge message connector | WING-006, 011, 017, 021 | 7 |
+| [WING-027](tasks/WING-027_tinder-message-connector.md) | Tinder message connector (notification-assisted only, D-023) | WING-006, 011, 017, 021 | 7 |
+| [WING-028](tasks/WING-028_bumble-message-connector.md) | Bumble message connector (notification-assisted only, D-023) | WING-006, 011, 017, 021 | 7 |
+| [WING-029](tasks/WING-029_hinge-message-connector.md) | Hinge message connector (next; experimental API per D-023) | WING-006, 011, 017, 021 | 7 |
 | [WING-030](tasks/WING-030_imessage-macos-companion.md) | iMessage macOS companion | WING-006, 011, 020 | 7 |
 | [WING-031](tasks/WING-031_discovery-and-swiping.md) | Profile discovery and swiping | WING-006, 007, 011, 019, 021 | 7 |
 | [WING-032](tasks/WING-032_cross-platform-e2e.md) | Cross-platform E2E and release gates | WING-011, 015, 025, 027–031 | 8 |
