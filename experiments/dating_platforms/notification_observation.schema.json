@@ -1,0 +1,118 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wingman.invalid/experiments/dating_platforms/notification_observation.schema.json",
+  "title": "DatingAppNotificationObservation",
+  "description": "One redacted observation of a dating-app notification captured by the WING-017 debug inspector during the WING-021 device test (docs/integrations/dating_platform_matrix.md §8). Records structure only: lengths, key names, flags. It must never contain message text, names, phone numbers, photos, tokens or raw platform ids. Ids, if needed for correlation, are salted per-run hashes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "observed_at",
+    "platform",
+    "package",
+    "app_version",
+    "android_sdk_int",
+    "event_kind",
+    "notification",
+    "redaction"
+  ],
+  "properties": {
+    "schema_version": { "const": "dating_notification_observation.v1" },
+    "run_id": {
+      "description": "Opaque id of the test run; ties observations to one results file.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{4,64}$"
+    },
+    "observed_at": { "type": "string", "format": "date-time", "pattern": "Z$" },
+    "platform": { "enum": ["hinge", "tinder", "bumble"] },
+    "package": { "enum": ["co.hinge.app", "com.tinder", "com.bumble.app"] },
+    "app_version": { "type": "string", "maxLength": 40 },
+    "android_sdk_int": { "type": "integer", "minimum": 21 },
+    "device_model": { "type": ["string", "null"], "maxLength": 80 },
+    "event_kind": {
+      "description": "What the tester did to trigger it (ground truth), not what the notification claims.",
+      "enum": ["chat_message", "chat_message_update", "like", "comment", "new_match", "system", "unknown"]
+    },
+    "preview_setting": {
+      "description": "In-app message preview setting at capture time, if the app has one.",
+      "enum": ["on", "off", "not_available", "unknown"]
+    },
+    "notification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["channel_id", "template", "title_length", "text_length", "extras_keys", "actions", "has_content_intent"],
+      "properties": {
+        "channel_id": { "type": ["string", "null"], "maxLength": 120 },
+        "category": { "type": ["string", "null"], "maxLength": 40 },
+        "template": {
+          "description": "android.template extra, e.g. android.app.Notification$MessagingStyle.",
+          "type": ["string", "null"],
+          "maxLength": 120
+        },
+        "messaging_style_message_count": { "type": ["integer", "null"], "minimum": 0 },
+        "title_length": { "type": "integer", "minimum": 0 },
+        "text_length": { "type": "integer", "minimum": 0 },
+        "text_is_generic": {
+          "description": "Tester judgement: true if the text is a placeholder like 'New message' rather than the message body.",
+          "type": ["boolean", "null"]
+        },
+        "extras_keys": {
+          "description": "Key NAMES only from Notification.extras.",
+          "type": "array",
+          "items": { "type": "string", "maxLength": 120 },
+          "maxItems": 100
+        },
+        "is_group_summary": { "type": ["boolean", "null"] },
+        "has_shortcut_id": { "type": ["boolean", "null"] },
+        "is_update_of_previous": { "type": ["boolean", "null"] },
+        "sender_id_hash": {
+          "description": "Salted per-run hash of any sender identifier seen, or null.",
+          "type": ["string", "null"],
+          "pattern": "^[a-f0-9]{16,64}$"
+        },
+        "actions": {
+          "type": "array",
+          "maxItems": 10,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["title_length", "has_remote_input"],
+            "properties": {
+              "title_length": { "type": "integer", "minimum": 0 },
+              "semantic_action": { "type": ["integer", "null"], "minimum": 0 },
+              "has_remote_input": { "type": "boolean" },
+              "remote_input_count": { "type": ["integer", "null"], "minimum": 0 },
+              "allow_free_form_input": { "type": ["boolean", "null"] },
+              "shows_user_interface": { "type": ["boolean", "null"] }
+            }
+          }
+        },
+        "has_content_intent": { "type": "boolean" },
+        "content_intent_opens": { "enum": ["exact_conversation", "app_home", "other", "not_tested", null] }
+      }
+    },
+    "reply_test": {
+      "description": "Only when a free-form RemoteInput action exists and the tester sent the fixed test text once.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["attempted", "visible_in_official_app", "duplicated"],
+      "properties": {
+        "attempted": { "type": "boolean" },
+        "visible_in_official_app": { "type": ["boolean", "null"] },
+        "duplicated": { "type": ["boolean", "null"] }
+      }
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["no_message_text", "no_names", "no_raw_ids"],
+      "properties": {
+        "no_message_text": { "const": true },
+        "no_names": { "const": true },
+        "no_raw_ids": { "const": true }
+      }
+    },
+    "notes": { "type": ["string", "null"], "maxLength": 500 }
+  }
+}

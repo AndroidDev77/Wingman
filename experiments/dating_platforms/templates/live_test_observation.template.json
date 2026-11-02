@@ -1,0 +1,21 @@
+{
+  "schema_version": "dating_live_test_observation.v1",
+  "run_id": "TEMPLATE-replace-me",
+  "observed_at": "2026-11-01T00:00:00Z",
+  "platform": "hinge",
+  "step": "L1_login",
+  "outcome": "skipped",
+  "environment": {
+    "wingman_build": "template",
+    "official_app_version": "0.0.0-template",
+    "android_sdk_int": 34,
+    "device_model": null,
+    "reference_commit": "f0rr0/hinge-rs@cffe397"
+  },
+  "login": { "email_code_required": null, "challenge_presented": false, "official_app_signed_out": null },
+  "counts": null,
+  "http_statuses_seen": [],
+  "enforcement_signal": null,
+  "redaction": { "no_credentials": true, "no_message_text": true, "no_names": true, "no_raw_ids": true },
+  "notes": "TEMPLATE ONLY. Not an observation. Filled by the owner after a live test; agents never run it."
+}

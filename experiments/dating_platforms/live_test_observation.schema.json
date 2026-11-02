@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wingman.invalid/experiments/dating_platforms/live_test_observation.schema.json",
+  "title": "DatingApiLiveTestObservation",
+  "description": "Redacted record of one step of the owner's live test of an experimental unofficial-API connector (D-021; docs/integrations/dating_platform_matrix.md §6f). Counts, statuses and outcome codes only. It must never contain phone numbers, OTP or email codes, tokens, session keys, device or install ids, message text, names or raw platform ids.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "observed_at",
+    "platform",
+    "step",
+    "outcome",
+    "environment",
+    "redaction"
+  ],
+  "properties": {
+    "schema_version": { "const": "dating_live_test_observation.v1" },
+    "run_id": { "type": "string", "pattern": "^[A-Za-z0-9_-]{4,64}$" },
+    "observed_at": { "type": "string", "format": "date-time", "pattern": "Z$" },
+    "platform": { "enum": ["hinge", "tinder", "bumble"] },
+    "step": {
+      "enum": ["L0_setup", "L1_login", "L2_list", "L3_read", "L4_ingest", "L5_approval", "L6_send", "L7_restart", "L8_failure", "L9_kill_switch", "L10_soak"]
+    },
+    "outcome": { "enum": ["pass", "fail", "blocked", "skipped"] },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["wingman_build", "official_app_version", "android_sdk_int", "reference_commit"],
+      "properties": {
+        "wingman_build": { "type": "string", "maxLength": 80 },
+        "official_app_version": { "type": "string", "maxLength": 40 },
+        "android_sdk_int": { "type": "integer", "minimum": 21 },
+        "device_model": { "type": ["string", "null"], "maxLength": 80 },
+        "reference_commit": {
+          "description": "Reference repo and commit the client identity was taken from, e.g. f0rr0/hinge-rs@cffe397.",
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+@[a-f0-9]{7,40}$"
+        }
+      }
+    },
+    "login": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "email_code_required": { "type": ["boolean", "null"] },
+        "challenge_presented": {
+          "description": "Any captcha, attestation or challenge. true => outcome must be blocked.",
+          "type": "boolean"
+        },
+        "official_app_signed_out": { "type": ["boolean", "null"] }
+      }
+    },
+    "counts": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "properties": {
+        "conversations_connector": { "type": ["integer", "null"], "minimum": 0 },
+        "conversations_official_app": { "type": ["integer", "null"], "minimum": 0 },
+        "messages_compared": { "type": ["integer", "null"], "minimum": 0 },
+        "messages_matching_order_and_length": { "type": ["integer", "null"], "minimum": 0 },
+        "events_ingested": { "type": ["integer", "null"], "minimum": 0 },
+        "duplicate_events": { "type": ["integer", "null"], "minimum": 0 },
+        "sends_attempted": { "type": ["integer", "null"], "minimum": 0 },
+        "sends_visible_in_official_app": { "type": ["integer", "null"], "minimum": 0 },
+        "network_calls_after_opt_out": { "type": ["integer", "null"], "minimum": 0 },
+        "api_calls_per_day_max": { "type": ["integer", "null"], "minimum": 0 }
+      }
+    },
+    "http_statuses_seen": {
+      "description": "Distinct HTTP or Sendbird status codes observed during the step (numbers only).",
+      "type": "array",
+      "items": { "type": "integer", "minimum": 100, "maximum": 999999 },
+      "maxItems": 50
+    },
+    "enforcement_signal": {
+      "description": "Stop reason if the connector entered Stopped (§6e), else null.",
+      "enum": [null, "auth_rejected", "client_version_retired", "rate_limited", "challenge_presented", "account_restricted", "sendbird_refused", "unexpected_4xx", "server_errors", "protocol_drift", "user_stopped"]
+    },
+    "redaction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["no_credentials", "no_message_text", "no_names", "no_raw_ids"],
+      "properties": {
+        "no_credentials": { "const": true },
+        "no_message_text": { "const": true },
+        "no_names": { "const": true },
+        "no_raw_ids": { "const": true }
+      }
+    },
+    "notes": { "type": ["string", "null"], "maxLength": 500 }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "login": { "type": "object", "properties": { "challenge_presented": { "const": true } }, "required": ["challenge_presented"] } },
+        "required": ["login"]
+      },
+      "then": { "properties": { "outcome": { "const": "blocked" } } }
+    }
+  ]
+}
