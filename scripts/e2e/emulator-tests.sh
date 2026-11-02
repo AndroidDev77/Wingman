@@ -51,6 +51,26 @@ adb install -r -g "$repo/android/app/build/outputs/apk/debug/app-debug.apk"
 adb install -r -g "$repo/android/app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk"
 adb logcat -c || true
 
+# A freshly booted emulator can bring its network up after boot completes: on main `b65f3d0`,
+# phase A's first request failed with ENETUNREACH to 10.0.2.2 while phase B (later) passed, and
+# the probe above saw "Network is unreachable" on green runs too. Wait (bounded, condition-based)
+# until the backend is reachable FROM the emulator before any test runs; fail clearly otherwise.
+log "wait until the backend is reachable from the emulator (10.0.2.2:8000, up to 180 s)"
+reachable=0
+for _ in $(seq 1 60); do
+  # GET /health over HTTP/1.0 (the server closes after answering), judged by the answer text, not
+  # by nc's exit status.
+  if adb shell 'printf "GET /health HTTP/1.0\r\nHost: 10.0.2.2\r\n\r\n" | toybox nc -w 5 10.0.2.2 8000' 2>/dev/null \
+      | grep -q "200 OK"; then reachable=1; break; fi
+  sleep 3
+done
+if [[ "$reachable" != 1 ]]; then
+  echo "the emulator never reached the backend at 10.0.2.2:8000; not running the tests" >&2
+  adb shell 'ip addr; ip route' || true
+  exit 1
+fi
+echo "backend reachable from the emulator"
+
 instrument() { # $1 class, $2 token, rest: extra -e pairs
   local cls="$1" token="$2"; shift 2
   adb shell am instrument -w \
