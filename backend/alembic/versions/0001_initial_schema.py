@@ -2350,6 +2350,8 @@ def upgrade() -> None:
         ),
         sa.Column("confidence", sa.Float(), nullable=False),
         sa.Column("evaluator_version", sa.String(length=64), nullable=False),
+        sa.Column("preferences_version", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column("input_fingerprint", sa.String(length=64), nullable=True),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -2372,6 +2374,10 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "score IS NULL OR (score >= 0 AND score <= 100)",
             name=op.f("ck_profile_evaluations_score_range"),
+        ),
+        sa.CheckConstraint(
+            "preferences_version >= 0",
+            name=op.f("ck_profile_evaluations_preferences_version_nonneg"),
         ),
         sa.ForeignKeyConstraint(
             ["user_id", "profile_id"],

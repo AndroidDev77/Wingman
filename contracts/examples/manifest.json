@@ -540,6 +540,10 @@
       "schema": "openapi.yaml#/components/schemas/ProfilePage"
     },
     {
+      "file": "profiles.review_queue.include_excluded.page.json",
+      "schema": "openapi.yaml#/components/schemas/ProfilePage"
+    },
+    {
       "file": "profile.decision.request.json",
       "schema": "openapi.yaml#/components/schemas/ProfileDecisionRequest"
     },
