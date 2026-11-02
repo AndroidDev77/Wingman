@@ -119,6 +119,9 @@ PR #38. Every exclusive row lock taken to serialize decisions or to change non-k
 - No retry on `40P01`/`40001` was added; a deadlock still fails a request.
 - Verified by the integrator: with `main`'s old locks and the new `tests/automation/test_ingest_deadlock.py`, the forced CI interleaving deadlocked 3/3 and the 24-upload stress test failed 2/3; with the fix, 6/6 runs passed. Backend 956 passed, contracts, migrations and the E2E suite passed locally; all 7 CI jobs green on head `d0ff996`.
 
+### D-021 (2026-11-01): Experimental unofficial-API connectors for Tinder, Bumble, Hinge (owner-approved)
+None of the three apps offers a public messaging or swiping API. The owner approved an **experimental** route built on existing open-source clients of each app's private API, accepting the terms-of-service and account-ban risk, under binding conditions recorded in WING-027/028/029: evaluate the reference repos first (license, maintenance, auth, endpoints) and never guess beyond them or bypass anti-bot protections; off by default with an explicit per-user ban-risk opt-in; login and session tokens stay on the device (Keystore), never on the backend, in logs or in the repo; calls originate from the device; everything flows through ingest, the dispatcher, approvals and the device outbox; approval-only until a live test by the owner passes; conservative rate limits and stop-on-enforcement; capabilities UNVERIFIED until that live test; the WING-017 notification-assisted path ships as the fallback. Priority: Hinge, then Tinder, then Bumble. This supersedes the "no private endpoints" lines in those tickets and in WING-021 for evaluation purposes only; WING-021 evaluates the candidate repositories but does not run them against live services.
+
 ## Open issues
 
 | ID | Issue | Owner | Status |

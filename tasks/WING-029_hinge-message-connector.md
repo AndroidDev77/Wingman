@@ -57,3 +57,16 @@ At completion, report:
 
 **Do not mark the real integration as delivered if it only works with fixtures or mocks.**
 
+
+## Owner decision D-021 (2026-11-01): experimental unofficial-API route (supersedes the "no private endpoints" lines above for this ticket)
+
+The repo owner approved evaluating and building an **experimental** connector on top of existing open-source clients of this app's private API, on these binding conditions:
+
+1. **Evaluate before building.** Start from the candidate repositories listed in `docs/integrations/dating_platform_matrix.md` (WING-021): check license compatibility, maintenance and last-known-working date, auth flow, exact endpoints called, and rate behavior. Prefer reimplementing the documented protocol in our own code over vendoring; never copy code whose license forbids it. Do not guess endpoints beyond what those references document, and do not attempt to bypass anti-bot, attestation, captcha or rate-limit protections.
+2. **Off by default, explicit opt-in.** Per-user, per-platform opt-in behind a plain-language warning that this uses an unofficial interface, may violate the platform's terms, and can get the user's account restricted or banned; the user bears that risk and can disable it at any time.
+3. **Credentials and sessions stay on the device.** Login (phone OTP etc.) happens on the user's phone; session tokens are stored only on-device, encrypted (Android Keystore), never sent to or stored by the backend, never logged, never committed, never in fixtures. Calls to the platform originate from the device, not the backend.
+4. **Same safety path as every connector.** Inbound data enters through the existing device ingest route; every outbound message goes through the dispatcher, approval policy, pause/takeover and the device outbox (one attempt per key, D-006). **Approval-only at first:** no autopilot and no automated swiping until a live test passes and the owner explicitly enables it per platform.
+5. **Conservative rate limits** (human-like pacing, daily caps) and immediate backoff/stop on auth errors, 4xx anomalies or any sign of enforcement; never retry aggressively.
+6. **Capabilities stay UNVERIFIED** until the owner (or a tester) runs the live test with their own account on their own device: authenticate, read an existing conversation, send one approved test reply, and see it in the official app. Agents never enter credentials or codes.
+7. **Fallback remains:** the notification-based assisted path (WING-017) ships regardless and is what users get when the experimental connector is off or broken.
+8. **Priority:** Hinge first (WING-029); Tinder (WING-027) and Bumble (WING-028) only after Hinge's evaluation, and Bumble only if a currently working auth flow is documented.
