@@ -171,16 +171,44 @@ def test_write_refuses_a_file_git_would_commit(tmp_path: Path) -> None:
     assert "WINGMAN_AUTH_ISSUER=https://wingman.us.auth0.com/" in ignored.read_text()
 
 
-def test_repo_backend_env_is_git_ignored() -> None:
-    """The default --write target never reaches a commit."""
+@pytest.mark.parametrize(
+    "path", ["backend/.env", "backend/.env.bak", "backend/.env.auth0.AbC123", ".env.bak"]
+)
+def test_repo_backend_env_is_git_ignored(path: str) -> None:
+    """The default --write target, its .bak copy and the temp file never reach a commit."""
     repo = SCRIPT.parents[1]
     if not (repo / ".git").exists():
         pytest.skip("not a git checkout")
     r = subprocess.run(  # noqa: S603
-        ["git", "-C", str(repo), "check-ignore", "-q", "backend/.env"],  # noqa: S607
+        ["git", "-C", str(repo), "check-ignore", "-q", path],  # noqa: S607
         check=False,
     )
     assert r.returncode == 0
+
+
+def test_repo_env_example_is_not_ignored() -> None:
+    repo = SCRIPT.parents[1]
+    if not (repo / ".git").exists():
+        pytest.skip("not a git checkout")
+    r = subprocess.run(  # noqa: S603
+        ["git", "-C", str(repo), "check-ignore", "-q", ".env.example"],  # noqa: S607
+        check=False,
+    )
+    assert r.returncode == 1
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
+def test_write_refuses_when_backup_would_be_committed(tmp_path: Path) -> None:
+    """An existing .env is copied to .env.bak; refuse if git would not ignore that copy."""
+    _git(tmp_path, "init", "-q")
+    (tmp_path / ".gitignore").write_text(".env\n")  # ignores .env but not .env.bak
+    target = tmp_path / ".env"
+    target.write_text("WINGMAN_DATABASE_URL=postgresql://u:secret@db/x\n")
+    r = run("--write", "--env-file", str(target), DOMAIN, CLIENT, API)
+    assert r.returncode == 2
+    assert "backup" in r.stderr
+    assert not (tmp_path / ".env.bak").exists()
+    assert target.read_text() == "WINGMAN_DATABASE_URL=postgresql://u:secret@db/x\n"
 
 
 def _fake_curl(tmp_path: Path, body: str, rc: int) -> dict[str, str]:

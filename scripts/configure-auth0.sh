@@ -122,6 +122,10 @@ if [[ $write -eq 1 ]]; then
     if ! git -C "$target_dir" check-ignore -q "$target"; then
       die "refusing to write $target: git does not ignore it, so the values could be committed"
     fi
+    # The .bak copy holds the previous file (possibly real secrets): it must be ignored too.
+    if [[ -f "$target" ]] && ! git -C "$target_dir" check-ignore -q "$target.bak"; then
+      die "refusing to write $target: git does not ignore the backup $target.bak (add it to .gitignore)"
+    fi
   fi
   pattern='^(WINGMAN_AUTH_(ISSUER|AUDIENCE|JWKS_URL|ALGORITHMS)=|# Auth0 \(I-014)'
   if [[ $dry -eq 1 ]]; then

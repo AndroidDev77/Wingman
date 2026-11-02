@@ -1,5 +1,7 @@
 # Secrets
 .env
+.env.*
+!.env.example
 *.keystore
 *.jks
 local.properties

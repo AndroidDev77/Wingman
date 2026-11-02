@@ -105,7 +105,7 @@ WINGMAN_AUTH_ALGORITHMS=RS256
 ```
 
 `scripts/configure-auth0.sh` prints exactly these lines. With `--write` it puts them in
-`backend/.env` (git-ignored; it refuses any file git would commit, keeps your other lines and a
+`backend/.env` (git-ignored, as are `.env.*` copies; it refuses any file git would commit, keeps your other lines and a
 `.bak` copy). Add `--dry-run` to see the change first. For a hosted backend, put the same four
 values in the deployment's env/secret store (they are not secret, but keep them with the rest of
 the environment; see [`deployment.md`](deployment.md)).
