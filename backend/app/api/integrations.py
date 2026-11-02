@@ -9,7 +9,8 @@
   /v1/contacts/{id}/identity-links`` (``listContactIdentityLinks``), ``DELETE
   /v1/identity-links/{id}`` (``deleteIdentityLink``): user-made links only.
 * ``POST /v1/profiles`` (``importProfile``), ``GET /v1/profiles/review-queue``
-  (``listProfileReviewQueue``), ``POST /v1/profiles/{id}/decision``
+  (``listProfileReviewQueue``, ranked by WING-019 compatibility scoring),
+  ``POST /v1/profiles/{id}/decision``
   (``recordProfileDecision``), ``POST /v1/profile-actions/{id}/execute``
   (``requestProfileActionExecution``: the swipe gate; ``queued`` at most, never
   executed here).
@@ -21,11 +22,12 @@ import re
 import uuid
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, Depends, Header, Query, Response
+from fastapi import APIRouter, Body, Depends, Header, Query, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.ai.match_evaluator import MatchEvaluator, MatchSettings
 from app.api._automation_common import (
     AutomationServices,
     get_services,
@@ -71,6 +73,7 @@ from app.services.integrations import (
     ProfileView,
     SwipeExecutionDisabled,
 )
+from app.services.profiles import ProfileMatchingService
 
 __all__ = ["router"]
 
@@ -532,20 +535,44 @@ async def import_profile(
         return slot.complete(201 if created else 200, profile_out(view))
 
 
+def get_match_evaluator(request: Request, services: Services) -> MatchEvaluator:
+    """WING-019 evaluator: rules only unless ``WINGMAN_MATCH_LLM_ENABLED`` is set, then
+    the app's configured gateway (the reply generator's). ``app.state.match_evaluator``
+    overrides both (tests, dev)."""
+    configured: MatchEvaluator | None = getattr(request.app.state, "match_evaluator", None)
+    if configured is not None:
+        return configured
+    if not MatchSettings().llm_enabled:
+        return MatchEvaluator()
+    generator = getattr(services.controller, "generator", None)
+    return MatchEvaluator(getattr(generator, "gateway", None))
+
+
 @router.get("/v1/profiles/review-queue", operation_id="listProfileReviewQueue", tags=["profiles"])
 async def list_profile_review_queue(
     scope: Scope,
     session: Session,
-    service: ProfileSvc,
+    services: Services,
+    evaluator: Annotated[MatchEvaluator, Depends(get_match_evaluator)],
     cursor: Cursor = None,
     limit: Limit = DEFAULT_LIMIT,
     provider: ProfileProvider | None = None,
+    include_excluded: bool = False,
 ) -> dict[str, Any]:
-    page = await ProfileRepository(session, scope).review_queue(
-        provider=provider, cursor=cursor, limit=limit
+    """Ranked by WING-019 (``app.services.profiles``, contract 1.3.1): current evaluation
+    first (lazily re-evaluated), fresh before stale; dealbreaker hits are left out unless
+    ``include_excluded=true``, which lists them last."""
+    matching = ProfileMatchingService(evaluator, now=services.dispatcher._now)  # noqa: SLF001
+    page = await matching.review_queue(
+        session,
+        scope,
+        provider=provider,
+        cursor=cursor,
+        limit=limit,
+        include_excluded=include_excluded,
     )
     return {
-        "items": [profile_out(await service.view(session, scope, p)) for p in page.items],
+        "items": [profile_out(view) for view in page.items],
         "next_cursor": page.next_cursor,
     }
 

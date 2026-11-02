@@ -27,6 +27,8 @@ class WingmanNotificationListenerService : NotificationListenerService() {
         NotificationConnectorRuntime.replyAdapter(this).recoverAfterRestart()
         // Rebuild the in-memory live reply actions; snapshot dedup keeps recorded events from repeating.
         runCatching { activeNotifications }.getOrNull()?.forEach { handle(it) }
+        // I-033: report the access change and upload anything recorded.
+        NotificationSyncRuntime.requestSync(this)
     }
 
     override fun onListenerDisconnected() {
@@ -36,6 +38,7 @@ class WingmanNotificationListenerService : NotificationListenerService() {
             core.liveActions.clear()
         } else {
             core.onAccessRevoked()
+            NotificationSyncRuntime.requestSync(this)
         }
     }
 
@@ -62,10 +65,14 @@ class WingmanNotificationListenerService : NotificationListenerService() {
         }
         if (!allowlisted) return
         val actions = sbn.notification.actions
-        core.onPosted(source, snapshot) { action ->
+        val outcome = core.onPosted(source, snapshot) { action ->
             val platformAction = actions?.getOrNull(action.index)
             if (platformAction == null) ReplyActionHandle { com.wingman.integrations.notifications.FireResult.Error("ActionGone") }
             else AndroidReplyActionHandle(applicationContext, platformAction)
+        }
+        // I-033: upload new events soon (coalesced; off the main thread).
+        if (outcome is com.wingman.integrations.notifications.PostedOutcome.Processed && outcome.newEvents.isNotEmpty()) {
+            NotificationSyncRuntime.requestSync(this)
         }
     }
 

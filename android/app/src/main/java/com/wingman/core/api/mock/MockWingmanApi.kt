@@ -4,6 +4,7 @@ import com.wingman.core.api.AgentActionFilter
 import com.wingman.core.api.ApiError
 import com.wingman.core.api.ApiResult
 import com.wingman.core.api.ApprovalFilter
+import com.wingman.core.api.AssistedDeliveryFilter
 import com.wingman.core.api.ConversationFilter
 import com.wingman.core.api.IdempotencyKey
 import com.wingman.core.api.PageRequest
@@ -16,6 +17,12 @@ import com.wingman.core.model.ApprovalDecisionResult
 import com.wingman.core.model.wireName
 import com.wingman.core.model.ApprovalStatus
 import com.wingman.core.model.ApproveRequest
+import com.wingman.core.model.AssistedDelivery
+import com.wingman.core.model.AssistedDeliveryConfirmRequest
+import com.wingman.core.model.AssistedDeliveryResult
+import com.wingman.core.model.AssistedDeliveryStatus
+import com.wingman.core.model.ConnectionTransport
+import com.wingman.core.model.InboundNotice
 import com.wingman.core.model.AutomationActionRequest
 import com.wingman.core.model.Capability
 import com.wingman.core.model.CapabilitySet
@@ -135,6 +142,8 @@ class MockWingmanApi(
     private val ingested = LinkedHashMap<String, Pair<JsonObject, ConnectorEventIngestResult>>()
     private val inboundExternalIds = mutableMapOf<String, ConnectorEventIngestResult>()
     private val outbox = mutableListOf<MockOutboxEntry>()
+    private val assisted = MockAssistedFixtures.assistedDeliveries.toMutableList()
+    private val notices = MockAssistedFixtures.inboundNotices.toMutableList()
 
     init {
         // Seed the audit timeline with the history behind the fixture approvals.
@@ -256,6 +265,16 @@ class MockWingmanApi(
                 if (body.deviceInstallId != null) return@idempotent problem(422, ErrorCode.VALIDATION_ERROR, "device_install_id must be absent for platform 'mock'")
                 if (body.capabilities != null) return@idempotent problem(422, ErrorCode.VALIDATION_ERROR, "capabilities must be absent for platform 'mock'")
             }
+            if (body.platform in DATING_PLATFORMS) {
+                // Contract 1.3.0: dating platforms need a transport; unofficial_api also needs consent (not modelled here).
+                when (body.transport) {
+                    null -> return@idempotent problem(422, ErrorCode.VALIDATION_ERROR, "transport is required for ${body.platform}")
+                    ConnectionTransport.NOTIFICATION -> Unit
+                    ConnectionTransport.UNOFFICIAL_API ->
+                        return@idempotent problem(422, ErrorCode.EXPERIMENTAL_CONSENT_REQUIRED, "experimental consent required")
+                    else -> return@idempotent problem(422, ErrorCode.VALIDATION_ERROR, "transport not allowed for ${body.platform}")
+                }
+            }
             if (device) {
                 val install = body.deviceInstallId ?: return@idempotent problem(422, ErrorCode.VALIDATION_ERROR, "device-side platforms need device_install_id")
                 if (!ID_PATTERN.matches(install)) return@idempotent problem(422, ErrorCode.VALIDATION_ERROR, "device_install_id must be a lowercase UUID")
@@ -271,6 +290,7 @@ class MockWingmanApi(
                 id = nextId(), platform = body.platform, displayName = body.displayName, status = ConnectionStatus.CONNECTED,
                 capabilities = stored, createdAt = now, updatedAt = now,
                 deviceInstallId = body.deviceInstallId, pairedAt = now, unpairedAt = null,
+                transport = body.transport,
             )
             connections += created
             val claimed = body.capabilities?.capabilities?.let(::verifiedNames).orEmpty()
@@ -326,6 +346,13 @@ class MockWingmanApi(
                     audit(AgentActionType.APPROVAL_CANCELED, Actor.USER, a.conversationId, a.contactId, approvalId = a.id, reasonCode = "connection_unavailable")
                     adjustPendingCount(a.conversationId, -1)
                     a.copy(status = ApprovalStatus.CANCELED, decidedAt = now)
+                } else a
+            }
+            // 1.3.0: pending assisted deliveries of the connection are canceled too (ADR 0008 §6).
+            assisted.replaceAll { a ->
+                if (a.connectionId == connectionId && a.status == AssistedDeliveryStatus.PENDING) {
+                    audit(AgentActionType.ASSISTED_DELIVERY_CANCELED, Actor.USER, a.conversationId, a.contactId, reasonCode = "connection_unavailable")
+                    a.copy(status = AssistedDeliveryStatus.CANCELED, cancelReason = "connection_unavailable", decidedAt = now)
                 } else a
             }
             val unsupported = Capability(Verification.UNSUPPORTED, notes = UNPAIRED_NOTE)
@@ -593,6 +620,11 @@ class MockWingmanApi(
                 }
                 messageId = nextId()
                 inboundExternalIds[dedupKey] = ConnectorEventIngestResult(eventId, ConnectorEventIngestOutcome.ACCEPTED, messageId, clock())
+                noticeFor(connection, envelope, payload)?.let {
+                    // ADR 0008 §4: anything but a linked, complete chat message is a notice, not a message.
+                    notices += it.copy(id = messageId)
+                    messageId = null
+                }
             }
             val result = ConnectorEventIngestResult(eventId, ConnectorEventIngestOutcome.ACCEPTED, messageId, clock())
             ingested[eventId] = envelope to result
@@ -623,6 +655,106 @@ class MockWingmanApi(
             }
             ok(OutboxClaimResult(leased, now))
         }
+
+    /* ------------------------------------------------------------ assisted delivery and notices (v1.3.0) */
+
+    override suspend fun listAssistedDeliveries(page: PageRequest, filter: AssistedDeliveryFilter): ApiResult<Page<AssistedDelivery>> =
+        op("listAssistedDeliveries") {
+            val status = filter.status ?: AssistedDeliveryStatus.PENDING
+            paginate(
+                assisted.filter { it.status == status && (filter.conversationId == null || it.conversationId == filter.conversationId) }
+                    .sortedWith(compareByDescending<AssistedDelivery> { it.createdAt }.thenByDescending { it.id }),
+                page,
+            )
+        }
+
+    override suspend fun confirmAssistedDelivery(
+        assistedDeliveryId: String,
+        body: AssistedDeliveryConfirmRequest,
+        key: IdempotencyKey,
+    ): ApiResult<AssistedDeliveryResult> =
+        idempotent("confirmAssistedDelivery", "POST /v1/assisted-deliveries/{id}/confirm", key, assistedDeliveryId to body) {
+            val index = assisted.indexOfFirst { it.id == assistedDeliveryId }
+            if (index < 0) return@idempotent notFound()
+            val current = assisted[index]
+            if (current.status != AssistedDeliveryStatus.PENDING) {
+                return@idempotent problem(409, ErrorCode.ASSISTED_DELIVERY_NOT_PENDING, "Assisted delivery is ${current.status.wireName()}")
+            }
+            val now = clock()
+            val text = body.sentText ?: current.text
+            // ADR 0008 §6: the user's report. Never `sent`/`delivered`, no `sent_at`, no connector event.
+            val message = Message(
+                id = nextId(), conversationId = current.conversationId, direction = MessageDirection.OUTBOUND,
+                origin = MessageOrigin.ASSISTED_DRAFT, text = text, deliveryState = DeliveryState.USER_REPORTED_SENT,
+                externalMessageId = null, approvalId = null, attemptCount = 0, failure = null,
+                createdAt = now, sentAt = null, deliveredAt = null,
+            )
+            messages.getOrPut(current.conversationId) { mutableListOf() }.add(message)
+            val updated = current.copy(status = AssistedDeliveryStatus.USER_REPORTED_SENT, finalText = text, messageId = message.id, decidedAt = now)
+            assisted[index] = updated
+            audit(
+                AgentActionType.ASSISTED_DELIVERY_CONFIRMED, Actor.USER, current.conversationId, current.contactId, message.id,
+                details = details("assisted_delivery_id" to current.id, "edited" to (text != current.text)),
+            )
+            ok(AssistedDeliveryResult(updated, message))
+        }
+
+    override suspend fun dismissAssistedDelivery(
+        assistedDeliveryId: String,
+        body: RejectRequest,
+        key: IdempotencyKey,
+    ): ApiResult<AssistedDeliveryResult> =
+        idempotent("dismissAssistedDelivery", "POST /v1/assisted-deliveries/{id}/dismiss", key, assistedDeliveryId to body) {
+            val index = assisted.indexOfFirst { it.id == assistedDeliveryId }
+            if (index < 0) return@idempotent notFound()
+            val current = assisted[index]
+            if (current.status != AssistedDeliveryStatus.PENDING) {
+                return@idempotent problem(409, ErrorCode.ASSISTED_DELIVERY_NOT_PENDING, "Assisted delivery is ${current.status.wireName()}")
+            }
+            val updated = current.copy(status = AssistedDeliveryStatus.DISMISSED, decidedAt = clock())
+            assisted[index] = updated
+            audit(AgentActionType.ASSISTED_DELIVERY_DISMISSED, Actor.USER, current.conversationId, current.contactId,
+                details = details("assisted_delivery_id" to current.id))
+            ok(AssistedDeliveryResult(updated, message = null))
+        }
+
+    override suspend fun listInboundNotices(page: PageRequest, connectionId: String?): ApiResult<Page<InboundNotice>> =
+        op("listInboundNotices") {
+            paginate(
+                notices.filter { connectionId == null || it.connectionId == connectionId }
+                    .sortedWith(compareByDescending<InboundNotice> { it.occurredAt }.thenByDescending { it.id }),
+                page,
+            )
+        }
+
+    private fun noticeFor(connection: Connection, envelope: JsonObject, payload: JsonObject): InboundNotice? {
+        if (connection.platform !in DATING_PLATFORMS) return null
+        fun str(o: JsonObject, k: String) = (o[k] as? JsonPrimitive)?.takeIf { it.isString }?.content
+        fun bool(k: String) = (payload[k] as? JsonPrimitive)?.content == "true"
+        val kind = str(payload, "kind") ?: "chat_message"
+        val identity = str(payload, "identity") ?: "unlinked"
+        if (kind == "chat_message" && identity == "linked" && !bool("truncated") && !bool("content_hidden")) return null
+        val now = clock()
+        return InboundNotice(
+            id = "", connectionId = connection.id, platform = connection.platform,
+            kind = com.wingman.core.model.InboundEventKind.entries.firstOrNull { it.wireName() == kind } ?: com.wingman.core.model.InboundEventKind.UNKNOWN,
+            identity = com.wingman.core.model.SenderIdentity.entries.firstOrNull { it.wireName() == identity } ?: com.wingman.core.model.SenderIdentity.UNLINKED,
+            senderLabel = str(payload, "sender_label"), text = str(payload, "text").orEmpty(),
+            truncated = bool("truncated"), contentHidden = bool("content_hidden"),
+            externalMessageId = str(envelope, "external_message_id").orEmpty(),
+            externalConversationId = str(payload, "external_conversation_id"),
+            source = ConnectionTransport.NOTIFICATION, occurredAt = now, createdAt = now,
+        )
+    }
+
+    /** Test hook: plays the dispatcher queuing an assisted delivery (ADR 0008 §6). */
+    suspend fun queueAssistedDelivery(delivery: AssistedDelivery) = mutex.withLock { assisted += delivery }
+
+    /** Test hook: removes the seeded assisted deliveries and notices. */
+    suspend fun clearAssisted() = mutex.withLock {
+        assisted.clear()
+        notices.clear()
+    }
 
     /* ------------------------------------------------------------ internals */
 
@@ -899,6 +1031,7 @@ class MockWingmanApi(
 
     companion object {
         private const val CURSOR_PREFIX = "mock:"
+        private val DATING_PLATFORMS = setOf("tinder", "bumble", "hinge")
         private val ID_PATTERN = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
         /** Backend `CLIENT_VERIFIED_NOTE` (app.services.connections). */

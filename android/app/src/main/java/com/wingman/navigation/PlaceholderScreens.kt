@@ -71,6 +71,11 @@ fun DashboardScreen(navigator: Navigator) {
                 }
             }
             OutlinedButton(onClick = { navigator.navigateTo(Destination.Approvals) }) { Text("Review approvals") }
+            // WING-027/028: drafts for Tinder/Bumble (assisted only) that the user sends by hand.
+            val assisted = com.wingman.features.assisted.LocalAssistedBadge.current?.badge?.collectAsStateWithLifecycle()?.value
+            OutlinedButton(onClick = { navigator.navigateTo(Destination.Assisted) }) {
+                Text("Send by hand" + (assisted?.label?.let { " ($it)" } ?: ""))
+            }
         }
     }
 }

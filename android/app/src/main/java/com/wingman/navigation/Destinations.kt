@@ -20,6 +20,8 @@ enum class Destination(
     Settings("settings", "Settings", topLevel = true),
     Conversation("conversation/{${Routes.ARG_CONVERSATION_ID}}", "Conversation", topLevel = false),
     Onboarding("onboarding", "Welcome", topLevel = false),
+    /** WING-027/028: drafts the user sends by hand (assisted delivery) and read-only notices. */
+    Assisted("assisted", "Send by hand", topLevel = false),
     ;
 
     companion object {
@@ -50,6 +52,7 @@ object Routes {
     fun discovery() = Destination.Discovery.pattern
     fun settings() = Destination.Settings.pattern
     fun onboarding() = Destination.Onboarding.pattern
+    fun assisted() = Destination.Assisted.pattern
 
     /** `conversation/<id>`. Rejects non-contract IDs so a malformed deep link can't reach the screen. */
     fun conversation(conversationId: String): String {

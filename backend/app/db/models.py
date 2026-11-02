@@ -1330,6 +1330,7 @@ class ProfileEvaluation(UserOwnedMixin, Base):
         CheckConstraint("score IS NULL OR (score >= 0 AND score <= 100)", name="score_range"),
         CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence_range"),
         CheckConstraint("jsonb_typeof(reasons) = 'array'", name="reasons_array"),
+        CheckConstraint("preferences_version >= 0", name="preferences_version_nonneg"),
     )
 
     profile_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
@@ -1346,6 +1347,13 @@ class ProfileEvaluation(UserOwnedMixin, Base):
     )
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
     evaluator_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    # WING-019 history keys (not in the contract): the user-wide preferences version the
+    # evaluation used, and a digest of every input (profile content, preferences, rules
+    # version). A later preference change or re-import adds a new row; old rows stay.
+    preferences_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default=sql("0")
+    )
+    input_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
 
 class ProfileAction(UserOwnedMixin, Base):

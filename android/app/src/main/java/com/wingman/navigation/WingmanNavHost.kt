@@ -6,7 +6,10 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Badge
+import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
@@ -38,6 +41,8 @@ import com.wingman.core.ui.compose.LocalAppContainer
 import com.wingman.features.approvals.ApprovalsNavIcon
 import com.wingman.features.approvals.LocalPendingBadge
 import com.wingman.features.approvals.PendingBadgeState
+import com.wingman.features.assisted.AssistedBadgeState
+import com.wingman.features.assisted.LocalAssistedBadge
 import com.wingman.features.auth.AuthGate
 import com.wingman.features.auth.SignInScreen
 import com.wingman.features.onboarding.OnboardingGate
@@ -86,7 +91,13 @@ private fun MainShell(
     val badgeScope = rememberCoroutineScope()
     val pendingBadge = remember(container) { PendingBadgeState(badgeScope, container.api) }
     val badge by pendingBadge.badge.collectAsState()
-    LaunchedEffect(current) { pendingBadge.refresh() }
+    // WING-027/028: drafts waiting to be sent by hand, shown on the Home tab (the "Send by hand" entry).
+    val assistedBadge = remember(container) { AssistedBadgeState(badgeScope, container.api) }
+    val assisted by assistedBadge.badge.collectAsState()
+    LaunchedEffect(current) {
+        pendingBadge.refresh()
+        assistedBadge.refresh()
+    }
     Scaffold(
         bottomBar = {
             NavigationBar {
@@ -95,8 +106,13 @@ private fun MainShell(
                         selected = current == dest,
                         onClick = { navigator.navigateTo(dest) },
                         icon = {
+                            val sendByHand = assisted?.label
                             if (dest == Destination.Approvals) {
                                 ApprovalsNavIcon(badge) { Icon(dest.icon(), contentDescription = null) }
+                            } else if (dest == Destination.Dashboard && sendByHand != null) {
+                                BadgedBox(badge = { Badge { Text(sendByHand) } }) {
+                                    Icon(dest.icon(), contentDescription = assisted?.description)
+                                }
                             } else {
                                 Icon(dest.icon(), contentDescription = null)
                             }
@@ -107,7 +123,7 @@ private fun MainShell(
             }
         },
     ) { padding ->
-        CompositionLocalProvider(LocalPendingBadge provides pendingBadge) {
+        CompositionLocalProvider(LocalPendingBadge provides pendingBadge, LocalAssistedBadge provides assistedBadge) {
             WingmanNavHost(navController, navigator, screens, Modifier.padding(padding))
         }
     }
@@ -193,6 +209,7 @@ private fun Destination.icon(): ImageVector = when (this) {
     Destination.Settings -> Icons.Filled.Settings
     Destination.Conversation -> Icons.Filled.Email
     Destination.Onboarding -> Icons.Filled.Home
+    Destination.Assisted -> Icons.Filled.Send
 }
 
 @Preview(name = "App shell (mock API)", showSystemUi = true)

@@ -97,6 +97,9 @@ fun SettingsScreen() {
             // I-020: pair / unpair this phone's SMS as a Wingman connection.
             SectionTitle("Connections")
             com.wingman.features.connections.SmsConnectionSection()
+            // WING-027/028 (I-033): dating apps through their notifications, assisted only.
+            SectionTitle("Dating apps (notifications)")
+            com.wingman.features.connections.NotificationConnectionSection()
             HorizontalDivider()
             SectionTitle("Account")
             SignOutButton()
