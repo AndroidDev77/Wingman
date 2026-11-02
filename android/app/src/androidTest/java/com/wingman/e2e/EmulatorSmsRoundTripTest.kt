@@ -7,6 +7,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.uiautomator.By
 import com.wingman.BuildConfig
 import com.wingman.MainActivity
+import com.wingman.features.connections.SmsConnectionCopy
 import com.wingman.integrations.sms.SmsHostSyncReport
 import com.wingman.integrations.sms.SmsInstallId
 import com.wingman.integrations.sms.android.SmsConnectorRuntime
@@ -82,7 +83,10 @@ class EmulatorSmsRoundTripTest {
         // 1. Pair from Settings > Connections > Phone SMS (the app's pairing flow).
         ui.openTab("Settings")
         ui.scrollTo(By.text("Pair this phone's SMS"), "pair button").click()
-        ui.scrollTo(By.text("Status: Connected"), "Status: Connected")
+        // Pairing is a network call: wait on the status line itself (stable test tag, present in
+        // every state) until it reads Connected, instead of searching the page once by scrolling.
+        val status = By.res(SmsConnectionCopy.STATUS_TEST_TAG)
+        ui.waitUntilShown(status, status.text("Status: Connected"), "SMS status Connected", timeoutMs = 60_000)
         ui.scrollTo(By.text("Send replies: UNVERIFIED (not yet tested on a device)"), "send UNVERIFIED")
         ui.scrollTo(By.text("Autopilot: not available for SMS"), "autopilot not available")
         val install = SmsInstallId.getOrCreate(SmsConnectorRuntime.host(ctx).store)

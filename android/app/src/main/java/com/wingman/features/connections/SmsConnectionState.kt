@@ -62,6 +62,8 @@ data class SmsConnectionView(
 
 /** Plain-language copy and the display rules. */
 object SmsConnectionCopy {
+    /** Test tag (and UiAutomator resource id) of the "Status: ..." line. */
+    const val STATUS_TEST_TAG = "sms_connection_status"
     const val ROLE_EXPLANATION =
         "Android only lets the default SMS app receive texts and keep them in your message history. " +
             "Wingman needs to be your default SMS app to see incoming texts and to send the replies you approve. " +

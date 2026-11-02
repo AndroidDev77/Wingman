@@ -7,8 +7,12 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -32,9 +36,23 @@ class AutoSwipeViewModel(api: WingmanApi) : ViewModel() {
     }
 }
 
-/** Shown in Settings: one toggle per dating-app connection, disabled with the reason unless swipe is VERIFIED. */
+/**
+ * Shown in Settings, collapsed by default to one row (as the notification section, PR #50): the
+ * Settings page keeps its length and nothing is fetched until the user opens it. Expanded: one
+ * toggle per dating-app connection, disabled with the reason unless swipe is VERIFIED.
+ */
 @Composable
 fun AutoSwipeSettingsSection() {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(AutoSwipeCopy.COLLAPSED_SUMMARY, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+        TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Hide" else "Details") }
+    }
+    if (expanded) AutoSwipeDetails()
+}
+
+@Composable
+private fun AutoSwipeDetails() {
     val container = LocalAppContainer.current
     val vm = wingmanViewModel(key = "auto-swipe") { AutoSwipeViewModel(container.api) }
     val ui by vm.holder.state.collectAsStateWithLifecycle()

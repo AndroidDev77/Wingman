@@ -22,6 +22,9 @@ import androidx.test.uiautomator.Until
  */
 const val UI_TIMEOUT_MS = 30_000L
 
+/** Swipe speed for [E2eDevice.scrollTo], in px/s: slow enough that Compose barely flings. */
+const val SCROLL_SPEED = 1_500
+
 class E2eDevice(private val timeoutMs: Long = UI_TIMEOUT_MS) {
     val device: UiDevice = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
 
@@ -118,18 +121,46 @@ class E2eDevice(private val timeoutMs: Long = UI_TIMEOUT_MS) {
     /** A TabRow tab: the top-most node with exactly [title] (a tab's label may also be on a button). */
     fun openInnerTab(title: String) = clickTopMost(By.text(title), "tab \"$title\"")
 
-    /** Scrolls the largest scrollable container until [sel] is on screen (down, then back up). */
-    fun scrollTo(sel: BySelector, what: String, maxSwipes: Int = 15): UiObject2 {
+    /**
+     * Scrolls the largest scrollable container until [sel] is on screen (down, then back up).
+     *
+     * Slow, settled steps: a fast UiAutomator swipe ends with a fling in Compose, which can carry a
+     * short node past the viewport between two checks, so each step is half a page at [SCROLL_SPEED]
+     * and waits for the UI to go idle before looking. This only FINDS a node that already exists; to
+     * wait for something that appears later (a status after a network call), use [waitUntilShown].
+     */
+    fun scrollTo(sel: BySelector, what: String, maxSwipes: Int = 25): UiObject2 {
+        device.waitForIdle()
         device.findObject(sel)?.let { return it }
         for (direction in listOf(Direction.DOWN, Direction.UP)) {
-            repeat(maxSwipes) {
-                val scrollable = device.findObjects(By.scrollable(true)).maxByOrNull { bounds(it).height() } ?: return@repeat
-                val moved = scrollable.scroll(direction, 0.7f)
+            for (i in 0 until maxSwipes) {
+                val scrollable = device.findObjects(By.scrollable(true)).maxByOrNull { bounds(it).height() } ?: break
+                val more = scrollable.scroll(direction, 0.5f, SCROLL_SPEED)
+                device.waitForIdle()
                 device.findObject(sel)?.let { return it }
-                if (!moved) return@repeat
+                if (!more) break // reached the end in this direction
             }
         }
-        return device.findObject(sel) ?: throw AssertionError("could not scroll to $what")
+        return device.findObject(sel) ?: run {
+            dumpHierarchy("could not scroll to $what")
+            throw AssertionError("could not scroll to $what")
+        }
+    }
+
+    /**
+     * Waits (condition-based, up to [timeoutMs]) until [expected] is shown, keeping the always-present
+     * [anchor] (e.g. a status line found by its test tag) on screen: content loading above it can
+     * push it out of the viewport while we wait, so it is scrolled back into view between waits.
+     */
+    fun waitUntilShown(anchor: BySelector, expected: BySelector, what: String, timeoutMs: Long = this.timeoutMs): UiObject2 {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            dismissSystemAnrDialog()
+            scrollTo(anchor, "anchor of $what")
+            if (device.wait(Until.hasObject(expected), 2_000)) device.findObject(expected)?.let { return it }
+        }
+        dumpHierarchy("never showed $what")
+        throw AssertionError("UI never showed $what within ${timeoutMs}ms")
     }
 
     /** Taps the top-most "Refresh" until [sel] shows up (screens re-read the server on request). */

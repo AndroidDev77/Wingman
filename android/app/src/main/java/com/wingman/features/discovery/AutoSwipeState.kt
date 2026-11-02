@@ -44,6 +44,8 @@ data class AutoSwipeUi(
 }
 
 object AutoSwipeCopy {
+    /** Settings shows the section collapsed to this one line; nothing is loaded until it is opened. */
+    const val COLLAPSED_SUMMARY = "Off on every dating app: no tested swipe exists."
     const val INTRO =
         "Auto-swipe would let Wingman act on your recorded decisions in a dating app. It stays off until a real-device " +
             "test shows a working swipe. None of Tinder, Bumble or Hinge has one."
