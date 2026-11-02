@@ -247,7 +247,7 @@ class FakeHingeServer {
         sendbirdApiUrl = server.url("/sb/").toString(),
         sendbirdWsUrl = server.url("/ws/").toString().replaceFirst("http://", "ws://"),
         sendbirdAppId = "TEST-APP-ID", sendbirdSdkVersion = "4.0.0", appVersion = "10.0.0", buildNumber = "1",
-        osVersion = "26.0", devicePlatform = "iOS", deviceModelCode = "TestModel1,1", deviceRegion = "US", acceptLanguage = "en-US",
+        osVersion = "26.0", devicePlatform = "iOS", deviceModelCode = "TestModel1,1", deviceRegion = "US", acceptLanguage = "en-US", userAgent = "TestAgent/1",
     )
 
     fun shutdown() { runCatching { server.shutdown() } }

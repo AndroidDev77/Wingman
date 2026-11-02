@@ -146,6 +146,9 @@ class HingeOptOutAndInertTest {
         val full = HingeBuildFlags.fromBuildConfig(FlagOnComplete::class.java.name)
         assertTrue(full.connectorAvailable)
         assertEquals("10.0.0", full.identity.appVersion)
+        assertEquals("TestAgent/1", full.identity.hingeUserAgent())
+        // The user-agent is part of the client identity (integrator, D-026): without it, inert.
+        assertFalse(HingeBuildFlags.fromBuildConfig(FlagOnWithoutUserAgent::class.java.name).connectorAvailable)
     }
 }
 
@@ -159,6 +162,24 @@ object FlagOnIncomplete {
 }
 
 object FlagOnComplete {
+    @JvmField val WINGMAN_EXPERIMENTAL = true
+    @JvmField val HINGE_BASE_URL = "https://hinge.invalid"
+    @JvmField val HINGE_SENDBIRD_API_URL = "https://api-test.invalid"
+    @JvmField val HINGE_SENDBIRD_WS_URL = "wss://ws-test.invalid"
+    @JvmField val HINGE_SENDBIRD_APP_ID = "TEST"
+    @JvmField val HINGE_SENDBIRD_SDK_VERSION = "4.0.0"
+    @JvmField val HINGE_APP_VERSION = "10.0.0"
+    @JvmField val HINGE_BUILD_NUMBER = "1"
+    @JvmField val HINGE_OS_VERSION = "26.0"
+    @JvmField val HINGE_DEVICE_PLATFORM = "iOS"
+    @JvmField val HINGE_DEVICE_MODEL_CODE = "Test1,1"
+    @JvmField val HINGE_DEVICE_REGION = "US"
+    @JvmField val HINGE_ACCEPT_LANGUAGE = "en-US"
+    @JvmField val HINGE_USER_AGENT = "TestAgent/1"
+}
+
+/** Every identity value but the user-agent: still incomplete, so still inert. */
+object FlagOnWithoutUserAgent {
     @JvmField val WINGMAN_EXPERIMENTAL = true
     @JvmField val HINGE_BASE_URL = "https://hinge.invalid"
     @JvmField val HINGE_SENDBIRD_API_URL = "https://api-test.invalid"

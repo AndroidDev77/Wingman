@@ -50,7 +50,7 @@ class HingeOkHttpSocketTest {
         hingeBaseUrl = server.url("/hinge/").toString(), sendbirdApiUrl = server.url("/sb/").toString(),
         sendbirdWsUrl = server.url("/ws/").toString().replaceFirst("http://", "ws://"),
         sendbirdAppId = "TEST-APP-ID", sendbirdSdkVersion = "4.0.0", appVersion = "10.0.0", buildNumber = "1", osVersion = "26.0",
-        devicePlatform = "iOS", deviceModelCode = "Model1,1", deviceRegion = "US", acceptLanguage = "en-US",
+        devicePlatform = "iOS", deviceModelCode = "Model1,1", deviceRegion = "US", acceptLanguage = "en-US", userAgent = "TestAgent/1",
     )
 
     private fun transport(optedIn: () -> Boolean = { true }): Pair<SendbirdChatTransport, HingeNetGate> {

@@ -16,7 +16,8 @@ rule. No Rust source was copied or mechanically translated, and no hinge-rs file
 Protocol facts (endpoint paths, header and parameter names, frame names) were taken from it, so
 its notice is reproduced below.
 
-The client identity values (app version, build number, Sendbird application id, SDK version) are
+The client identity values (app version, build number, Sendbird application id and hosts, SDK
+version, device values and the complete user-agent) are
 not part of this source tree. They are supplied by the experimental build configuration
 (`docs/integrations/hinge.md`).
 

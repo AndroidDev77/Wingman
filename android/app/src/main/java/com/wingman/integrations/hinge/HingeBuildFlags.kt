@@ -27,17 +27,23 @@ data class HingeClientIdentity(
     val acceptLanguage: String,
     /** Optional `Origin` header of the WebSocket handshake (empty: not sent). */
     val sendbirdWsOrigin: String = "",
+    /**
+     * The complete `user-agent` of Hinge REST calls and the WebSocket handshake (reference:
+     * `Hinge/<build> CFNetwork/<v> Darwin/<v>` in `src/client/transport.rs`). Supplied by the build
+     * like every other identity value; nothing of it is committed in Kotlin. Required.
+     */
+    val userAgent: String = "",
 ) {
     /** True when every required value is present and every URL parses. */
     val isComplete: Boolean
-        get() = listOf(sendbirdAppId, sendbirdSdkVersion, appVersion, buildNumber, osVersion, devicePlatform, deviceModelCode, deviceRegion, acceptLanguage)
+        get() = listOf(sendbirdAppId, sendbirdSdkVersion, appVersion, buildNumber, osVersion, devicePlatform, deviceModelCode, deviceRegion, acceptLanguage, userAgent)
             .all { it.isNotBlank() && it.none(Char::isISOControl) } &&
             hingeBaseUrl.toHttpUrlOrNull() != null &&
             sendbirdApiUrl.toHttpUrlOrNull() != null &&
             sendbirdWsUrl.replaceFirst("wss://", "https://").replaceFirst("ws://", "http://").toHttpUrlOrNull() != null
 
-    /** `user-agent` of Hinge REST calls (reference: `Hinge/<build> CFNetwork/... Darwin/...`). */
-    fun hingeUserAgent(): String = "Hinge/$buildNumber CFNetwork/3859.100.1 Darwin/25.0.0"
+    /** `user-agent` of Hinge REST calls and the WebSocket handshake: [userAgent], verbatim. */
+    fun hingeUserAgent(): String = userAgent
 
     /** Sendbird's `SendBird` header: `<platform>,<os>,<sdk>,<app id>`. */
     fun sendbirdHeader(): String = "$devicePlatform,$osVersion,$sendbirdSdkVersion,$sendbirdAppId"
@@ -102,6 +108,7 @@ data class HingeBuildFlags(
                     deviceRegion = str("HINGE_DEVICE_REGION"),
                     acceptLanguage = str("HINGE_ACCEPT_LANGUAGE"),
                     sendbirdWsOrigin = str("HINGE_SENDBIRD_WS_ORIGIN"),
+                    userAgent = str("HINGE_USER_AGENT"),
                 ),
             )
         }

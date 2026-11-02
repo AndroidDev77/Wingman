@@ -23,6 +23,24 @@ class HingeTokenIsolationAndPrivacyTest {
         assertEquals(emptyList<File>(), offenders)
     }
 
+    @Test fun `static - no Hinge session type or token field is used outside integrations-hinge`() {
+        // Integrator (D-026): the whole app tree, not only core/, so no screen, API client, DI or
+        // other connector can carry a Hinge credential towards Wingman.
+        val outside = kt(src).filter { "integrations/hinge" !in it.invariantSeparatorsPath }
+        assertTrue(outside.size > 50)
+        val forbidden = listOf("HingeSession", "HingeSessionStore", "EncryptedFileHingeSessionStore", "hingeToken", "KeystoreHingeCipher", "SendbirdChatTransport")
+        val offenders = outside.flatMap { f -> forbidden.filter { f.readText().contains(it) }.map { "${f.name}: $it" } }
+        assertEquals(emptyList<String>(), offenders)
+    }
+
+    @Test fun `static - no client-identity value is committed in the connector sources`() {
+        // The reference's identity (iOS user-agent, Sendbird app id and hosts, app version and build)
+        // comes only from the experimental build's properties (docs/integrations/hinge.md section 3a).
+        val forbidden = Regex("CFNetwork/|Darwin/[0-9]|\\.sendbird\\.com|hingeaws|x-app-version\", \"[0-9]|Jios/[0-9]", RegexOption.IGNORE_CASE)
+        val offenders = kt(hingeDir).filter { f -> f.readLines().any { line -> !line.trimStart().startsWith("*") && !line.trimStart().startsWith("//") && forbidden.containsMatchIn(line) } }
+        assertEquals(emptyList<File>(), offenders)
+    }
+
     @Test fun `static - the Wingman-facing code never touches the session`() {
         for (name in listOf("HingeBackend.kt", "HingeConsent.kt", "HingeEvents.kt")) {
             val text = File(hingeDir, name).readText()
