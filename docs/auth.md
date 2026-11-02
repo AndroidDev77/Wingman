@@ -1,5 +1,8 @@
 # Authentication and user isolation (WING-004)
 
+**Identity provider: Auth0 with Google sign-in** (chosen for I-014; tenant values not configured
+yet). Setup, the exact `WINGMAN_AUTH_*` values and troubleshooting: [`auth0.md`](auth0.md).
+
 Wingman stores no passwords. Clients sign in with an OIDC identity provider (IdP) and
 call the API with `Authorization: Bearer <access token>`. The backend verifies the JWT,
 maps its `(iss, sub)` pair to exactly one `users` row (created on first login), and
@@ -44,9 +47,9 @@ reason is logged server-side only. If the JWKS cannot be fetched the API returns
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `WINGMAN_AUTH_ISSUER` | unset | Exact `iss` of the IdP |
-| `WINGMAN_AUTH_AUDIENCE` | unset | API audience the IdP puts in `aud` |
-| `WINGMAN_AUTH_JWKS_URL` | unset | IdP JWKS endpoint (`https` required in prod) |
+| `WINGMAN_AUTH_ISSUER` | unset | Exact `iss` of the IdP. Auth0: `https://<tenant-domain>/` **with** the trailing slash |
+| `WINGMAN_AUTH_AUDIENCE` | unset | API audience the IdP puts in `aud` (Auth0: the API Identifier; `aud` may be a list that also holds `/userinfo`) |
+| `WINGMAN_AUTH_JWKS_URL` | unset | IdP JWKS endpoint (`https` required in prod). Auth0: `https://<tenant-domain>/.well-known/jwks.json` |
 | `WINGMAN_AUTH_ALGORITHMS` | `RS256,ES256` | Comma-separated allowlist (asymmetric only) |
 | `WINGMAN_AUTH_LEEWAY_S` | `30` | Clock skew tolerance, 0 to 300 |
 | `WINGMAN_AUTH_JWKS_CACHE_TTL_S` | `300` | JWKS cache lifetime |
@@ -58,7 +61,8 @@ reason is logged server-side only. If the JWKS cannot be fetched the API returns
 | `WINGMAN_AUTH_DEV_AUDIENCE` | `wingman-dev` | `aud` of stub tokens |
 
 Set all three of issuer, audience and JWKS URL, or none; a partial set is a startup
-error. With neither OIDC nor the stub configured, every protected call returns 401
+error. For Auth0, `scripts/configure-auth0.sh <tenant-domain> <client-id> <api-identifier>` prints
+them (with `--write`, into the git-ignored `backend/.env`). With neither OIDC nor the stub configured, every protected call returns 401
 (fail closed).
 
 ## Local development credentials (dev stub)
@@ -128,7 +132,7 @@ Method-not-allowed (405) maps to `not_found` because the contract has no dedicat
 
 ## Android client
 
-The app should obtain an access token from the IdP with the system browser (AppAuth,
+See [`android_auth.md`](android_auth.md) and, for Auth0, [`auth0.md`](auth0.md). The app should obtain an access token from the IdP with the system browser (AppAuth,
 authorization code + PKCE), keep it and the refresh token in encrypted storage, and
 have `AppContainer.tokenProvider` return the current access token (refreshing it when
 near expiry). On a `401` the client refreshes once and retries; if that fails, it signs

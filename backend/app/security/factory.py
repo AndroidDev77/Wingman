@@ -14,6 +14,8 @@ any                    yes (prod)           :class:`AuthConfigError`: refuse to 
 import logging
 from functools import lru_cache
 
+import httpx
+
 from app.config import get_settings
 from app.security.dev_stub import AuthConfigError, build_dev_verifier, dev_stub_active
 from app.security.settings import AuthSettings
@@ -28,8 +30,17 @@ from app.security.tokens import (
 logger = logging.getLogger(__name__)
 
 
-def build_verifier(auth: AuthSettings, env: str) -> TokenVerifier:
-    """Raises :class:`AuthConfigError` for unsafe or invalid configuration."""
+def build_verifier(
+    auth: AuthSettings,
+    env: str,
+    *,
+    jwks_transport: httpx.AsyncBaseTransport | None = None,
+) -> TokenVerifier:
+    """Raises :class:`AuthConfigError` for unsafe or invalid configuration.
+
+    ``jwks_transport`` is a test seam (e.g. ``httpx.MockTransport``) for the JWKS fetch;
+    production leaves it ``None`` and uses the network.
+    """
     stub = dev_stub_active(auth, env)  # raises in prod if requested
     try:
         algorithms = auth.algorithm_list()
@@ -50,6 +61,7 @@ def build_verifier(auth: AuthSettings, env: str) -> TokenVerifier:
                 cache_ttl_s=auth.jwks_cache_ttl_s,
                 min_refresh_s=auth.jwks_min_refresh_s,
                 timeout_s=auth.jwks_timeout_s,
+                transport=jwks_transport,
             ),
             leeway_s=auth.leeway_s,
         )

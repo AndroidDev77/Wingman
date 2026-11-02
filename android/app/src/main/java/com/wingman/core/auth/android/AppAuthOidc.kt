@@ -63,7 +63,12 @@ class AppAuthOidc(
             Uri.parse(config.redirectUri),
         )
             .setScopes(config.scopes)
-            .apply { config.audience?.let { setAdditionalParameters(mapOf("audience" to it)) } }
+            // `audience` (Auth0: API Identifier, else the access token is opaque) and the optional
+            // `connection` (e.g. google-oauth2). Built and unit-tested in OidcConfig.
+            .apply {
+                val extra = config.additionalAuthorizationParameters()
+                if (extra.isNotEmpty()) setAdditionalParameters(extra)
+            }
             .build()
         return service.getAuthorizationRequestIntent(request)
     }

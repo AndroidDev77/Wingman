@@ -28,6 +28,7 @@ object AndroidAuth {
             redirectUri = BuildConfig.OIDC_REDIRECT_URI,
             scopes = BuildConfig.OIDC_SCOPES,
             audience = BuildConfig.OIDC_AUDIENCE,
+            connection = BuildConfig.OIDC_CONNECTION,
         )
     }
 

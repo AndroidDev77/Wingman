@@ -20,6 +20,6 @@ object AuthGate {
     }
 
     const val OIDC_NOT_CONFIGURED =
-        "Sign-in is not available in this build: no identity provider is configured yet (I-014). " +
-            "See docs/android_auth.md."
+        "Sign-in is not available in this build: Auth0 is not configured yet (I-014). " +
+            "See docs/auth0.md."
 }

@@ -24,8 +24,8 @@ android {
         val useMock = (project.findProperty("wingman.useMockApi") as String?)?.toBooleanStrictOrNull() ?: true
         buildConfigField("boolean", "USE_MOCK_API", useMock.toString())
 
-        // I-011 OIDC sign-in (AppAuth, authorization code + PKCE). No IdP is chosen yet (I-014), so
-        // these default to empty and real sign-in is disabled. Set them with
+        // I-011 OIDC sign-in (AppAuth, authorization code + PKCE). The IdP is Auth0 + Google (I-014),
+        // but the tenant values are not set yet, so these default to empty and real sign-in is disabled. Set them with
         // -Pwingman.oidc.issuer=... etc. or in ~/.gradle/gradle.properties (docs/android_auth.md).
         fun prop(name: String, default: String = "") = (project.findProperty(name) as String?)?.trim() ?: default
         fun quoted(v: String) = "\"" + v.replace("\\", "\\\\").replace("\"", "\\\"") + "\""
@@ -35,6 +35,8 @@ android {
         buildConfigField("String", "OIDC_REDIRECT_URI", quoted(oidcRedirect))
         buildConfigField("String", "OIDC_SCOPES", quoted(prop("wingman.oidc.scopes", "openid profile email offline_access")))
         buildConfigField("String", "OIDC_AUDIENCE", quoted(prop("wingman.oidc.audience")))
+        // Optional Auth0 `connection` (e.g. google-oauth2) to skip the Universal Login picker (docs/auth0.md).
+        buildConfigField("String", "OIDC_CONNECTION", quoted(prop("wingman.oidc.connection")))
         // AppAuth's RedirectUriReceiverActivity (from the library manifest) handles this scheme.
         // Unconfigured builds use an inert app-specific placeholder.
         manifestPlaceholders["appAuthRedirectScheme"] =
