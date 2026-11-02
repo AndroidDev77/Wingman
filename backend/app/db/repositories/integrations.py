@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import or_, update
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.postgresql import distinct_on, insert
 
 from app.db.base import utc_now
 from app.db.enums import (
@@ -354,6 +354,30 @@ class ProfileRepository(ScopedRepository[Profile]):
         updated = await self._update(existing.id, updated_at=imported_at, **content)
         return updated, False
 
+    def _undecided(self, provider: ProfileProvider | None) -> Any:
+        decided = (
+            ProfileActionRepository(self.session, self.scope)
+            ._select()
+            .with_only_columns(ProfileAction.profile_id)
+            .where(ProfileAction.decision != ProfileDecision.SKIP)
+        )
+        stmt = self._select().where(Profile.id.not_in(decided))
+        if provider is not None:
+            stmt = stmt.where(Profile.provider == provider)
+        return stmt
+
+    async def undecided(
+        self, *, provider: ProfileProvider | None = None, limit: int
+    ) -> list[Profile]:
+        """Every profile with no decision other than ``skip`` (newest import first, at
+        most ``limit``): the candidates WING-019 ranks for the review queue."""
+        rows = await self.session.scalars(
+            self._undecided(provider)
+            .order_by(Profile.created_at.desc(), Profile.id.desc())
+            .limit(limit)
+        )
+        return list(rows)
+
     async def review_queue(
         self,
         *,
@@ -398,8 +422,11 @@ class ProfileEvaluationRepository(ScopedRepository[ProfileEvaluation]):
         dealbreakers_hit: Sequence[str],
         confidence: float,
         evaluator_version: str,
+        preferences_version: int = 0,
+        input_fingerprint: str | None = None,
     ) -> ProfileEvaluation:
-        """WING-019 stores its evaluations here (advisory only)."""
+        """WING-019 stores its evaluations here (advisory only). Append-only: a new
+        preferences version or profile content adds a row; earlier rows are kept."""
         return await self._add(
             profile_id=profile_id,
             score=score,
@@ -409,7 +436,36 @@ class ProfileEvaluationRepository(ScopedRepository[ProfileEvaluation]):
             dealbreakers_hit=list(dealbreakers_hit),
             confidence=confidence,
             evaluator_version=evaluator_version,
+            preferences_version=preferences_version,
+            input_fingerprint=input_fingerprint,
         )
+
+    async def latest_for_profiles(
+        self, profile_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, ProfileEvaluation]:
+        """The latest evaluation of each given profile (one query, ``DISTINCT ON``)."""
+        if not profile_ids:
+            return {}
+        rows = await self.session.scalars(
+            self._select()
+            .where(ProfileEvaluation.profile_id.in_(list(profile_ids)))
+            .ext(distinct_on(ProfileEvaluation.profile_id))
+            .order_by(
+                ProfileEvaluation.profile_id,
+                ProfileEvaluation.created_at.desc(),
+                ProfileEvaluation.id.desc(),
+            )
+        )
+        return {row.profile_id: row for row in rows}
+
+    async def history(self, profile_id: uuid.UUID) -> list[ProfileEvaluation]:
+        """Every evaluation of a profile, oldest first."""
+        rows = await self.session.scalars(
+            self._select()
+            .where(ProfileEvaluation.profile_id == profile_id)
+            .order_by(ProfileEvaluation.created_at.asc(), ProfileEvaluation.id.asc())
+        )
+        return list(rows)
 
     async def latest(self, profile_id: uuid.UUID) -> ProfileEvaluation | None:
         row: ProfileEvaluation | None = await self.session.scalar(

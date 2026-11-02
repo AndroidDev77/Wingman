@@ -12,6 +12,8 @@ Every answer is **clearly labeled mock output** and deliberately bland:
 * ``ExtractionOutput``: no facts (inventing facts about a real contact would be worse
   than none).
 * ``SummaryOutput``: a labeled one-line summary.
+* ``MatchResonanceOutput`` (WING-019): one neutral labeled reason citing the bio, no
+  score adjustment.
 
 It is only a stand-in for a model: everything it returns still goes through the same
 gateway validation, the WING-010 guardrails and the WING-011 policy (an ``assisted``
@@ -117,6 +119,40 @@ def _analysis(request: ProviderRequest) -> dict[str, Any]:
     }
 
 
+def _match(request: ProviderRequest) -> dict[str, Any]:
+    """``MatchResonanceOutput`` (WING-019): one neutral, labeled reason quoting the start
+    of the bio (a real field, so it passes the evidence check), adjustment 0."""
+    users = [m.content for m in request.messages if m.role == "user"]
+    fields: list[dict[str, Any]] = []
+    if users:
+        at = users[-1].rfind("(JSON):\n")
+        if at >= 0:
+            try:
+                data = json.loads(users[-1][at + len("(JSON):\n") :])
+            except ValueError:
+                data = {}
+            if isinstance(data, dict) and isinstance(data.get("fields"), list):
+                fields = [f for f in data["fields"] if isinstance(f, dict)]
+    bio = next((f for f in fields if f.get("id") == "bio" and f.get("text")), None)
+    if bio is None:
+        return {"reasons": [], "adjustment": 0}
+    quote = str(bio["text"]).strip()[:40].strip()
+    if len(quote) < 3:
+        return {"reasons": [], "adjustment": 0}
+    return {
+        "reasons": [
+            {
+                "factor": "bio",
+                "effect": "neutral",
+                "detail": f"{MOCK_LABEL} Bio present; not assessed by a model.",
+                "evidence": ["bio"],
+                "quote": quote,
+            }
+        ],
+        "adjustment": 0,
+    }
+
+
 def dev_mock_answer(request: ProviderRequest) -> MockStep:
     """Deterministic answer for one request, chosen by the requested output schema."""
     name = request.schema_name
@@ -126,6 +162,8 @@ def dev_mock_answer(request: ProviderRequest) -> MockStep:
         return _analysis(request)
     if name == "ExtractionOutput":
         return {"facts": []}
+    if name == "MatchResonanceOutput":
+        return _match(request)
     if name == "SummaryOutput":
         count = len(_messages_payload(request))
         return {"summary": f"{MOCK_LABEL} Conversation summary placeholder ({count} new)."}
