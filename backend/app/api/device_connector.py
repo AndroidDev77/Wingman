@@ -167,6 +167,7 @@ async def ingest_event(
         "event_id": str(result.event_id),
         "outcome": result.outcome.value,
         "message_id": str(result.message_id) if result.message_id else None,
+        "notice_id": str(result.notice_id) if result.notice_id else None,
         "recorded_at": ts(result.recorded_at),
     }
     if result.outcome is IngestOutcome.ACCEPTED:

@@ -1,0 +1,7 @@
+{
+  "type": "https://wingman.invalid/problems/assisted_delivery_not_pending",
+  "title": "Assisted delivery is not pending",
+  "status": 409,
+  "code": "assisted_delivery_not_pending",
+  "detail": "This draft was already confirmed, dismissed or canceled."
+}

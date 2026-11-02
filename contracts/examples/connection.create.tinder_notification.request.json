@@ -1,0 +1,31 @@
+{
+  "platform": "tinder",
+  "display_name": "Tinder notifications",
+  "transport": "notification",
+  "device_install_id": "0192f3a0-0000-4000-8000-0000000000aa",
+  "capabilities": {
+    "schema_version": "connector_capabilities.v1",
+    "platform": "tinder",
+    "connector_version": "0.1.0",
+    "capabilities": {
+      "read": {
+        "status": "UNVERIFIED",
+        "notes": "Notification text only; no RemoteInput reply observed."
+      },
+      "draft": {
+        "status": "UNSUPPORTED"
+      },
+      "send": {
+        "status": "UNSUPPORTED"
+      },
+      "swipe": {
+        "status": "UNSUPPORTED",
+        "notes": "Blocked: no tested swipe path (ADR 0008 has no BLOCKED label)."
+      },
+      "calendar_write": {
+        "status": "UNSUPPORTED"
+      }
+    },
+    "assessed_at": "2026-11-02T09:00:00Z"
+  }
+}

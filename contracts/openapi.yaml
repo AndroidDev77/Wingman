@@ -2,7 +2,7 @@ openapi: 3.1.0
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
   title: Wingman AI API
-  version: 1.2.0
+  version: 1.3.0
   summary: Canonical HTTP contract between the Wingman backend and its clients.
   description: |
     Source of truth for the Wingman backend <-> Android (and any other client) HTTP API.
@@ -35,9 +35,14 @@ info:
       validation_error`). Response objects may gain new optional properties in `/v1`;
       clients must ignore unknown properties.
     * **Capabilities** (ADR 0005). What a connector can do is advertised per capability
-      (`read`, `draft`, `send`, `swipe`, `calendar_write`) with a verification label.
-      No endpoint in this contract requires `swipe`, and nothing here infers `send`
-      from `read` or from notification access.
+      (`read`, `draft`, `send`, `swipe`, `calendar_write`, and since 1.3.0 the optional
+      `profile_read`) with a verification label. Only `requestProfileActionExecution`
+      (1.3.0) requires `swipe`, and only `VERIFIED`; nothing here infers `send` from
+      `read` or from notification access.
+    * **No platform credentials** (1.3.0, ADR 0008). No request schema accepts a
+      platform password, one-time code, session token, cookie or API key. Logins to
+      dating apps or Apple services happen on the user's device and their secrets stay
+      there; `contracts/validate.py` fails on any credential-like field name.
     * **Delivery truth.** A message's `delivery_state` only advances on real connector
       acknowledgements. `queued` is never reported as `sent`, and `sent` is never
       reported as `delivered`.
@@ -52,6 +57,31 @@ info:
       outbox instruction.
 
     ## Changelog
+
+    * **1.3.0** (additive, ADR 0008). Platforms `tinder`, `bumble`, `hinge`, `imessage`
+      become pairable, with a connection `transport` (`sms_provider`, `notification`,
+      `companion`, `unofficial_api`, `simulator`). `unofficial_api` connections are
+      **experimental** (D-021): they need a recorded user consent
+      (`experimental_consent`, error `experimental_consent_required`), are
+      approval-only until an operator records verification, and revoking consent works
+      like unpair (`revokeExperimentalConsent`). Optional capability `profile_read`.
+      `connector_event.v1` inbound payloads gain optional `kind`,
+      `external_conversation_id`, `sender_label`, `identity`, `truncated`,
+      `content_hidden`, `source`; only a linked, complete `chat_message` enters the
+      automation pipeline, everything else is stored as an `InboundNotice`
+      (`listInboundNotices`). Assisted (draft-only) delivery for connections that
+      cannot send: `AssistedDelivery`, `listAssistedDeliveries`,
+      `confirmAssistedDelivery`, `dismissAssistedDelivery`, `MessageOrigin.assisted_draft`
+      and `DeliveryState.user_reported_sent` (never `sent` or `delivered`). User-made
+      identity links (`createIdentityLink`, `listContactIdentityLinks`,
+      `deleteIdentityLink`). Profiles, evaluations and swipe decisions
+      (`importProfile`, `listProfileReviewQueue`, `recordProfileDecision`,
+      `requestProfileActionExecution`) and the per-connection `auto_swipe_enabled`
+      setting (`putConnectionSettings`). Mark-read (`markConversationRead`, I-022).
+      `claimOutboxInstructions` documents the D-017 install binding. New `ErrorCode`
+      values `experimental_consent_required`, `assisted_delivery_not_pending`,
+      `swipe_execution_disabled`; new `AgentActionType` values. No existing operation,
+      field or enum value changed meaning.
 
     * **1.2.0** (additive, I-017, ADR 0007). Connection pairing: `createConnection`
       (`POST /v1/connections`), `getConnection`, `unpairConnection`
@@ -88,6 +118,9 @@ tags:
   - name: automation
   - name: audit
   - name: memories
+  - name: assisted
+  - name: identity
+  - name: profiles
 
 paths:
   /health:
@@ -306,7 +339,33 @@ paths:
           environment is not `prod`; in `prod` the request is `422 validation_error`
           with pointer `/platform`. `device_install_id` and `capabilities` must be
           absent: the server uses the simulator's own capability document.
-        * Any other platform is not pairable in 1.2.0 (`422`, schema enum).
+        * **Dating and iMessage platforms** (1.3.0: `tinder`, `bumble`, `hinge`,
+          `imessage`) are device-side too (`device_install_id` and claimed
+          `capabilities` required). `transport` says how the device reaches the
+          platform: `notification` (the WING-017 notification listener; read at most,
+          `send` only with a tested reply action) or `unofficial_api` (D-021) for the
+          dating apps, `companion` (a paired Mac, WING-030) for `imessage`. For `sms`
+          (`sms_provider`), `android_notification` (`notification`) and `mock`
+          (`simulator`) the server fills it in.
+        * **Experimental connections** (`transport: unofficial_api`, ADR 0008) need
+          `experimental: true` and an `experimental_consent` the user gave on this
+          device after seeing the ban-risk warning. Without the consent the request is
+          `422 experimental_consent_required` (pointer `/experimental_consent`); a
+          consent for another platform is `422 validation_error`. The server records
+          the consent (text version, the user's acceptance time, platform, its own
+          `recorded_at`; audit `experimental_consent_recorded`). An experimental
+          connection is **approval-only**: the automation policy treats its `send` as
+          unverified (never autopilot) and swipe execution is refused, whatever the
+          capability document says, until an operator records a live verification
+          (`experimental_verified_at`, D-016 operator path, no API).
+        * **No credentials.** No field of this request (or of any request) carries a
+          platform password, code, session token or cookie. The platform login happens
+          on the device and its secrets never leave it (ADR 0008).
+        * One install has at most one paired connection per platform. While one is
+          paired, a request for the same platform returns it with `200` only if the
+          `transport` matches; a different `transport` is `422 validation_error` at
+          `/transport` (unpair first), so one platform is never ingested twice.
+        * Any other platform is not pairable (`422`, schema enum).
 
         **Capability trust (ADR 0005, ADR 0007).** Capabilities sent by a client are a
         *claim*, never evidence. The server stores each claimed capability as
@@ -410,6 +469,9 @@ paths:
           (inbound messages, capability or status changes) on an unpaired connection
           are `422 validation_error` with pointer `/connection_id`.
         * Audit `connection_unpaired` with the counts.
+        * (1.3.0) Pending assisted deliveries of its conversations become `canceled`
+          (counted in `canceled_approval_count`), `auto_swipe_enabled` becomes false,
+          and an experimental consent gets `revoked_at`.
 
         Nothing is deleted: conversations, messages and audit history stay readable.
         Unpairing an already unpaired connection changes nothing and returns `200` with
@@ -502,6 +564,21 @@ paths:
         `connection.capabilities_changed` events update the connection's stored
         capabilities as reported by the device; they cannot authorize anything by
         themselves (ADR 0005 policy still applies at send time).
+
+        **Inbound kinds and identity (1.3.0, ADR 0008).** An inbound payload may carry
+        `kind`, `identity`, `truncated`, `content_hidden`, `source`, `sender_label` and
+        `external_conversation_id`. Absent values mean a linked, complete
+        `chat_message` (the 1.2.0 meaning). `source`, when given, must equal the
+        connection's `transport` (`422` at `/payload/source`). Only a `chat_message`
+        with `identity: linked` whose content is neither `truncated` nor
+        `content_hidden` is stored as a `Message` and enters the automation pipeline.
+        Every other inbound event (a match, a like or comment, an expiry or system
+        notice, an unknown kind, an unlinked or ambiguous sender, partial or hidden
+        content) is stored as an `InboundNotice` (`notice_id` in the result, audit
+        `notice_received`), shown by `listInboundNotices`, and never drafted,
+        approved, auto-replied or merged into a contact or conversation. Notices are
+        deduplicated on `(user_id, platform, external_message_id)` like messages
+        (`duplicate_message`).
 
         Device uploader mapping (WING-016): `2xx` accepted; `400`, `404`, `422`
         rejected (dead letter, never retried); network errors, `409`, `429`, `5xx`
@@ -600,6 +677,15 @@ paths:
         checks; there is no API operation that creates one, and LLM output never
         reaches this route except as text the dispatcher already authorized.
 
+        **Install binding (1.3.0 note, D-017, ADR 0007).** Only the install the
+        connection was paired with may claim. A claim from any other
+        `device_install_id`, on an unpaired connection, or on a device-side connection
+        that was never paired is `422 validation_error` with an error pointer
+        `/device_install_id`. The check runs before anything is dispatched, canceled,
+        leased or recovered, so a rejected install takes nothing. `404` is not used
+        because the connection is the caller's own. A backend-side connection without a
+        binding (`mock`) answers `200` with an empty list.
+
         **What a claim does, atomically per instruction:**
 
         * Re-checks, at claim time, the same policy the dispatcher applied, using the
@@ -607,8 +693,9 @@ paths:
           cancel exactly what those actions themselves cancel: never a `user_manual`
           send (`sendMessage` is allowed while paused or taken over). Any instruction
           is canceled if the connection's `send` capability is now `UNSUPPORTED`, and
-          an `autopilot` instruction also if `send` is no longer `VERIFIED`
-          (ADR 0005). An instruction that no longer passes becomes `canceled` (its
+          an `autopilot` instruction also if `send` is no longer `VERIFIED` or the
+          connection is experimental and not operator-verified (ADR 0005, ADR 0008).
+          An instruction that no longer passes becomes `canceled` (its
           message `canceled`) and is not returned.
         * Leases each returned `pending` instruction to the calling
           `device_install_id`: state `leased`, `leased_at` now, `lease_expires_at` set
@@ -1304,6 +1391,580 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /v1/connections/{connection_id}/experimental-consent/revoke:
+    parameters:
+      - $ref: "#/components/parameters/ConnectionId"
+    post:
+      tags: [connections]
+      operationId: revokeExperimentalConsent
+      summary: Withdraw the ban-risk consent of an experimental connection (added in 1.3.0)
+      description: |
+        Only for an experimental connection (`transport: unofficial_api`); any other
+        connection is `422 validation_error` at `/connection_id`. Effective before the
+        response, in one transaction, exactly like `unpairConnection` (ADR 0007): the
+        connection becomes `disconnected` with every capability `UNSUPPORTED`, its
+        unclaimed instructions, queued sends, pending approvals and pending assisted
+        deliveries are canceled (audited, reason `connection_unavailable`), a leased
+        send cannot be recalled and its outcome is still accepted. In addition the
+        consent gets `revoked_at` (audit `experimental_consent_revoked`) and
+        `auto_swipe_enabled` becomes false. The device must then delete the platform
+        session it holds. To use the connector again the user pairs again with a new
+        consent. Revoking twice changes nothing and returns zero counts.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectionUnpairRequest"
+      responses:
+        "200":
+          description: Consent revoked and the connection unpaired (already in effect).
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionUnpairResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/connections/{connection_id}/settings:
+    parameters:
+      - $ref: "#/components/parameters/ConnectionId"
+    put:
+      tags: [connections]
+      operationId: putConnectionSettings
+      summary: The user's per-connection settings, e.g. auto-swipe (added in 1.3.0)
+      description: |
+        Full replacement of the user-controlled settings of one connection. PUT is
+        idempotent and causes no send or swipe, so no `Idempotency-Key`.
+        `auto_swipe_enabled: true` is accepted only while the swipe execution gate
+        could pass for this connection (ADR 0008): it is paired, its `swipe`
+        capability is `VERIFIED`, and it is not experimental-unverified. Otherwise
+        `422 swipe_execution_disabled`. Turning it off is always allowed. The gate is
+        evaluated again on every execution request, so a later capability change
+        still stops execution.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectionSettingsUpdate"
+      responses:
+        "200":
+          description: Saved; the connection.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Connection"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/conversations/{conversation_id}/read:
+    parameters:
+      - $ref: "#/components/parameters/ConversationId"
+    post:
+      tags: [conversations]
+      operationId: markConversationRead
+      summary: Mark a conversation read (added in 1.3.0, I-022)
+      description: |
+        Sets `unread_count` to 0 and returns the conversation. Idempotent on state:
+        marking an already read conversation changes nothing and still returns `200`
+        (and the same `Idempotency-Key` replays the stored response). Never sends,
+        never changes messages, approvals or automation. Another user's conversation
+        is `404`. The body is optional and, when present, empty.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MarkReadRequest"
+      responses:
+        "200":
+          description: The conversation, now read.
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationDetail"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/inbound-notices:
+    get:
+      tags: [assisted]
+      operationId: listInboundNotices
+      summary: Inbound events shown but never replied to (added in 1.3.0)
+      description: |
+        Newest first (`occurred_at` descending, then `id`). Matches, likes and
+        comments, expiry and system notices, unknown kinds, and any inbound event whose
+        sender identity is `unlinked` or `ambiguous` or whose content is truncated or
+        hidden (ADR 0008). A notice is never drafted, approved, auto-replied or merged
+        into a contact or conversation. `text` is private: never log.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: connection_id
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Id"
+      responses:
+        "200":
+          description: A page of notices.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InboundNoticePage"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/assisted-deliveries:
+    get:
+      tags: [assisted]
+      operationId: listAssistedDeliveries
+      summary: Drafts waiting for the user to send them by hand (added in 1.3.0)
+      description: |
+        Newest first. Defaults to `status=pending`. An assisted delivery is the
+        draft-only instruction the dispatcher queues when a connection on a dating or
+        iMessage platform cannot send (`send: UNSUPPORTED`, ADR 0008). The app or the
+        device shows `text`, copies it or opens the platform app at the conversation,
+        and the user confirms with `confirmAssistedDelivery` after sending it there
+        themselves. Nothing here is ever transmitted by Wingman. `text` is private.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: status
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/AssistedDeliveryStatus"
+        - name: conversation_id
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/Id"
+      responses:
+        "200":
+          description: A page of assisted deliveries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistedDeliveryPage"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/assisted-deliveries/{assisted_delivery_id}/confirm:
+    parameters:
+      - $ref: "#/components/parameters/AssistedDeliveryId"
+    post:
+      tags: [assisted]
+      operationId: confirmAssistedDelivery
+      summary: The user says "I sent it" (added in 1.3.0)
+      description: |
+        Records the user's own report that they sent the draft (or their edit of it)
+        in the platform app. Creates one outbound `Message` with `origin:
+        assisted_draft` and `delivery_state: user_reported_sent`: never `sent` or
+        `delivered`, no `sent_at`, no connector event (Wingman observed nothing). The
+        assisted delivery becomes `user_reported_sent` (audit
+        `assisted_delivery_confirmed`, actor `user`). Only a `pending` one can be
+        confirmed (`409 assisted_delivery_not_pending` otherwise).
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AssistedDeliveryConfirmRequest"
+      responses:
+        "200":
+          description: Recorded as reported by the user.
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistedDeliveryResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/assisted-deliveries/{assisted_delivery_id}/dismiss:
+    parameters:
+      - $ref: "#/components/parameters/AssistedDeliveryId"
+    post:
+      tags: [assisted]
+      operationId: dismissAssistedDelivery
+      summary: The user will not send this draft (added in 1.3.0)
+      description: |
+        Only a `pending` assisted delivery (`409 assisted_delivery_not_pending`
+        otherwise). Nothing is recorded as sent. Audit `assisted_delivery_dismissed`.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RejectRequest"
+      responses:
+        "200":
+          description: Dismissed.
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AssistedDeliveryResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/identity-links:
+    post:
+      tags: [identity]
+      operationId: createIdentityLink
+      summary: The user links two contacts as the same person (added in 1.3.0, WING-032)
+      description: |
+        An explicit, user-made link, e.g. between a Hinge match and a phone contact.
+        The server never creates, suggests-and-applies or infers a link (not from
+        names, numbers, photos or model output; ADR 0008). Both contacts must be the
+        caller's (`404` otherwise) and different (`422` at `/linked_contact_id`). A
+        link is unordered: linking the same pair again (either order) returns the
+        existing link with `200`. Audit `identity_link_created` (actor `user`). A link
+        changes no conversation, message, memory or automation setting by itself.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IdentityLinkCreateRequest"
+      responses:
+        "201":
+          description: Linked.
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityLink"
+        "200":
+          description: These contacts were already linked; the existing link.
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityLink"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/contacts/{contact_id}/identity-links:
+    parameters:
+      - $ref: "#/components/parameters/ContactId"
+    get:
+      tags: [identity]
+      operationId: listContactIdentityLinks
+      summary: Links the user made for this contact (added in 1.3.0)
+      description: Newest first. Includes links where the contact is on either side.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          description: A page of links.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/IdentityLinkPage"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/identity-links/{identity_link_id}:
+    parameters:
+      - $ref: "#/components/parameters/IdentityLinkId"
+    delete:
+      tags: [identity]
+      operationId: deleteIdentityLink
+      summary: Remove a link (added in 1.3.0)
+      description: |
+        Removes the link; audit `identity_link_deleted`. A missing or another user's
+        link is `404 not_found` (so deleting twice is `404` the second time).
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/profiles:
+    post:
+      tags: [profiles]
+      operationId: importProfile
+      summary: Import a dating profile for review (added in 1.3.0, WING-019/031)
+      description: |
+        Stores a normalized `Profile` from `manual` entry (a profile the user shares)
+        or a `fixture` (deterministic tests and demos). `device` import (a device-side
+        connector reading profiles) needs `connection_id` of a paired connection on the
+        same platform whose `profile_read` capability is not `UNSUPPORTED`; otherwise
+        `422` at `/connection_id`. Only attributes the source provided are stored;
+        nothing is inferred (never from photos). Importing the same
+        `(provider, external_profile_id)` again replaces the content and provenance and
+        returns `200`. Audit `profile_imported`. Never swipes.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileImportRequest"
+      responses:
+        "201":
+          description: Imported.
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+        "200":
+          description: Already known; updated from this import.
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Profile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/profiles/review-queue:
+    get:
+      tags: [profiles]
+      operationId: listProfileReviewQueue
+      summary: Profiles waiting for the user's decision (added in 1.3.0)
+      description: |
+        Profiles with no recorded decision other than `skip`, newest import
+        first (1.3.0 ordering; WING-019/031 may rank by evaluation in a later minor
+        version without changing the shape). Each item carries its latest
+        `Evaluation` (or null) and `stale`.
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/Limit"
+        - name: provider
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/ProfileProvider"
+      responses:
+        "200":
+          description: A page of profiles.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfilePage"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/profiles/{profile_id}/decision:
+    parameters:
+      - $ref: "#/components/parameters/ProfileId"
+    post:
+      tags: [profiles]
+      operationId: recordProfileDecision
+      summary: Record the user's like, pass, skip or superlike (added in 1.3.0)
+      description: |
+        Records the **user's decision** only; nothing is executed on the platform.
+        The new `ProfileAction` has `execution: not_executable` until
+        `requestProfileActionExecution` passes the gate. `connection_id`, when given,
+        must be the caller's connection on the profile's platform (`422` at
+        `/connection_id`). The `Idempotency-Key` is stored as the action's
+        `idempotency_key`. Audit `profile_decision_recorded`.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfileDecisionRequest"
+      responses:
+        "201":
+          description: Recorded.
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileAction"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/profile-actions/{profile_action_id}/execute:
+    parameters:
+      - $ref: "#/components/parameters/ProfileActionId"
+    post:
+      tags: [profiles]
+      operationId: requestProfileActionExecution
+      summary: Ask for a recorded decision to be executed on the platform (added in 1.3.0)
+      description: |
+        The swipe execution gate (ADR 0008). Passes only if **all** hold, else
+        `422 swipe_execution_disabled` (an `errors` entry names the failed check):
+        the action is `like`, `pass` or `superlike` (never `skip`); it has a
+        `connection_id`; that connection is paired and connected; its `swipe`
+        capability is `VERIFIED` (operator evidence, ADR 0007); the user turned
+        `auto_swipe_enabled` on for it; it is not experimental-unverified (an
+        experimental connection needs `experimental_verified_at`); global automation
+        is not paused; the profile is on the connection's platform and not `stale`;
+        and no other action for this profile is `queued` or `executed`.
+        On success `execution` becomes `queued` (audit `profile_action_queued`):
+        accepted for execution, **not** executed. Only a device-reported outcome may
+        later set `executed`, `failed` or `unknown` (WING-031). Requesting again for a
+        `queued` action returns it unchanged.
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectionUnpairRequest"
+      responses:
+        "200":
+          description: Queued for execution (not executed).
+          headers:
+            Idempotent-Replayed:
+              $ref: "#/components/headers/IdempotentReplayed"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ProfileAction"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+
 components:
   securitySchemes:
     bearerAuth:
@@ -1382,6 +2043,30 @@ components:
         $ref: "#/components/schemas/Id"
     MemoryId:
       name: memory_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Id"
+    AssistedDeliveryId:
+      name: assisted_delivery_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Id"
+    IdentityLinkId:
+      name: identity_link_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Id"
+    ProfileId:
+      name: profile_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/Id"
+    ProfileActionId:
+      name: profile_action_id
       in: path
       required: true
       schema:
@@ -1510,8 +2195,9 @@ components:
       description: |
         Messaging platform key: lowercase snake_case. Known values: `mock` (WING-006
         simulator), `sms` (WING-016), `android_notification` (WING-017), `imessage`
-        (WING-020), `tinder`, `bumble`, `hinge` (WING-021 research only). Adding a
-        platform does not change this contract; its capabilities say what it can do.
+        (WING-020/030 Mac companion), `tinder`, `bumble`, `hinge` (WING-027 to 029;
+        pairable since 1.3.0). Adding a platform does not change this contract; its
+        capabilities say what it can do.
       type: string
       pattern: "^[a-z][a-z0-9_]{1,31}$"
       examples: [sms, mock]
@@ -1562,10 +2248,15 @@ components:
         `failed`: an attempt failed; may be retried (back to `queued`) within the retry
         budget. `dead_lettered`: retries exhausted; terminal. `canceled`: removed from
         the queue before `sending` (e.g. by pause/takeover); terminal.
+        `user_reported_sent` (1.3.0, ADR 0008): the user said they sent an assisted
+        draft by hand in the platform app (`confirmAssistedDelivery`). Wingman did not
+        transmit it and no connector confirmed it, so it is never shown as `sent` or
+        `delivered`, never has `sent_at`/`delivered_at`, and is terminal. Only
+        `assisted_draft` messages have it.
         A message is never reported as `sent` or `delivered` without the matching
         connector event.
       type: string
-      enum: [received, queued, sending, sent, delivered, failed, dead_lettered, canceled]
+      enum: [received, queued, sending, sent, delivered, failed, dead_lettered, canceled, user_reported_sent]
     MessageDirection:
       type: string
       enum: [inbound, outbound]
@@ -1574,8 +2265,10 @@ components:
         `contact`: inbound from the other person. `user_manual`: typed and sent by the
         user. `approved_draft`: agent draft sent after explicit approval.
         `autopilot`: agent draft sent without per-message approval under autopilot policy.
+        `assisted_draft` (1.3.0): an agent draft the user sent by hand in the platform
+        app and reported with `confirmAssistedDelivery`; always `user_reported_sent`.
       type: string
-      enum: [contact, user_manual, approved_draft, autopilot]
+      enum: [contact, user_manual, approved_draft, autopilot, assisted_draft]
     ApprovalStatus:
       description: |
         `pending` -> `approved` | `rejected` | `expired` | `canceled`. All but `pending`
@@ -1627,8 +2320,15 @@ components:
         Added in 1.2.0: `lease_expired` (a device lease lapsed with no outcome; the
         outcome is unknown, the message stays `sending` and is never retried
         automatically, ADR 0006; actor `system`), `connection_paired` and
-        `connection_unpaired` (ADR 0007). Clients must tolerate values added in later
-        minor versions.
+        `connection_unpaired` (ADR 0007). Added in 1.3.0 (ADR 0008): `notice_received`
+        (an inbound event stored as a notice, never replied to),
+        `assisted_delivery_queued` / `_confirmed` / `_dismissed` / `_canceled`
+        (draft-only delivery; `_confirmed` means the user *reported* sending it),
+        `experimental_consent_recorded` / `_revoked`, `identity_link_created` /
+        `_deleted` (user actions only), `profile_imported`,
+        `profile_decision_recorded`, `profile_action_queued` (swipe execution passed
+        the gate; not executed yet). Clients must tolerate values added in later minor
+        versions.
       type: string
       enum:
         - message_received
@@ -1654,6 +2354,18 @@ components:
         - lease_expired
         - connection_paired
         - connection_unpaired
+        - notice_received
+        - assisted_delivery_queued
+        - assisted_delivery_confirmed
+        - assisted_delivery_dismissed
+        - assisted_delivery_canceled
+        - experimental_consent_recorded
+        - experimental_consent_revoked
+        - identity_link_created
+        - identity_link_deleted
+        - profile_imported
+        - profile_decision_recorded
+        - profile_action_queued
     ConnectionStatus:
       type: string
       enum: [connected, disconnected, error]
@@ -1678,6 +2390,9 @@ components:
         - rate_limited                # 429
         - upstream_unavailable        # 503 LLM provider/connector unreachable
         - internal_error              # 500
+        - experimental_consent_required  # 422 (1.3.0) experimental connection without a recorded user consent
+        - assisted_delivery_not_pending  # 409 (1.3.0) assisted delivery already confirmed, dismissed or canceled
+        - swipe_execution_disabled       # 422 (1.3.0) the swipe execution gate refused (ADR 0008)
 
     # ---------------------------------------------------------------- errors
     Problem:
@@ -2020,19 +2735,95 @@ components:
           anyOf:
             - $ref: "#/components/schemas/Timestamp"
             - type: "null"
+        transport:
+          $ref: "#/components/schemas/ConnectionTransport"
+        experimental:
+          description: |
+            (1.3.0, optional.) True exactly for `transport: unofficial_api` (D-021). An
+            experimental connection is approval-only and never swipes until
+            `experimental_verified_at` is set (ADR 0008).
+          type: boolean
+        experimental_consent:
+          description: (1.3.0, optional.) The user's recorded ban-risk consent; null for non-experimental connections.
+          anyOf:
+            - $ref: "#/components/schemas/ExperimentalConsent"
+            - type: "null"
+        experimental_verified_at:
+          description: |
+            (1.3.0, optional.) When an operator recorded a live test of this experimental
+            connection (D-016 operator path, no API). Null = experimental-unverified.
+          anyOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        auto_swipe_enabled:
+          description: (1.3.0, optional.) The user's per-connection auto-swipe switch (`putConnectionSettings`). Default false.
+          type: boolean
+      allOf:
+        - description: (1.3.0) `experimental` is true exactly for `unofficial_api`.
+          if:
+            required: [transport]
+            properties:
+              transport:
+                const: unofficial_api
+          then:
+            required: [experimental]
+            properties:
+              experimental:
+                const: true
+          else:
+            properties:
+              experimental:
+                const: false
+        - description: (1.3.0) A paired experimental connection always carries an unrevoked consent.
+          if:
+            required: [experimental, unpaired_at]
+            properties:
+              experimental:
+                const: true
+              unpaired_at:
+                type: "null"
+          then:
+            required: [experimental_consent]
+            properties:
+              experimental_consent:
+                $ref: "#/components/schemas/ExperimentalConsent"
+                properties:
+                  revoked_at:
+                    type: "null"
+        - description: (1.3.0) Consent and verification exist only on experimental connections.
+          if:
+            required: [experimental]
+            properties:
+              experimental:
+                const: false
+          then:
+            properties:
+              experimental_verified_at:
+                type: "null"
+              experimental_consent:
+                type: "null"
     ConnectionCreateRequest:
       description: |
         (1.2.0) Pair a connector (ADR 0007). Device-side platforms need
         `device_install_id` and the claimed `capabilities`; `mock` takes neither.
-        Claimed capabilities are never stored as `VERIFIED`.
+        Claimed capabilities are never stored as `VERIFIED`. (1.3.0) Dating and iMessage
+        platforms, `transport`, and the experimental consent (ADR 0008). There is no
+        field for platform credentials or session tokens, and there never will be.
       type: object
       additionalProperties: false
       required: [platform, display_name]
       properties:
         platform:
-          description: Pairable platforms in 1.2.0. `mock` only outside `prod`.
+          description: Pairable platforms. `mock` only outside `prod`. `tinder`, `bumble`, `hinge`, `imessage` since 1.3.0.
           type: string
-          enum: [sms, android_notification, mock]
+          enum: [sms, android_notification, mock, tinder, bumble, hinge, imessage]
+        transport:
+          $ref: "#/components/schemas/ConnectionTransport"
+        experimental:
+          description: "(1.3.0) `true` exactly with `transport: unofficial_api`."
+          type: boolean
+        experimental_consent:
+          $ref: "#/components/schemas/ExperimentalConsentInput"
         display_name:
           type: string
           minLength: 1
@@ -2047,7 +2838,7 @@ components:
         - if:
             properties:
               platform:
-                enum: [sms, android_notification]
+                enum: [sms, android_notification, tinder, bumble, hinge, imessage]
           then:
             required: [device_install_id, capabilities]
         - if:
@@ -2058,6 +2849,61 @@ components:
             properties:
               device_install_id: false
               capabilities: false
+              transport:
+                const: simulator
+        - if:
+            properties:
+              platform:
+                const: sms
+          then:
+            properties:
+              transport:
+                const: sms_provider
+        - if:
+            properties:
+              platform:
+                const: android_notification
+          then:
+            properties:
+              transport:
+                const: notification
+        - if:
+            properties:
+              platform:
+                const: imessage
+          then:
+            properties:
+              transport:
+                const: companion
+        - if:
+            properties:
+              platform:
+                enum: [tinder, bumble, hinge]
+          then:
+            required: [transport]
+            properties:
+              transport:
+                enum: [notification, unofficial_api]
+        - description: |
+            (1.3.0, ADR 0008) `experimental: true` exactly with `unofficial_api`. The
+            consent is checked by the server (`422 experimental_consent_required`), so
+            a missing consent is not a schema error; a consent on a non-experimental
+            request is.
+          if:
+            required: [transport]
+            properties:
+              transport:
+                const: unofficial_api
+          then:
+            required: [experimental]
+            properties:
+              experimental:
+                const: true
+          else:
+            properties:
+              experimental:
+                const: false
+              experimental_consent: false
     ConnectionUnpairRequest:
       description: (1.2.0) Empty body; reserved for future options.
       type: object
@@ -2300,13 +3146,13 @@ components:
           else:
             properties:
               origin:
-                enum: [user_manual, approved_draft, autopilot]
+                enum: [user_manual, approved_draft, autopilot, assisted_draft]
               delivery_state:
-                enum: [queued, sending, sent, delivered, failed, dead_lettered, canceled]
+                enum: [queued, sending, sent, delivered, failed, dead_lettered, canceled, user_reported_sent]
         - if:
             properties:
               delivery_state:
-                enum: [queued, sending, canceled]
+                enum: [queued, sending, canceled, user_reported_sent]
           then:
             properties:
               sent_at:
@@ -2324,6 +3170,21 @@ components:
                 $ref: "#/components/schemas/Timestamp"
               delivered_at:
                 $ref: "#/components/schemas/Timestamp"
+        - description: (1.3.0) `assisted_draft` messages are exactly the `user_reported_sent` ones.
+          if:
+            required: [origin]
+            properties:
+              origin:
+                const: assisted_draft
+          then:
+            properties:
+              delivery_state:
+                const: user_reported_sent
+          else:
+            properties:
+              delivery_state:
+                not:
+                  const: user_reported_sent
     MessagePage:
       type: object
       required: [items, next_cursor]
@@ -2617,6 +3478,13 @@ components:
           description: |
             Wingman message the event concerns: the stored inbound message, or the
             outbound message a send outcome refers to. Null for connection events.
+          anyOf:
+            - $ref: "#/components/schemas/Id"
+            - type: "null"
+        notice_id:
+          description: |
+            (1.3.0, optional.) The `InboundNotice` an inbound event was stored as when it
+            does not enter the pipeline (then `message_id` is null). Null otherwise.
           anyOf:
             - $ref: "#/components/schemas/Id"
             - type: "null"
@@ -3044,3 +3912,684 @@ components:
             minItems: 1
           proposed_start:
             $ref: "#/components/schemas/Timestamp"
+
+    # ---------------------------------------------------------------- platform integrations (1.3.0, ADR 0008)
+    ConnectionTransport:
+      description: |
+        (1.3.0) How the paired device reaches the platform. `simulator`: the WING-006
+        mock (backend-side). `sms_provider`: Android's SMS provider and `SmsManager`
+        (WING-016). `notification`: the Android notification listener, with a
+        RemoteInput reply only where tested (WING-017, WING-027 to 029). `companion`: a
+        user-run Mac companion (iMessage, WING-030). `unofficial_api`: a device-side
+        client of a platform's private API (D-021); always `experimental`. Clients must
+        tolerate values added in later minor versions.
+      type: string
+      enum: [simulator, sms_provider, notification, companion, unofficial_api]
+    ExperimentalConsentInput:
+      description: |
+        (1.3.0, ADR 0008) The user's explicit opt-in to an experimental (unofficial
+        API) connector, given on the device after the plain-language warning that it
+        uses an unofficial interface, may break the platform's terms and can get the
+        account restricted or banned. One consent per platform and pairing.
+      type: object
+      additionalProperties: false
+      required: [platform, consent_text_version, accepted_at, ban_risk_acknowledged]
+      properties:
+        platform:
+          description: Must equal the request's `platform`.
+          type: string
+          enum: [tinder, bumble, hinge]
+        consent_text_version:
+          description: Version of the warning text the user saw, e.g. `d021-v1`.
+          type: string
+          pattern: "^[a-z0-9][a-z0-9._-]{0,31}$"
+        accepted_at:
+          description: When the user accepted, on the device.
+          $ref: "#/components/schemas/Timestamp"
+        ban_risk_acknowledged:
+          description: The user ticked the ban-risk acknowledgement. Must be `true`.
+          const: true
+    ExperimentalConsent:
+      description: (1.3.0) A recorded experimental consent, as stored by the server.
+      type: object
+      required: [platform, consent_text_version, accepted_at, recorded_at, revoked_at]
+      properties:
+        platform:
+          $ref: "#/components/schemas/Platform"
+        consent_text_version:
+          type: string
+        accepted_at:
+          $ref: "#/components/schemas/Timestamp"
+        recorded_at:
+          description: When the server recorded the consent (pairing time).
+          $ref: "#/components/schemas/Timestamp"
+        revoked_at:
+          description: Set by `revokeExperimentalConsent` or `unpairConnection`; null while in force.
+          anyOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+    ConnectionSettingsUpdate:
+      description: (1.3.0) User-controlled per-connection settings. No credentials, ever.
+      type: object
+      additionalProperties: false
+      required: [auto_swipe_enabled]
+      properties:
+        auto_swipe_enabled:
+          type: boolean
+    MarkReadRequest:
+      description: (1.3.0) Empty body; reserved for future options.
+      type: object
+      additionalProperties: false
+      properties: {}
+
+    InboundEventKind:
+      description: |
+        (1.3.0) What an inbound platform event is. Only `chat_message` can ever enter
+        the automation pipeline. `match` (a new match), `like_comment` (a like or a
+        comment on a profile, e.g. a Hinge prompt comment, before any chat exists),
+        `expiry` (a match or chat about to expire), `system` (any other platform
+        notice), `unknown` (not recognized). Clients must tolerate values added later.
+      type: string
+      enum: [chat_message, match, like_comment, expiry, system, unknown]
+    SenderIdentity:
+      description: |
+        (1.3.0) How sure the device is about who sent an event. `linked`: a stable
+        platform identifier ties it to exactly one contact or thread. `unlinked`: only
+        a display label is known. `ambiguous`: the label matches more than one person
+        or thread (e.g. two matches with the same first name). Only `linked` events can
+        become messages; Wingman never merges people by name.
+      type: string
+      enum: [linked, unlinked, ambiguous]
+    InboundNotice:
+      description: |
+        (1.3.0) An inbound event stored for display that never enters the automation
+        pipeline (ADR 0008): not a `chat_message`, not `linked`, or truncated or hidden
+        content. Never drafted, approved, replied to or merged into a contact.
+        `text` and `sender_label` are private: never log them.
+      type: object
+      required:
+        - id
+        - connection_id
+        - platform
+        - kind
+        - identity
+        - sender_label
+        - text
+        - truncated
+        - content_hidden
+        - external_message_id
+        - external_conversation_id
+        - source
+        - occurred_at
+        - created_at
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        connection_id:
+          $ref: "#/components/schemas/Id"
+        platform:
+          $ref: "#/components/schemas/Platform"
+        kind:
+          $ref: "#/components/schemas/InboundEventKind"
+        identity:
+          $ref: "#/components/schemas/SenderIdentity"
+        sender_label:
+          type: [string, "null"]
+          maxLength: 200
+        text:
+          description: As observed (possibly partial); empty when `content_hidden`.
+          type: string
+          maxLength: 20000
+        truncated:
+          type: boolean
+        content_hidden:
+          type: boolean
+        external_message_id:
+          $ref: "#/components/schemas/ExternalId"
+        external_conversation_id:
+          anyOf:
+            - $ref: "#/components/schemas/ExternalId"
+            - type: "null"
+        source:
+          anyOf:
+            - $ref: "#/components/schemas/ConnectionTransport"
+            - type: "null"
+        occurred_at:
+          $ref: "#/components/schemas/Timestamp"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+    InboundNoticePage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/InboundNotice"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
+
+    AssistedDeliveryStatus:
+      description: |
+        (1.3.0) `pending`: shown to the user, waiting. `user_reported_sent`: the user
+        said they sent it by hand (`confirmAssistedDelivery`); Wingman did not transmit
+        it and does not know whether it arrived. `dismissed`: the user will not send
+        it. `canceled`: superseded by a newer inbound message, or canceled by takeover
+        or unpair. All but `pending` are terminal.
+      type: string
+      enum: [pending, user_reported_sent, dismissed, canceled]
+    AssistedDelivery:
+      description: |
+        (1.3.0, ADR 0008) A draft-only delivery instruction. Created **only by the
+        dispatcher**, when the policy would hand a draft to a connection that cannot
+        send (`send: UNSUPPORTED`) on a platform with an assisted path (`tinder`,
+        `bumble`, `hinge`, `imessage`). The app or device shows `text`, copies it or
+        opens the platform app at `external_thread_id`, and never transmits it. `text`
+        is private: never log.
+      type: object
+      required:
+        - id
+        - conversation_id
+        - contact_id
+        - connection_id
+        - platform
+        - external_thread_id
+        - draft_id
+        - text
+        - reasons
+        - status
+        - final_text
+        - message_id
+        - cancel_reason
+        - created_at
+        - decided_at
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        conversation_id:
+          $ref: "#/components/schemas/Id"
+        contact_id:
+          $ref: "#/components/schemas/Id"
+        connection_id:
+          $ref: "#/components/schemas/Id"
+        platform:
+          $ref: "#/components/schemas/Platform"
+        external_thread_id:
+          description: Platform thread to open, when known.
+          anyOf:
+            - $ref: "#/components/schemas/ExternalId"
+            - type: "null"
+        draft_id:
+          $ref: "#/components/schemas/Id"
+        text:
+          description: The suggested reply.
+          type: string
+          minLength: 1
+          maxLength: 4000
+        reasons:
+          description: Content reasons the user should review before sending (may be empty).
+          type: array
+          items:
+            $ref: "#/components/schemas/ApprovalReason"
+        status:
+          $ref: "#/components/schemas/AssistedDeliveryStatus"
+        final_text:
+          description: What the user reported sending (the draft or their edit). Set when `user_reported_sent`.
+          type: [string, "null"]
+          maxLength: 4000
+        message_id:
+          description: The `assisted_draft` message recorded on confirmation.
+          anyOf:
+            - $ref: "#/components/schemas/Id"
+            - type: "null"
+        cancel_reason:
+          description: Set when `canceled` (`superseded`, `automation_takeover`, `connection_unavailable`).
+          type: [string, "null"]
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        decided_at:
+          anyOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+      allOf:
+        - if:
+            properties:
+              status:
+                const: pending
+          then:
+            properties:
+              decided_at:
+                type: "null"
+              final_text:
+                type: "null"
+              message_id:
+                type: "null"
+          else:
+            properties:
+              decided_at:
+                $ref: "#/components/schemas/Timestamp"
+        - if:
+            properties:
+              status:
+                const: user_reported_sent
+          then:
+            properties:
+              final_text:
+                type: string
+                minLength: 1
+              message_id:
+                $ref: "#/components/schemas/Id"
+          else:
+            properties:
+              message_id:
+                type: "null"
+    AssistedDeliveryPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/AssistedDelivery"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
+    AssistedDeliveryConfirmRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        sent_text:
+          description: What the user actually sent, if they edited the draft. Null/absent = the draft text.
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 4000
+    AssistedDeliveryResult:
+      type: object
+      required: [assisted_delivery, message]
+      properties:
+        assisted_delivery:
+          $ref: "#/components/schemas/AssistedDelivery"
+        message:
+          description: The `assisted_draft` message (`user_reported_sent`) on confirm; null on dismiss.
+          anyOf:
+            - $ref: "#/components/schemas/Message"
+            - type: "null"
+
+    IdentityLinkCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [contact_id, linked_contact_id]
+      properties:
+        contact_id:
+          $ref: "#/components/schemas/Id"
+        linked_contact_id:
+          $ref: "#/components/schemas/Id"
+    IdentityLink:
+      description: |
+        (1.3.0) The user said these two contacts are the same person. Unordered:
+        `contact_ids` is sorted. Only ever made by the user (`origin: user`).
+      type: object
+      required: [id, contact_ids, origin, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        contact_ids:
+          type: array
+          minItems: 2
+          maxItems: 2
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/Id"
+        origin:
+          const: user
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+    IdentityLinkPage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/IdentityLink"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
+
+    ProfileProvider:
+      description: (1.3.0) Dating platform a profile comes from. `mock` only for fixtures.
+      type: string
+      enum: [tinder, bumble, hinge, mock]
+    ProfileSource:
+      description: |
+        (1.3.0) How the profile reached Wingman. `manual`: the user shared it.
+        `fixture`: deterministic test or demo data. `device`: read by a device-side
+        connector with `profile_read` (WING-031 onward).
+      type: string
+      enum: [manual, fixture, device]
+    ProfilePrompt:
+      type: object
+      additionalProperties: false
+      required: [prompt, answer]
+      properties:
+        prompt:
+          type: string
+          minLength: 1
+          maxLength: 300
+        answer:
+          type: string
+          maxLength: 1000
+    ProfileAttributes:
+      description: |
+        Only attributes the source actually provided, under the source's own names
+        (e.g. `age`, `height_cm`, `location_label`, `interests`). Absent means unknown,
+        never inferred (not from photos, names or model output).
+      type: object
+      maxProperties: 50
+      propertyNames:
+        pattern: "^[a-z][a-z0-9_]{0,63}$"
+      additionalProperties:
+        anyOf:
+          - type: string
+            maxLength: 500
+          - type: number
+          - type: boolean
+          - type: array
+            maxItems: 50
+            items:
+              type: string
+              maxLength: 200
+    ProfileImportRequest:
+      type: object
+      additionalProperties: false
+      required: [provider, external_profile_id, source, source_observed_at]
+      properties:
+        provider:
+          $ref: "#/components/schemas/ProfileProvider"
+        external_profile_id:
+          $ref: "#/components/schemas/ExternalId"
+        source:
+          $ref: "#/components/schemas/ProfileSource"
+        connection_id:
+          description: "Required for `source: device`; optional otherwise."
+          anyOf:
+            - $ref: "#/components/schemas/Id"
+            - type: "null"
+        display_name:
+          type: [string, "null"]
+          maxLength: 120
+        bio:
+          type: [string, "null"]
+          maxLength: 5000
+        prompts:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/ProfilePrompt"
+        attributes:
+          $ref: "#/components/schemas/ProfileAttributes"
+        source_observed_at:
+          description: When the source showed this profile content.
+          $ref: "#/components/schemas/Timestamp"
+      allOf:
+        - if:
+            properties:
+              source:
+                const: device
+          then:
+            required: [connection_id]
+            properties:
+              connection_id:
+                $ref: "#/components/schemas/Id"
+        - if:
+            properties:
+              provider:
+                const: mock
+          then:
+            properties:
+              source:
+                const: fixture
+    EvaluationReason:
+      type: object
+      required: [factor, effect, detail]
+      properties:
+        factor:
+          description: What was compared, e.g. `intent`, `dealbreaker`, `interests`.
+          type: string
+          maxLength: 64
+        effect:
+          type: string
+          enum: [positive, negative, neutral]
+        detail:
+          type: string
+          maxLength: 500
+        evidence:
+          description: Profile fields the reason is based on (e.g. `bio`, `prompts/0`, `attributes/age`).
+          type: array
+          items:
+            type: string
+            maxLength: 128
+    Evaluation:
+      description: |
+        (1.3.0, WING-019) Advisory compatibility assessment. Never authorizes a swipe.
+        `known_unknowns` lists what the profile did not say that would matter.
+      type: object
+      required: [id, profile_id, score, reasons, known_unknowns, intent_mode, confidence, evaluator_version, created_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        profile_id:
+          $ref: "#/components/schemas/Id"
+        score:
+          description: 0 to 100, or null when there is too little information to score.
+          type: [number, "null"]
+          minimum: 0
+          maximum: 100
+        reasons:
+          type: array
+          items:
+            $ref: "#/components/schemas/EvaluationReason"
+        known_unknowns:
+          type: array
+          items:
+            type: string
+            maxLength: 200
+        intent_mode:
+          description: The user's intent the evaluation used (later preference changes do not rewrite it).
+          $ref: "#/components/schemas/IntentMode"
+        dealbreakers_hit:
+          type: array
+          items:
+            type: string
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        evaluator_version:
+          type: string
+          maxLength: 64
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+    ProfileDecision:
+      description: (1.3.0) The user's decision. `skip` = decide later; it is never executed.
+      type: string
+      enum: [like, pass, skip, superlike]
+    ProfileActionExecution:
+      description: |
+        (1.3.0) Platform execution status, separate from the user's decision.
+        `not_executable`: recorded only (default, and always for `skip`). `queued`:
+        passed the execution gate, not executed yet. `executed`: a device reported the
+        platform accepted it. `failed`: a device reported a definitive failure.
+        `unknown`: execution was attempted but no outcome was observed (never treated
+        as executed, never retried automatically).
+      type: string
+      enum: [not_executable, queued, executed, failed, unknown]
+    ProfileAction:
+      type: object
+      required:
+        - id
+        - profile_id
+        - connection_id
+        - decision
+        - idempotency_key
+        - execution
+        - execution_detail
+        - decided_at
+        - execution_requested_at
+        - executed_at
+        - created_at
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        profile_id:
+          $ref: "#/components/schemas/Id"
+        connection_id:
+          anyOf:
+            - $ref: "#/components/schemas/Id"
+            - type: "null"
+        decision:
+          $ref: "#/components/schemas/ProfileDecision"
+        idempotency_key:
+          $ref: "#/components/schemas/IdempotencyKey"
+        execution:
+          $ref: "#/components/schemas/ProfileActionExecution"
+        execution_detail:
+          description: Failure or unknown-outcome code; never platform response bodies.
+          type: [string, "null"]
+          maxLength: 200
+        decided_at:
+          $ref: "#/components/schemas/Timestamp"
+        execution_requested_at:
+          anyOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        executed_at:
+          anyOf:
+            - $ref: "#/components/schemas/Timestamp"
+            - type: "null"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+      allOf:
+        - if:
+            properties:
+              decision:
+                const: skip
+          then:
+            properties:
+              execution:
+                const: not_executable
+        - if:
+            properties:
+              execution:
+                const: executed
+          then:
+            properties:
+              executed_at:
+                $ref: "#/components/schemas/Timestamp"
+          else:
+            properties:
+              executed_at:
+                type: "null"
+        - if:
+            properties:
+              execution:
+                const: not_executable
+          then:
+            properties:
+              execution_requested_at:
+                type: "null"
+          else:
+            properties:
+              connection_id:
+                $ref: "#/components/schemas/Id"
+              execution_requested_at:
+                $ref: "#/components/schemas/Timestamp"
+    Profile:
+      description: |
+        (1.3.0, WING-019/031) A normalized dating profile. Only provided content; no
+        inferred attributes. `bio`, `prompts` and `attributes` are private: never log.
+      type: object
+      required:
+        - id
+        - provider
+        - external_profile_id
+        - display_name
+        - bio
+        - prompts
+        - attributes
+        - source_observed_at
+        - provenance
+        - stale
+        - latest_evaluation
+        - latest_action
+        - created_at
+        - updated_at
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        provider:
+          $ref: "#/components/schemas/ProfileProvider"
+        external_profile_id:
+          $ref: "#/components/schemas/ExternalId"
+        display_name:
+          type: [string, "null"]
+        bio:
+          type: [string, "null"]
+        prompts:
+          type: array
+          items:
+            $ref: "#/components/schemas/ProfilePrompt"
+        attributes:
+          $ref: "#/components/schemas/ProfileAttributes"
+        source_observed_at:
+          $ref: "#/components/schemas/Timestamp"
+        provenance:
+          type: object
+          required: [source, connection_id, imported_at]
+          properties:
+            source:
+              $ref: "#/components/schemas/ProfileSource"
+            connection_id:
+              anyOf:
+                - $ref: "#/components/schemas/Id"
+                - type: "null"
+            imported_at:
+              $ref: "#/components/schemas/Timestamp"
+        stale:
+          description: |
+            True when the content may no longer match the platform (older than the
+            server's freshness window, 14 days in 1.3.0, or invalidated by the
+            source). A stale profile can be decided on but never executed.
+          type: boolean
+        latest_evaluation:
+          anyOf:
+            - $ref: "#/components/schemas/Evaluation"
+            - type: "null"
+        latest_action:
+          anyOf:
+            - $ref: "#/components/schemas/ProfileAction"
+            - type: "null"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+    ProfilePage:
+      type: object
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/Profile"
+        next_cursor:
+          $ref: "#/components/schemas/NextCursor"
+    ProfileDecisionRequest:
+      type: object
+      additionalProperties: false
+      required: [decision]
+      properties:
+        decision:
+          $ref: "#/components/schemas/ProfileDecision"
+        connection_id:
+          description: The connection a later execution would use (same platform as the profile).
+          anyOf:
+            - $ref: "#/components/schemas/Id"
+            - type: "null"

@@ -1,0 +1,13 @@
+{
+  "type": "https://wingman.invalid/problems/experimental_consent_required",
+  "title": "Experimental connector needs your consent",
+  "status": 422,
+  "code": "experimental_consent_required",
+  "detail": "Pairing an unofficial-API connector needs the user's recorded ban-risk consent.",
+  "errors": [
+    {
+      "pointer": "/experimental_consent",
+      "message": "required for transport unofficial_api"
+    }
+  ]
+}

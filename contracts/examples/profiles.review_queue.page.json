@@ -1,0 +1,37 @@
+{
+  "items": [
+    {
+      "id": "0192f3a0-0000-7000-8000-000000000c01",
+      "provider": "hinge",
+      "external_profile_id": "hinge-profile-3141",
+      "display_name": "Riley",
+      "bio": "Trail runner, terrible at karaoke.",
+      "prompts": [
+        {
+          "prompt": "A shower thought I recently had",
+          "answer": "Do fish get thirsty?"
+        }
+      ],
+      "attributes": {
+        "age": 31,
+        "location_label": "Chicago",
+        "interests": [
+          "running",
+          "jazz"
+        ]
+      },
+      "source_observed_at": "2026-11-02T08:30:00Z",
+      "provenance": {
+        "source": "manual",
+        "connection_id": null,
+        "imported_at": "2026-11-02T08:30:05Z"
+      },
+      "stale": false,
+      "latest_evaluation": null,
+      "latest_action": null,
+      "created_at": "2026-11-02T08:30:05Z",
+      "updated_at": "2026-11-02T08:30:05Z"
+    }
+  ],
+  "next_cursor": null
+}

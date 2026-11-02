@@ -1,0 +1,19 @@
+{
+  "schema_version": "connector_event.v1",
+  "event_id": "0192f3a0-0000-7000-8000-000000000407",
+  "type": "message.received",
+  "platform": "hinge",
+  "connection_id": "0192f3a0-0000-7000-8000-0000000000a5",
+  "user_id": "0192f3a0-0000-7000-8000-000000000001",
+  "external_message_id": "hinge:notif:9f2c1a",
+  "external_thread_id": null,
+  "occurred_at": "2026-11-02T11:00:00Z",
+  "observed_at": "2026-11-02T11:00:01Z",
+  "payload": {
+    "sender": {
+      "external_contact_id": "x"
+    },
+    "text": "x",
+    "identity": "probably_linked"
+  }
+}
