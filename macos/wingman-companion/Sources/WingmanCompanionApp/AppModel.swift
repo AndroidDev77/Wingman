@@ -134,6 +134,13 @@ final class AppModel: ObservableObject {
         }
     }
 
+    func retryAutomation() {
+        Task {
+            try? await engine?.resetAutomationCheck()
+            await cycle()
+        }
+    }
+
     func setStartAtLogin(_ on: Bool) {
         do { try LoginItem.set(on) } catch { lastProblem = "Could not change the login item." }
         startAtLogin = LoginItem.enabled

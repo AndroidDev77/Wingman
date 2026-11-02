@@ -114,14 +114,8 @@ public actor CompanionEngine {
         state = try store.load()
         let userId = try await api.me()
         if state.pairing == nil {
-            let caps = Capabilities.document(assessedAt: clock(), draftOnly: state.settings.draftOnly)
-            let body: JSONValue = [
-                "platform": "imessage",
-                "transport": "companion",
-                "display_name": .string(String(displayName.prefix(120))),
-                "device_install_id": .string(install),
-                "capabilities": caps,
-            ]
+            let body = Self.pairingBody(displayName: displayName, deviceInstallId: install,
+                                        assessedAt: clock(), draftOnly: state.settings.draftOnly)
             state.pairing = .init(idempotencyKey: UUID().lower, requestBody: body)
             try store.save(state)
         }
@@ -135,6 +129,19 @@ public actor CompanionEngine {
         try store.save(state)
         log.record(.paired(connectionId: id))
         return id
+    }
+
+    /// The `createConnection` body: `imessage` over `companion`, this install, and the
+    /// claimed (never VERIFIED) capability document. No credential of any kind.
+    public static func pairingBody(displayName: String, deviceInstallId: String, assessedAt: Date,
+                                   draftOnly: Bool) -> JSONValue {
+        [
+            "platform": "imessage",
+            "transport": "companion",
+            "display_name": .string(String(displayName.prefix(120))),
+            "device_install_id": .string(deviceInstallId),
+            "capabilities": Capabilities.document(assessedAt: assessedAt, draftOnly: draftOnly),
+        ]
     }
 
     func scope(_ s: CompanionState) -> Scope? {
@@ -167,6 +174,16 @@ public actor CompanionEngine {
             s.enqueue(Envelope.capabilitiesChanged(scope: sc, document: capabilityDocument(s, now), reason: "draft_only_\(on)", at: now))
         }
         try store.save(s)
+    }
+
+    /// After the user re-allows Automation in System Settings: claims resume and `send` is
+    /// announced as UNVERIFIED again. The next real send re-checks the grant.
+    public func resetAutomationCheck() throws {
+        var s = try store.load()
+        guard s.health.automationGranted == false else { return }
+        s.health.automationGranted = nil
+        try store.save(s)
+        if let sc = scope(s) { try queueCapabilities(sc, reason: "automation_retry") }
     }
 
     public func setGroupPolicy(_ p: GroupPolicy) throws {

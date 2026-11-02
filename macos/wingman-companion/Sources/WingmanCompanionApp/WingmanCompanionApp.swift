@@ -127,6 +127,10 @@ struct PermissionsView: View {
             row("Automation → Messages", ok: model.automationGranted,
                 why: "Needed to send an approved reply. macOS asks the first time a send runs; you can change it later.",
                 action: SystemSettings.openAutomation)
+            if model.automationGranted == false {
+                Button("I allowed it in Settings: retry sends") { model.retryAutomation() }
+                    .controlSize(.small)
+            }
         }
     }
 

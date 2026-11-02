@@ -54,8 +54,9 @@ else
 fi
 
 codesign --verify --strict --verbose=2 "$app"
-codesign -d --entitlements :- "$app" | plutil -p - | grep -q "com.apple.security.automation.apple-events"
-if codesign -d --entitlements :- "$app" | grep -q "com.apple.security.app-sandbox"; then
+signed_ent="$(codesign -d --entitlements - --xml "$app" 2>/dev/null)"
+grep -q "com.apple.security.automation.apple-events" <<<"$signed_ent"
+if grep -q "com.apple.security.app-sandbox" <<<"$signed_ent"; then
   echo "the app must not be sandboxed" >&2; exit 1
 fi
 echo "built: $app"

@@ -208,6 +208,13 @@ final class EngineTests: CompanionTestCase {
         let r = await e.runCycle()
         XCTAssertEqual(r.skippedClaim, "automation_denied")
         XCTAssertEqual(fake.calls.count, 1)
+        // The user re-allows Automation and taps "Retry sends".
+        fake.result = ExecResult(exitCode: 0)
+        try await e.resetAutomationCheck()
+        let r2 = await e.runCycle()
+        XCTAssertNil(r2.skippedClaim)
+        let last = backend.ingested.last { $0["type"] == "connection.capabilities_changed" }
+        XCTAssertEqual(last?["payload"]?["capabilities"]?["capabilities"]?["send"]?["status"], "UNVERIFIED")
     }
 
     func testBackendUnreachableBacksOffAndKeepsTheQueue() async throws {

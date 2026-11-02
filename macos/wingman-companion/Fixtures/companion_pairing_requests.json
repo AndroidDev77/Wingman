@@ -1,0 +1,73 @@
+{
+  "default" : {
+    "capabilities" : {
+      "assessed_at" : "2026-10-30T18:00:00Z",
+      "capabilities" : {
+        "calendar_write" : {
+          "status" : "UNSUPPORTED"
+        },
+        "draft" : {
+          "notes" : "Messages has no scriptable compose field; GUI scripting is out of scope.",
+          "status" : "UNSUPPORTED"
+        },
+        "profile_read" : {
+          "status" : "UNSUPPORTED"
+        },
+        "read" : {
+          "notes" : "Reads ~/Library/Messages/chat.db read-only; needs Full Disk Access. Not tested on a Mac (WING-030).",
+          "status" : "UNVERIFIED"
+        },
+        "send" : {
+          "notes" : "Messages AppleScript 'send' into an existing 1:1 chat; needs Automation consent. Ack only after the sent row appears in chat.db. Not tested on a Mac (WING-030).",
+          "reports_delivery_receipts" : false,
+          "status" : "UNVERIFIED"
+        },
+        "swipe" : {
+          "status" : "UNSUPPORTED"
+        }
+      },
+      "connector_version" : "0.1.0",
+      "platform" : "imessage",
+      "schema_version" : "connector_capabilities.v1"
+    },
+    "device_install_id" : "00000000-0000-4000-8000-0000000000c0",
+    "display_name" : "Test MacBook iMessage",
+    "platform" : "imessage",
+    "transport" : "companion"
+  },
+  "draft_only" : {
+    "capabilities" : {
+      "assessed_at" : "2026-10-30T18:00:00Z",
+      "capabilities" : {
+        "calendar_write" : {
+          "status" : "UNSUPPORTED"
+        },
+        "draft" : {
+          "notes" : "Messages has no scriptable compose field; GUI scripting is out of scope.",
+          "status" : "UNSUPPORTED"
+        },
+        "profile_read" : {
+          "status" : "UNSUPPORTED"
+        },
+        "read" : {
+          "notes" : "Reads ~/Library/Messages/chat.db read-only; needs Full Disk Access. Not tested on a Mac (WING-030).",
+          "status" : "UNVERIFIED"
+        },
+        "send" : {
+          "notes" : "Draft-only mode: the user sends by hand (assisted delivery).",
+          "status" : "UNSUPPORTED"
+        },
+        "swipe" : {
+          "status" : "UNSUPPORTED"
+        }
+      },
+      "connector_version" : "0.1.0",
+      "platform" : "imessage",
+      "schema_version" : "connector_capabilities.v1"
+    },
+    "device_install_id" : "00000000-0000-4000-8000-0000000000c0",
+    "display_name" : "Test MacBook iMessage",
+    "platform" : "imessage",
+    "transport" : "companion"
+  }
+}

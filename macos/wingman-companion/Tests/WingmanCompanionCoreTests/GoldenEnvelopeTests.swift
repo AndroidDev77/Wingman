@@ -43,19 +43,37 @@ final class GoldenEnvelopeTests: CompanionTestCase {
         return .array(out)
     }
 
+    static var pairingURL: URL {
+        goldenURL.deletingLastPathComponent().appendingPathComponent("companion_pairing_requests.json")
+    }
+
+    func testPairingRequestsMatchTheGoldenFile() throws {
+        let install = "00000000-0000-4000-8000-0000000000c0"
+        let produced: JSONValue = [
+            "default": CompanionEngine.pairingBody(displayName: "Test MacBook iMessage", deviceInstallId: install,
+                                                   assessedAt: at(0), draftOnly: false),
+            "draft_only": CompanionEngine.pairingBody(displayName: "Test MacBook iMessage", deviceInstallId: install,
+                                                      assessedAt: at(0), draftOnly: true),
+        ]
+        try checkGolden(produced, Self.pairingURL)
+    }
+
+    func checkGolden(_ produced: JSONValue, _ url: URL) throws {
+        let enc = JSONEncoder()
+        enc.outputFormatting = [.sortedKeys, .prettyPrinted, .withoutEscapingSlashes]
+        if ProcessInfo.processInfo.environment["WINGMAN_UPDATE_GOLDEN"] == "1" {
+            try (enc.encode(produced) + Data("\n".utf8)).write(to: url)
+        }
+        let golden = try JSONValue.decode(try Data(contentsOf: url))
+        XCTAssertEqual(produced, golden, "regenerate with WINGMAN_UPDATE_GOLDEN=1 if the change is intended")
+    }
+
     func testEnvelopesMatchTheGoldenFile() async throws {
         let produced = try await produce()
         let types = produced.arrayValue!.map { $0["type"]!.stringValue! }
         XCTAssertEqual(types, ["message.received", "message.received", "message.received", "message.received",
                                "message.received", "message.send_acknowledged", "message.delivery_receipt",
                                "message.send_failed", "connection.capabilities_changed"])
-        let enc = JSONEncoder()
-        enc.outputFormatting = [.sortedKeys, .prettyPrinted, .withoutEscapingSlashes]
-        let bytes = try enc.encode(produced) + Data("\n".utf8)
-        if ProcessInfo.processInfo.environment["WINGMAN_UPDATE_GOLDEN"] == "1" {
-            try bytes.write(to: Self.goldenURL)
-        }
-        let golden = try JSONValue.decode(try Data(contentsOf: Self.goldenURL))
-        XCTAssertEqual(produced, golden, "regenerate with WINGMAN_UPDATE_GOLDEN=1 if the change is intended")
+        try checkGolden(produced, Self.goldenURL)
     }
 }

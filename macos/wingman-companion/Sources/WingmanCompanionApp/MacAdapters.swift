@@ -32,7 +32,9 @@ final class AppleScriptTransport: MessagesTransport {
     enum TransportError: Error { case compileFailed }
 
     func send(_ command: AppleScriptCommand.SendCommand) async throws -> ExecResult {
-        let s = try script()
+        // A script that does not compile (e.g. Messages' dictionary changed) is a definite
+        // non-send: report it as a failed attempt (transport_error), never as an unknown.
+        guard let s = try? script() else { return ExecResult(exitCode: 1, appleEventError: nil) }
         let argv = NSAppleEventDescriptor.list()
         for (i, arg) in command.arguments.enumerated() {
             argv.insert(NSAppleEventDescriptor(string: arg), at: i + 1)
