@@ -35,6 +35,13 @@ EXPECTED_TABLES = {
     "approvals",
     "outbox_instructions",
     "connector_event_ingests",
+    # Contract 1.3.0 (ADR 0008; D-010: amended into 0001).
+    "inbound_notices",
+    "assisted_deliveries",
+    "identity_links",
+    "profiles",
+    "profile_evaluations",
+    "profile_actions",
 }
 
 

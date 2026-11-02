@@ -297,6 +297,37 @@ def test_connection_operation_ids_match_the_contract(monkeypatch: pytest.MonkeyP
     assert found == ops
 
 
+_CONTRACT_V13_ROUTES = [
+    ("POST", "/v1/connections/00000000-0000-0000-0000-000000000001/experimental-consent/revoke"),
+    ("PUT", "/v1/connections/00000000-0000-0000-0000-000000000001/settings"),
+    ("POST", "/v1/conversations/00000000-0000-0000-0000-000000000001/read"),
+    ("GET", "/v1/inbound-notices"),
+    ("GET", "/v1/assisted-deliveries"),
+    ("POST", "/v1/assisted-deliveries/00000000-0000-0000-0000-000000000001/confirm"),
+    ("POST", "/v1/assisted-deliveries/00000000-0000-0000-0000-000000000001/dismiss"),
+    ("POST", "/v1/identity-links"),
+    ("GET", "/v1/contacts/00000000-0000-0000-0000-000000000001/identity-links"),
+    ("DELETE", "/v1/identity-links/00000000-0000-0000-0000-000000000001"),
+    ("POST", "/v1/profiles"),
+    ("GET", "/v1/profiles/review-queue"),
+    ("POST", "/v1/profiles/00000000-0000-0000-0000-000000000001/decision"),
+    ("POST", "/v1/profile-actions/00000000-0000-0000-0000-000000000001/execute"),
+]
+
+
+@pytest.mark.parametrize(("method", "path"), _CONTRACT_V13_ROUTES)
+@pytest.mark.parametrize("env", ["dev", "prod"])
+def test_contract_v13_routes_are_mounted_and_require_a_token(
+    monkeypatch: pytest.MonkeyPatch, env: str, method: str, path: str
+) -> None:
+    # Contract 1.3.0 (ADR 0008): mounted in every environment, authenticated.
+    with _client(monkeypatch, env) as client:
+        resp = client.request(method, path, json={}, headers={"Idempotency-Key": "wiring-key-0001"})
+        assert resp.status_code == 401, resp.text
+        assert resp.headers["content-type"].startswith("application/problem+json")
+        assert resp.json()["code"] == "unauthenticated"
+
+
 _I021_ROUTES = [
     "/v1/conversations",
     "/v1/conversations/00000000-0000-0000-0000-000000000001",
@@ -346,7 +377,7 @@ def test_every_contract_operation_is_mounted_with_its_operation_id(
     with _client(monkeypatch, env) as client:
         served_all = _operations(client.get("/openapi.json").json()["paths"])
     served = {k: v for k, v in served_all.items() if not k[0].startswith(DEV_ONLY_PATH_PREFIXES)}
-    assert len(contract) == 35
+    assert len(contract) == 49  # 35 in 1.2.0 + 14 in 1.3.0 (ADR 0008)
     assert served == contract
     assert set(served.values()) == set(contract.values())
     dev_only = set(served_all) - set(served)

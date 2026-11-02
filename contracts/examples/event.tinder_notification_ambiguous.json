@@ -1,0 +1,25 @@
+{
+  "schema_version": "connector_event.v1",
+  "event_id": "0192f3a0-0000-7000-8000-000000000403",
+  "type": "message.received",
+  "platform": "tinder",
+  "connection_id": "0192f3a0-0000-7000-8000-0000000000a6",
+  "user_id": "0192f3a0-0000-7000-8000-000000000001",
+  "external_message_id": "tinder:notif:0c9d77",
+  "external_thread_id": null,
+  "occurred_at": "2026-11-02T11:00:00Z",
+  "observed_at": "2026-11-02T11:00:01Z",
+  "payload": {
+    "sender": {
+      "external_contact_id": "tinder-label:Alex",
+      "display_name": "Alex"
+    },
+    "text": "hey are you free this wee",
+    "kind": "chat_message",
+    "sender_label": "Alex",
+    "identity": "ambiguous",
+    "truncated": true,
+    "content_hidden": false,
+    "source": "notification"
+  }
+}

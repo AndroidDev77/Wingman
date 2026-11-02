@@ -249,8 +249,38 @@ class ContractExamplesTest {
         assertEquals(contractEnum("ConnectionStatus"), wire(ConnectionStatus.entries.toTypedArray(), ConnectionStatus.serializer()))
         assertEquals(contractEnum("ErrorCode"), ErrorCode.entries.map { it.wire })
         // Sanity: the parser found real lists.
-        assertEquals(15, contractEnum("ErrorCode").size)
-        assertEquals(23, contractEnum("AgentActionType").size)
+        assertEquals(18, contractEnum("ErrorCode").size)
+        assertEquals(35, contractEnum("AgentActionType").size)
+        // Contract 1.3.0 (ADR 0008) enums.
+        assertEquals(contractEnum("ConnectionTransport"), wire(ConnectionTransport.entries.toTypedArray(), ConnectionTransport.serializer()))
+        assertEquals(contractEnum("InboundEventKind"), wire(InboundEventKind.entries.toTypedArray(), InboundEventKind.serializer()))
+        assertEquals(contractEnum("SenderIdentity"), wire(SenderIdentity.entries.toTypedArray(), SenderIdentity.serializer()))
+        assertEquals(contractEnum("AssistedDeliveryStatus"), wire(AssistedDeliveryStatus.entries.toTypedArray(), AssistedDeliveryStatus.serializer()))
+        assertEquals(contractEnum("ProfileDecision"), wire(ProfileDecision.entries.toTypedArray(), ProfileDecision.serializer()))
+        assertEquals(contractEnum("ProfileActionExecution"), wire(ProfileActionExecution.entries.toTypedArray(), ProfileActionExecution.serializer()))
+        assertEquals(9, contractEnum("DeliveryState").size)
+        assertEquals(5, contractEnum("MessageOrigin").size)
+    }
+
+    @Test fun contractV13Examples() {
+        val conn = roundTrip("connection.hinge_experimental.response.json", Connection.serializer())
+        assertEquals(ConnectionTransport.UNOFFICIAL_API, conn.transport)
+        assertTrue(conn.isExperimentalUnverified)
+        assertNull(conn.experimentalConsent!!.revokedAt)
+        assertEquals(Verification.UNVERIFIED, conn.capabilities.capabilities.profileRead!!.status)
+        val revoked = roundTrip("connection.revoke_consent.response.json", ConnectionUnpairResult.serializer())
+        assertNotNull(revoked.connection.experimentalConsent!!.revokedAt)
+        assertFalse(revoked.connection.isPaired)
+        val reported = roundTrip("message.user_reported_sent.json", Message.serializer())
+        assertEquals(DeliveryState.USER_REPORTED_SENT, reported.deliveryState)
+        assertEquals(MessageOrigin.ASSISTED_DRAFT, reported.origin)
+        assertNull(reported.sentAt)
+        val p = roundTrip("problem.experimental_consent_required.json", Problem.serializer())
+        assertEquals(ErrorCode.EXPERIMENTAL_CONSENT_REQUIRED, p.errorCode)
+        assertEquals(ErrorCode.SWIPE_EXECUTION_DISABLED, roundTrip("problem.swipe_execution_disabled.json", Problem.serializer()).errorCode)
+        // Older capability documents (no profile_read) still decode.
+        val sms = roundTrip("capabilities.sms.json", ConnectorCapabilities.serializer())
+        assertNull(sms.capabilities.profileRead)
     }
 
     @Test fun stringSerializerSanity() {

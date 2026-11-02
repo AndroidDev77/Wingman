@@ -11,3 +11,4 @@ Short records of decisions that shape the shared contracts. To supersede one, ad
 | [0005](0005-connector-capability-model.md) | Connector capabilities are independent and verification-labeled | Accepted |
 | [0006](0006-device-outbox-leases.md) | Device connectors ingest events by POST and pull single-use leased send instructions from an outbox | Accepted |
 | [0007](0007-connection-pairing-and-capability-trust.md) | The app pairs connectors over the API; client-claimed capabilities are never `VERIFIED`; unpair cancels pending automated work | Accepted |
+| [0008](0008-platform-integrations-experimental-connectors.md) | Dating and iMessage platforms pair with a `transport`; unofficial-API connectors are experimental, consent-gated and approval-only; only linked chat messages reach the pipeline; assisted delivery is `user_reported_sent`, never `sent`; swipes execute only through a gated `queued` state; no credentials on the backend | Accepted |

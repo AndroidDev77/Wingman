@@ -30,6 +30,8 @@ object DeliveryLabels {
         )
         DeliveryState.DEAD_LETTERED -> DeliveryLabel("Failed, not sent", LabelTone.ERROR, true)
         DeliveryState.CANCELED -> DeliveryLabel("Canceled, not sent", LabelTone.WARNING, false)
+        // Contract 1.3.0: the user's own report; Wingman never saw it go out or arrive.
+        DeliveryState.USER_REPORTED_SENT -> DeliveryLabel("You reported sending this (not confirmed)", LabelTone.NEUTRAL, false)
     }
 }
 
@@ -77,6 +79,7 @@ object MessageRows {
                 originNote = when (m.origin) {
                     MessageOrigin.APPROVED_DRAFT -> "Approved draft"
                     MessageOrigin.AUTOPILOT -> "Sent by autopilot"
+                    MessageOrigin.ASSISTED_DRAFT -> "Draft you sent by hand"
                     MessageOrigin.CONTACT, MessageOrigin.USER_MANUAL -> null
                 },
                 failureNote = m.failure?.takeIf {

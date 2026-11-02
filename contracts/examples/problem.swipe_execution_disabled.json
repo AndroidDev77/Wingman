@@ -1,0 +1,13 @@
+{
+  "type": "https://wingman.invalid/problems/swipe_execution_disabled",
+  "title": "Swipe execution is disabled",
+  "status": 422,
+  "code": "swipe_execution_disabled",
+  "detail": "This connection cannot execute swipes.",
+  "errors": [
+    {
+      "pointer": "/connection_id",
+      "message": "experimental connection is not operator-verified"
+    }
+  ]
+}

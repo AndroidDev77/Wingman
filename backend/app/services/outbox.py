@@ -206,6 +206,8 @@ class OutboxService:
             send_capability=connection.send_capability,
             global_status=user.global_automation_status,
             contact_status=contact.automation_status,
+            experimental_unverified=connection.experimental
+            and connection.experimental_verified_at is None,
         )
         if reason is not None:
             await self.dispatcher.cancel_for_claim(session, scope, locked, instruction, reason)

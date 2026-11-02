@@ -32,6 +32,13 @@ Delivery state machine (``DeliveryState``)::
   device leases it through ``claimOutboxInstructions`` (``app.services.outbox``) and
   reports the outcome through ``ingestConnectorEvent``.
 
+* **Assisted delivery** (contract 1.3.0, ADR 0008): for a connection that cannot send
+  (``send: UNSUPPORTED``) on a platform with a hand-delivery path, the dispatcher
+  queues a draft-only :class:`~app.db.models.AssistedDelivery` (:meth:`Dispatcher.
+  queue_assisted`). It never transmits it. When the user says they sent it by hand,
+  :meth:`Dispatcher.confirm_assisted` records an ``assisted_draft`` message in
+  ``user_reported_sent``: never ``sent``/``delivered``, never ``sent_at``.
+
 Lock order used everywhere (avoids deadlocks with pause/takeover):
 user -> contact -> approval -> outbox instruction -> message.
 
@@ -58,6 +65,8 @@ from app.db.base import utc_now
 from app.db.enums import (
     Actor,
     AgentActionType,
+    ApprovalReason,
+    AssistedDeliveryStatus,
     CapabilityVerification,
     ContactAutomationStatus,
     DeliveryState,
@@ -67,8 +76,10 @@ from app.db.enums import (
     OutboxInstructionState,
 )
 from app.db.models import (
+    AssistedDelivery,
     Contact,
     Conversation,
+    Draft,
     Message,
     OutboxInstruction,
     PlatformConnection,
@@ -76,6 +87,7 @@ from app.db.models import (
 )
 from app.db.repositories import (
     AgentActionRepository,
+    AssistedDeliveryRepository,
     ConnectionRepository,
     ContactRepository,
     ConversationRepository,
@@ -103,7 +115,11 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 # Platforms whose connector runs on the user's device: sends go through the outbox.
-DEVICE_SIDE_PLATFORMS = frozenset({"sms", "android_notification"})
+# Contract 1.3.0: the dating platforms and iMessage are device-side too (notification
+# listener, unofficial-API client or Mac companion; never the backend, ADR 0008).
+DEVICE_SIDE_PLATFORMS = frozenset(
+    {"sms", "android_notification", "tinder", "bumble", "hinge", "imessage"}
+)
 # What pause and takeover cancel (D-012), never the user's own ``user_manual`` sends
 # (``sendMessage`` is allowed while paused or taken over):
 # * pause (global or contact) stops sends *without approval*: ``autopilot`` only. While
@@ -138,12 +154,14 @@ def recheck_send(
     send_capability: CapabilityVerification,
     global_status: GlobalAutomationStatus,
     contact_status: ContactAutomationStatus,
+    experimental_unverified: bool = False,
 ) -> RecheckReason | None:
     """The last-moment check before a transport attempt or a lease (D-012).
 
     Cancels exactly what pause/takeover cancel (automated origins only), any send whose
     capability became ``UNSUPPORTED``, and an ``autopilot`` send whose capability is no
-    longer ``VERIFIED`` (ADR 0005). ``None`` means the send may proceed.
+    longer ``VERIFIED`` (ADR 0005) or whose connection is experimental and not
+    operator-verified (contract 1.3.0, ADR 0008). ``None`` means the send may proceed.
     """
     if send_capability is CapabilityVerification.UNSUPPORTED:
         return RecheckReason.CAPABILITY_UNSUPPORTED
@@ -154,8 +172,13 @@ def recheck_send(
         or contact_status is ContactAutomationStatus.PAUSED
     ):
         return RecheckReason.AUTOMATION_PAUSED
-    if origin is MessageOrigin.AUTOPILOT and send_capability is not CapabilityVerification.VERIFIED:
+    if origin is MessageOrigin.AUTOPILOT and (
+        send_capability is not CapabilityVerification.VERIFIED or experimental_unverified
+    ):
         return RecheckReason.CAPABILITY_UNVERIFIED
+    if origin is MessageOrigin.ASSISTED_DRAFT:
+        # Never transmitted: an assisted draft only exists as user_reported_sent.
+        return RecheckReason.NOT_QUEUED
     return None
 
 
@@ -325,6 +348,94 @@ class Dispatcher:
         )
         return message
 
+    # ------------------------------------------------------------------ assisted (1.3.0)
+
+    async def queue_assisted(
+        self,
+        session: AsyncSession,
+        scope: UserScope,
+        *,
+        conversation: Conversation,
+        draft: Draft,
+        reasons: tuple[ApprovalReason, ...],
+        trigger_message_id: uuid.UUID | None,
+        checks: Mapping[str, Any],
+    ) -> AssistedDelivery:
+        """A draft-only delivery instruction for a connection that cannot send. Only the
+        dispatcher creates one. Nothing is transmitted, now or later."""
+        if draft.text is None:
+            raise ValueError("an assisted delivery needs draft text")
+        now = self._now()
+        assisted = await AssistedDeliveryRepository(session, scope).create(
+            conversation_id=conversation.id,
+            contact_id=conversation.contact_id,
+            connection_id=conversation.connection_id,
+            draft_id=draft.id,
+            text=draft.text,
+            reasons=reasons,
+            created_at=now,
+        )
+        await AgentActionRepository(session, scope).record(
+            type=AgentActionType.ASSISTED_DELIVERY_QUEUED,
+            actor=Actor.DISPATCHER,
+            conversation_id=conversation.id,
+            contact_id=conversation.contact_id,
+            message_id=trigger_message_id,
+            reason_code="capability_unsupported",
+            occurred_at=now,
+            details={
+                "assisted_delivery_id": str(assisted.id),
+                "draft_id": str(draft.id),
+                "reasons": [r.value for r in reasons],
+                "checks": dict(checks),
+            },
+        )
+        return assisted
+
+    async def confirm_assisted(
+        self,
+        session: AsyncSession,
+        scope: UserScope,
+        assisted: AssistedDelivery,
+        *,
+        sent_text: str,
+    ) -> Message:
+        """The user reports they sent it by hand: one ``assisted_draft`` message in
+        ``user_reported_sent`` (no ``sent_at``; Wingman observed nothing)."""
+        conversation = await ConversationRepository(session, scope).require(
+            assisted.conversation_id
+        )
+        now = self._now()
+        message = await MessageRepository(session, scope).create_outbound(
+            conversation_id=conversation.id,
+            platform=conversation.platform,
+            origin=MessageOrigin.ASSISTED_DRAFT,
+            text=sent_text,
+            created_at=now,
+            delivery_state=DeliveryState.USER_REPORTED_SENT,
+        )
+        await AssistedDeliveryRepository(session, scope).decide(
+            assisted.id,
+            status=AssistedDeliveryStatus.USER_REPORTED_SENT,
+            at=now,
+            final_text=sent_text,
+            message_id=message.id,
+        )
+        await AgentActionRepository(session, scope).record(
+            type=AgentActionType.ASSISTED_DELIVERY_CONFIRMED,
+            actor=Actor.USER,
+            conversation_id=conversation.id,
+            contact_id=conversation.contact_id,
+            message_id=message.id,
+            reason_code="user_reported_sent",
+            occurred_at=now,
+            details={
+                "assisted_delivery_id": str(assisted.id),
+                "edited": sent_text != assisted.text,
+            },
+        )
+        return message
+
     # ------------------------------------------------------------------ dispatch
 
     async def _context(self, session: AsyncSession, scope: UserScope, message: Message) -> _Context:
@@ -368,6 +479,8 @@ class Dispatcher:
             send_capability=ctx.connection.send_capability,
             global_status=ctx.user.global_automation_status,
             contact_status=ctx.contact.automation_status,
+            experimental_unverified=ctx.connection.experimental
+            and ctx.connection.experimental_verified_at is None,
         )
         if reason is not None:
             canceled = await self._cancel(session, scope, message, ctx.conversation, reason, now)
