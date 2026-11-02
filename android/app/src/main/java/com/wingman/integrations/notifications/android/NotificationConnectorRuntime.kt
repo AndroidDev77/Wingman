@@ -25,9 +25,8 @@ import java.io.File
  * Process-wide holder of the pure-Kotlin core, rebuilt from the app-private state file after
  * process death (the listener service is rebound by the system in a cold process).
  *
- * **Plugins.** The allowlist is empty until a platform connector registers its plugin with
- * [installPlugins], once, early (e.g. `Application.onCreate` or `MainActivity.onCreate`, before the
- * listener binds). This ticket registers none.
+ * **Plugins.** The allowlist is [PlatformPlugins.all] (WING-027 Tinder, WING-028 Bumble) unless
+ * [installPlugins] replaced it before the core was first built.
  */
 object NotificationConnectorRuntime {
     private const val STATE_FILE = "wingman-notification-state.json"
@@ -35,7 +34,10 @@ object NotificationConnectorRuntime {
     const val LOG_TAG = "WingmanNotif"
     const val INSPECTOR_TAG = "WingmanNotifInspector"
 
-    @Volatile private var plugins: List<NotificationAppPlugin> = emptyList()
+    // WING-027/028: the platform plugins are registered by default, so the listener has them even
+    // in a cold process the system starts only to bind the service. Reading a platform still needs
+    // the user's opt-in (Settings), which pairs it first. [installPlugins] can still override.
+    @Volatile private var plugins: List<NotificationAppPlugin> = PlatformPlugins.all()
     @Volatile private var core: NotificationListenerCore? = null
     @Volatile private var adapter: NotificationReplyAdapter? = null
     @Volatile private var store: NotificationStateStore? = null
@@ -72,6 +74,10 @@ object NotificationConnectorRuntime {
         return NotificationReplyAdapter(core(context), store(context), log = androidLog).also { adapter = it }
     }
 
+    /** The app-private state file shared by the core, the reply adapter and the sync host (I-033). */
+    @Synchronized
+    fun stateStore(context: Context): NotificationStateStore = store(context)
+
     @Synchronized
     private fun store(context: Context): NotificationStateStore =
         store ?: FileNotificationStateStore(File(context.applicationContext.filesDir, STATE_FILE)).also { store = it }
@@ -92,9 +98,9 @@ object NotificationConnectorRuntime {
      * revocation made while the process was dead is reported as a capability downgrade.
      */
     fun refreshAccess(context: Context) {
-        val c = core(context)
-        val granted = isAccessGranted(context)
-        if (!granted && c.settings.accessGranted) c.onAccessRevoked()
+        // I-033: the same rule lives in NotificationSyncHost.refreshAccess (JVM-tested); the host
+        // also stops claims while access is off.
+        NotificationSyncRuntime.host(context).refreshAccess(isAccessGranted(context))
     }
 
     fun isDebuggable(context: Context): Boolean = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0

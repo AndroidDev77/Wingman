@@ -28,4 +28,5 @@ fun featureScreens(): ScreenRegistry<ScreenContent> = ScreenRegistry<ScreenConte
     .register(Destination.Settings, com.wingman.features.settings.SettingsScreenEntry) // WING-013
     .register(Destination.Onboarding, com.wingman.features.onboarding.OnboardingScreenEntry) // WING-013
     .register(Destination.Approvals, com.wingman.features.approvals.ApprovalsScreenEntry) // WING-015
+    .register(Destination.Assisted, com.wingman.features.assisted.AssistedScreenEntry) // WING-027/028
 // .register(Destination.Discovery, com.wingman.features.discovery.DiscoveryScreenEntry)      // WING-019

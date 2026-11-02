@@ -4,6 +4,9 @@ import com.wingman.core.model.AgentAction
 import com.wingman.core.model.Approval
 import com.wingman.core.model.ApprovalDecisionResult
 import com.wingman.core.model.ApproveRequest
+import com.wingman.core.model.AssistedDelivery
+import com.wingman.core.model.AssistedDeliveryConfirmRequest
+import com.wingman.core.model.AssistedDeliveryResult
 import com.wingman.core.model.AutomationActionRequest
 import com.wingman.core.model.Connection
 import com.wingman.core.model.ConnectionCreateRequest
@@ -19,6 +22,7 @@ import com.wingman.core.model.Draft
 import com.wingman.core.model.DraftCreateRequest
 import com.wingman.core.model.GlobalAutomationState
 import com.wingman.core.model.HealthResponse
+import com.wingman.core.model.InboundNotice
 import com.wingman.core.model.Message
 import com.wingman.core.model.OutboxClaimRequest
 import com.wingman.core.model.OutboxClaimResult
@@ -218,4 +222,33 @@ internal interface WingmanService {
         @Header("Idempotency-Key") key: String,
         @Body body: OutboxClaimRequest,
     ): Response<OutboxClaimResult>
+
+    @GET("v1/assisted-deliveries")
+    suspend fun listAssistedDeliveries(
+        @Query("cursor") cursor: String?,
+        @Query("limit") limit: Int?,
+        @Query("status") status: String?,
+        @Query("conversation_id") conversationId: String?,
+    ): Response<Page<AssistedDelivery>>
+
+    @POST("v1/assisted-deliveries/{assisted_delivery_id}/confirm")
+    suspend fun confirmAssistedDelivery(
+        @Path("assisted_delivery_id") assistedDeliveryId: String,
+        @Header("Idempotency-Key") key: String,
+        @Body body: AssistedDeliveryConfirmRequest,
+    ): Response<AssistedDeliveryResult>
+
+    @POST("v1/assisted-deliveries/{assisted_delivery_id}/dismiss")
+    suspend fun dismissAssistedDelivery(
+        @Path("assisted_delivery_id") assistedDeliveryId: String,
+        @Header("Idempotency-Key") key: String,
+        @Body body: RejectRequest,
+    ): Response<AssistedDeliveryResult>
+
+    @GET("v1/inbound-notices")
+    suspend fun listInboundNotices(
+        @Query("cursor") cursor: String?,
+        @Query("limit") limit: Int?,
+        @Query("connection_id") connectionId: String?,
+    ): Response<Page<InboundNotice>>
 }

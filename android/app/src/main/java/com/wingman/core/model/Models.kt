@@ -308,6 +308,8 @@ data class ConnectionCreateRequest(
     @SerialName("display_name") val displayName: String,
     @SerialName("device_install_id") val deviceInstallId: String? = null,
     val capabilities: ConnectorCapabilities? = null,
+    /** (1.3.0, optional) WING-027/028 pair `tinder`/`bumble` with `notification`. Omitted when null. */
+    val transport: ConnectionTransport? = null,
 ) {
     init {
         require(platform in PAIRABLE_PLATFORMS) { "platform must be one of $PAIRABLE_PLATFORMS" }
@@ -315,9 +317,9 @@ data class ConnectionCreateRequest(
     }
 
     companion object {
-        /** Contract 1.2.0 `ConnectionCreateRequest.platform` enum. */
-        val PAIRABLE_PLATFORMS: Set<String> = setOf("sms", "android_notification", "mock")
-        val DEVICE_PLATFORMS: Set<String> = setOf("sms", "android_notification")
+        /** Contract 1.3.0 `ConnectionCreateRequest.platform` enum. */
+        val PAIRABLE_PLATFORMS: Set<String> = setOf("sms", "android_notification", "mock", "tinder", "bumble", "hinge", "imessage")
+        val DEVICE_PLATFORMS: Set<String> = setOf("sms", "android_notification", "tinder", "bumble", "hinge", "imessage")
     }
 }
 

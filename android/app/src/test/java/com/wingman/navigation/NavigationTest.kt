@@ -17,12 +17,13 @@ class NavigationTest {
 
     @Test fun allRequiredDestinationsExist() {
         assertEquals(
-            setOf("Dashboard", "Inbox", "Conversation", "Settings", "Approvals", "Discovery", "Onboarding"),
+            setOf("Dashboard", "Inbox", "Conversation", "Settings", "Approvals", "Discovery", "Onboarding", "Assisted"),
             Destination.entries.map { it.name }.toSet(),
         )
         assertEquals(Destination.Dashboard, Destination.START)
         assertFalse(Destination.Conversation in Destination.topLevelDestinations)
         assertFalse(Destination.Onboarding in Destination.topLevelDestinations)
+        assertFalse(Destination.Assisted in Destination.topLevelDestinations)
         assertEquals(5, Destination.topLevelDestinations.size)
         assertEquals(Destination.entries.size, Destination.entries.map { it.pattern }.toSet().size)
     }
@@ -50,6 +51,12 @@ class NavigationTest {
         assertTrue(FirstLaunch.popsOnLeave(Destination.Onboarding))
         Destination.entries.filter { it != Destination.Onboarding }.forEach { assertFalse(FirstLaunch.popsOnLeave(it)) }
         assertFalse(FirstLaunch.popsOnLeave(null))
+    }
+
+    @Test fun assistedRouteResolves() {
+        assertEquals("assisted", Routes.assisted())
+        assertEquals(Destination.Assisted, Destination.fromRoute(Routes.assisted()))
+        assertFalse(FirstLaunch.popsOnLeave(Destination.Assisted))
     }
 
     @Test fun registryResolvesAndRejectsDuplicates() {
