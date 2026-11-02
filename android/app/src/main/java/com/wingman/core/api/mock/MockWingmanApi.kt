@@ -8,6 +8,7 @@ import com.wingman.core.api.AssistedDeliveryFilter
 import com.wingman.core.api.ConversationFilter
 import com.wingman.core.api.IdempotencyKey
 import com.wingman.core.api.PageRequest
+import com.wingman.core.api.ProfileQueueFilter
 import com.wingman.core.api.WingmanApi
 import com.wingman.core.model.Actor
 import com.wingman.core.model.AgentAction
@@ -27,6 +28,7 @@ import com.wingman.core.model.AutomationActionRequest
 import com.wingman.core.model.Capability
 import com.wingman.core.model.CapabilitySet
 import com.wingman.core.model.Connection
+import com.wingman.core.model.ConnectionSettingsUpdate
 import com.wingman.core.model.ConnectionCreateRequest
 import com.wingman.core.model.FieldError
 import com.wingman.core.model.ConnectionStatus
@@ -64,6 +66,12 @@ import com.wingman.core.model.OutboxInstruction
 import com.wingman.core.model.OutboxInstructionState
 import com.wingman.core.model.Page
 import com.wingman.core.model.Preferences
+import com.wingman.core.model.Profile
+import com.wingman.core.model.ProfileAction
+import com.wingman.core.model.ProfileActionExecution
+import com.wingman.core.model.ProfileDecision
+import com.wingman.core.model.ProfileDecisionRequest
+import com.wingman.core.model.ProfileImportRequest
 import com.wingman.core.model.PreferencesUpdate
 import com.wingman.core.model.Problem
 import com.wingman.core.model.RejectRequest
@@ -144,6 +152,8 @@ class MockWingmanApi(
     private val outbox = mutableListOf<MockOutboxEntry>()
     private val assisted = MockAssistedFixtures.assistedDeliveries.toMutableList()
     private val notices = MockAssistedFixtures.inboundNotices.toMutableList()
+    private val profiles = MockProfileFixtures.profiles.associateBy { it.id }.toMutableMap()
+    private val profileActions = mutableListOf<ProfileAction>()
 
     init {
         // Seed the audit timeline with the history behind the fixture approvals.
@@ -756,6 +766,154 @@ class MockWingmanApi(
         notices.clear()
     }
 
+    /* ------------------------------------------------------------ profiles (v1.3.1, WING-019/031) */
+
+    override suspend fun importProfile(body: ProfileImportRequest, key: IdempotencyKey): ApiResult<Profile> =
+        idempotent("importProfile", "POST /v1/profiles", key, body) {
+            if (body.connectionId != null && connections.none { it.id == body.connectionId && it.platform == body.provider.wireName() }) {
+                return@idempotent problem(422, ErrorCode.VALIDATION_ERROR, "connection_id must be your connection on the profile's platform")
+            }
+            if (body.source == com.wingman.core.model.ProfileSource.DEVICE) {
+                // Mirrors the server: no connection has a supported profile_read today.
+                return@idempotent problem(422, ErrorCode.VALIDATION_ERROR, "profile_read is UNSUPPORTED or the connection is unpaired")
+            }
+            val now = clock()
+            val existing = profiles.values.firstOrNull { it.provider == body.provider && it.externalProfileId == body.externalProfileId }
+            val id = existing?.id ?: nextId()
+            val profile = Profile(
+                id = id, provider = body.provider, externalProfileId = body.externalProfileId, displayName = body.displayName,
+                bio = body.bio, prompts = body.prompts, attributes = body.attributes, sourceObservedAt = body.sourceObservedAt,
+                provenance = com.wingman.core.model.ProfileProvenance(body.source, body.connectionId, now),
+                stale = java.time.Duration.between(body.sourceObservedAt, now) > PROFILE_FRESHNESS,
+                latestEvaluation = MockProfileFixtures.evaluate(id, body, now),
+                latestAction = profileActions.lastOrNull { it.profileId == id },
+                createdAt = existing?.createdAt ?: now, updatedAt = now,
+            )
+            profiles[id] = profile
+            audit(AgentActionType.PROFILE_IMPORTED, Actor.USER, details = details("profile_id" to id, "provider" to body.provider.wireName(), "source" to body.source.wireName(), "created" to (existing == null)))
+            ok(profile)
+        }
+
+    override suspend fun listProfileReviewQueue(page: PageRequest, filter: ProfileQueueFilter): ApiResult<Page<Profile>> =
+        op("listProfileReviewQueue") {
+            val decided = profileActions.filter { it.decision != ProfileDecision.SKIP }.map { it.profileId }.toSet()
+            fun excluded(p: Profile) = !p.latestEvaluation?.dealbreakersHit.isNullOrEmpty()
+            val ranked = profiles.values
+                .filter { it.id !in decided && (filter.provider == null || it.provider == filter.provider) }
+                .filter { filter.includeExcluded || !excluded(it) }
+                .map { p -> p.copy(latestAction = profileActions.lastOrNull { it.profileId == p.id }) }
+                .sortedWith(
+                    compareBy<Profile> { if (excluded(it)) 2 else if (it.stale) 1 else 0 }
+                        .thenBy { it.latestEvaluation?.score == null }
+                        .thenByDescending { it.latestEvaluation?.score ?: 0.0 }
+                        .thenByDescending { it.latestEvaluation?.confidence ?: 0.0 }
+                        .thenByDescending { it.createdAt },
+                )
+            paginate(ranked, page)
+        }
+
+    override suspend fun recordProfileDecision(profileId: String, body: ProfileDecisionRequest, key: IdempotencyKey): ApiResult<ProfileAction> =
+        idempotent("recordProfileDecision", "POST /v1/profiles/{id}/decision", key, profileId to body) {
+            val profile = profiles[profileId] ?: return@idempotent notFound()
+            if (body.connectionId != null && connections.none { it.id == body.connectionId && it.platform == profile.provider.wireName() }) {
+                return@idempotent problem(422, ErrorCode.VALIDATION_ERROR, "connection_id must be your connection on the profile's platform")
+            }
+            val now = clock()
+            val action = ProfileAction(
+                id = nextId(), profileId = profileId, connectionId = body.connectionId, decision = body.decision,
+                idempotencyKey = key.value, execution = ProfileActionExecution.NOT_EXECUTABLE, executionDetail = null,
+                decidedAt = now, executionRequestedAt = null, executedAt = null, createdAt = now,
+            )
+            profileActions += action
+            audit(AgentActionType.PROFILE_DECISION_RECORDED, Actor.USER, details = details("profile_id" to profileId, "profile_action_id" to action.id, "decision" to body.decision.wireName()))
+            ok(action)
+        }
+
+    override suspend fun requestProfileActionExecution(profileActionId: String, key: IdempotencyKey): ApiResult<ProfileAction> =
+        idempotent("requestProfileActionExecution", "POST /v1/profile-actions/{id}/execute", key, profileActionId) {
+            val index = profileActions.indexOfFirst { it.id == profileActionId }
+            if (index < 0) return@idempotent notFound()
+            val action = profileActions[index]
+            if (action.execution == ProfileActionExecution.QUEUED) return@idempotent ok(action)
+            val connection = action.connectionId?.let { id -> connections.firstOrNull { it.id == id } }
+            val profile = profiles.getValue(action.profileId)
+            val refusal = when {
+                action.execution != ProfileActionExecution.NOT_EXECUTABLE -> "/profile_action_id" to "this action was already executed or attempted"
+                action.decision == ProfileDecision.SKIP -> "/decision" to "skip is never executed"
+                connection == null -> "/connection_id" to "the decision names no connection"
+                else -> swipeGateFailure(connection)
+                    ?: ("/connection_id" to "auto-swipe is not enabled for this connection").takeIf { connection.autoSwipeEnabled != true }
+                    ?: ("/connection_id" to "automation is paused").takeIf { globalState.status == GlobalAutomationStatus.PAUSED }
+                    ?: ("/profile_id" to "the profile is stale").takeIf { profile.stale }
+                    ?: ("/profile_id" to "another action for this profile is already queued or executed").takeIf {
+                        profileActions.any { it.profileId == profile.id && it.execution in LIVE_EXECUTIONS }
+                    }
+            }
+            if (refusal != null) {
+                audit(AgentActionType.POLICY_BLOCKED, Actor.USER, reasonCode = ErrorCode.SWIPE_EXECUTION_DISABLED.wire,
+                    details = details("profile_action_id" to action.id, "check" to refusal.first))
+                return@idempotent swipeDisabled(refusal)
+            }
+            // The gate passed: QUEUED means accepted for execution, NOT executed. Nothing here ever
+            // sets EXECUTED (no executor exists, WING-031).
+            val queued = action.copy(execution = ProfileActionExecution.QUEUED, executionRequestedAt = clock())
+            profileActions[index] = queued
+            audit(AgentActionType.PROFILE_ACTION_QUEUED, Actor.USER, details = details("profile_action_id" to action.id))
+            ok(queued)
+        }
+
+    override suspend fun putConnectionSettings(connectionId: String, body: ConnectionSettingsUpdate): ApiResult<Connection> =
+        op("putConnectionSettings") {
+            val index = connections.indexOfFirst { it.id == connectionId }
+            if (index < 0) return@op notFound()
+            if (body.autoSwipeEnabled) swipeGateFailure(connections[index])?.let { return@op swipeDisabled(it) }
+            connections[index] = connections[index].copy(autoSwipeEnabled = body.autoSwipeEnabled)
+            ok(connections[index])
+        }
+
+    /** The connection-level swipe gate (backend `swipe_gate_failure`). */
+    private fun swipeGateFailure(c: Connection): Pair<String, String>? = when {
+        !c.isPaired || c.status != ConnectionStatus.CONNECTED -> "/connection_id" to "connection is not paired and connected"
+        c.capabilities.capabilities.swipe.status != Verification.VERIFIED -> "/connection_id" to "swipe capability is not VERIFIED"
+        c.isExperimentalUnverified -> "/connection_id" to "experimental connection is not operator-verified"
+        else -> null
+    }
+
+    private fun swipeDisabled(failure: Pair<String, String>): ApiResult<Nothing> = ApiResult.Failure(
+        ApiError.Http(
+            status = 422,
+            problem = Problem(
+                type = "https://wingman.invalid/problems/${ErrorCode.SWIPE_EXECUTION_DISABLED.wire}",
+                title = "This decision cannot be executed on the platform.",
+                status = 422,
+                code = ErrorCode.SWIPE_EXECUTION_DISABLED.wire,
+                errors = listOf(FieldError(pointer = failure.first, message = failure.second)),
+            ),
+        ),
+    )
+
+    /** Test hook: the user's recorded profile actions, oldest first. */
+    suspend fun profileActions(): List<ProfileAction> = mutex.withLock { profileActions.toList() }
+
+    /** Test hook: removes the seeded profiles. */
+    suspend fun clearProfiles() = mutex.withLock {
+        profiles.clear()
+        profileActions.clear()
+    }
+
+    /**
+     * Test hook: plays the OPERATOR recording evidence that a connection's swipe works (the CLI path,
+     * ADR 0007). No real platform has such evidence (docs/integrations/swiping.md); this exists only
+     * so tests can exercise the enabled branch of the execute control.
+     */
+    suspend fun operatorVerifySwipeForTest(connectionId: String) = mutex.withLock {
+        val index = connections.indexOfFirst { it.id == connectionId }
+        require(index >= 0) { "unknown connection" }
+        val c = connections[index]
+        val swipe = com.wingman.core.model.Capability(Verification.VERIFIED, evidence = "test fixture (not a real device)", verifiedAt = clock())
+        connections[index] = c.copy(capabilities = c.capabilities.copy(capabilities = c.capabilities.capabilities.copy(swipe = swipe)))
+    }
+
     /* ------------------------------------------------------------ internals */
 
     private suspend fun <T> op(operationId: String, block: suspend () -> ApiResult<T>): ApiResult<T> {
@@ -1032,6 +1190,8 @@ class MockWingmanApi(
     companion object {
         private const val CURSOR_PREFIX = "mock:"
         private val DATING_PLATFORMS = setOf("tinder", "bumble", "hinge")
+        private val PROFILE_FRESHNESS: java.time.Duration = java.time.Duration.ofDays(14)
+        private val LIVE_EXECUTIONS = setOf(ProfileActionExecution.QUEUED, ProfileActionExecution.EXECUTED)
         private val ID_PATTERN = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
         /** Backend `CLIENT_VERIFIED_NOTE` (app.services.connections). */

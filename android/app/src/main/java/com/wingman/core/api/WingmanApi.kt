@@ -13,6 +13,7 @@ import com.wingman.core.model.AssistedDeliveryStatus
 import com.wingman.core.model.AutomationActionRequest
 import com.wingman.core.model.AutomationMode
 import com.wingman.core.model.Connection
+import com.wingman.core.model.ConnectionSettingsUpdate
 import com.wingman.core.model.ConnectionCreateRequest
 import com.wingman.core.model.ConnectionUnpairRequest
 import com.wingman.core.model.ConnectionUnpairResult
@@ -34,6 +35,11 @@ import com.wingman.core.model.OutboxClaimRequest
 import com.wingman.core.model.OutboxClaimResult
 import com.wingman.core.model.Page
 import com.wingman.core.model.Preferences
+import com.wingman.core.model.Profile
+import com.wingman.core.model.ProfileAction
+import com.wingman.core.model.ProfileDecisionRequest
+import com.wingman.core.model.ProfileImportRequest
+import com.wingman.core.model.ProfileProvider
 import com.wingman.core.model.PreferencesUpdate
 import com.wingman.core.model.RejectRequest
 import com.wingman.core.model.SendMessageRequest
@@ -70,6 +76,12 @@ data class ApprovalFilter(
 data class AssistedDeliveryFilter(
     val status: AssistedDeliveryStatus? = null,
     val conversationId: String? = null,
+)
+
+/** (1.3.1) `listProfileReviewQueue` filters. [includeExcluded] also lists dealbreaker hits, last. */
+data class ProfileQueueFilter(
+    val provider: ProfileProvider? = null,
+    val includeExcluded: Boolean = false,
 )
 
 data class AgentActionFilter(
@@ -227,4 +239,43 @@ interface WingmanApi {
         page: PageRequest = PageRequest.FIRST,
         connectionId: String? = null,
     ): ApiResult<Page<InboundNotice>>
+
+    // profiles and swipe decisions (contract v1.3.1, ADR 0008 §7; WING-019/031)
+
+    /**
+     * `importProfile`: stores a profile the user shared (`manual`) or a `fixture`. `201` (new) and
+     * `200` (same provider profile updated) are both [ApiResult.Success]. Never swipes. Profile
+     * content is private: never log it.
+     */
+    suspend fun importProfile(body: ProfileImportRequest, key: IdempotencyKey): ApiResult<Profile>
+
+    /**
+     * `listProfileReviewQueue`: undecided profiles (none decided other than `skip`), ranked fresh >
+     * stale > excluded, then by score. The cursor belongs to one [filter].
+     */
+    suspend fun listProfileReviewQueue(
+        page: PageRequest = PageRequest.FIRST,
+        filter: ProfileQueueFilter = ProfileQueueFilter(),
+    ): ApiResult<Page<Profile>>
+
+    /**
+     * `recordProfileDecision`: the USER's like / pass / skip / superlike, recorded only. The action
+     * comes back `not_executable`; nothing happens on the platform. One [key] per tap: a retry with
+     * the same key replays the same action. `429 rate_limited` when deciding too fast.
+     */
+    suspend fun recordProfileDecision(profileId: String, body: ProfileDecisionRequest, key: IdempotencyKey): ApiResult<ProfileAction>
+
+    /**
+     * `requestProfileActionExecution`: asks the server's swipe gate to accept a recorded decision for
+     * execution. `422 swipe_execution_disabled` names the failed check. Success is `queued`, which is
+     * accepted, NOT executed.
+     */
+    suspend fun requestProfileActionExecution(profileActionId: String, key: IdempotencyKey): ApiResult<ProfileAction>
+
+    /**
+     * `putConnectionSettings` (1.3.0): `auto_swipe_enabled: true` only while the connection's swipe is
+     * VERIFIED and it is not experimental-unverified (`422 swipe_execution_disabled` otherwise).
+     * Turning it off always works. PUT is idempotent: no key.
+     */
+    suspend fun putConnectionSettings(connectionId: String, body: ConnectionSettingsUpdate): ApiResult<Connection>
 }

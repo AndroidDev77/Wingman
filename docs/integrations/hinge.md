@@ -11,7 +11,7 @@ Decisions: D-021 (experimental route, binding conditions), D-022 (contract 1.3.0
 experimental API per WING-021; never in a Play build). Design source:
 [`dating_platform_matrix.md` §6](dating_platform_matrix.md#6-hinge-experimental-connector-design-wing-029).
 Protocol reference: `f0rr0/hinge-rs` at `cffe397` (MIT OR Apache-2.0), reimplemented in Kotlin;
-see `android/app/src/main/java/com/wingman/integrations/hinge/THIRD_PARTY_NOTICES.md`.
+see `android/app/src/experimental/java/com/wingman/integrations/hinge/THIRD_PARTY_NOTICES.md`.
 
 > **Open owner decisions that gate shipping (not code):** I-030 (Hinge terms §2d item 11 restrict
 > automatically generated content; this affects AI drafts on every Hinge path, the notification
@@ -111,13 +111,29 @@ full run with sentinel tokens shows none of them in any Wingman call (dynamic te
 
 ## 3. Experimental build (integrator)
 
-**Wired by the integrator (D-026).** The connector is compiled into the app but **inert** unless
-the build sets `wingman.experimental=true` **and** provides every client-identity property. With
-the flag off (the default, CI, and every other build), `BuildConfig.WINGMAN_EXPERIMENTAL` is
-`false`, every `HINGE_*` field is empty, `HingeBuildFlags.fromBuildConfig()` returns OFF,
-`HingeModule.init` builds no connector and schedules no worker, the Settings row is hidden, and the
-gate refuses every call (tested). The Hinge notification plugin is registered either way, because
-the notification-assisted path ships regardless (D-021 item 7).
+**Wired by the integrator (D-026); moved to its own source set by WING-031.** The connector is
+compiled **only** by the experimental build (`-Pwingman.experimental=true`), and even there it is
+inert until every client-identity property is set. Every other build (the default, CI, the beta,
+any future Play build) does not contain it at all:
+
+| Source set | Compiled when | Contents |
+|---|---|---|
+| `src/main/java/.../integrations/hinge/notifications/` | always | the Hinge **notification** plugin (the fallback, D-021 item 7) |
+| `src/experimental/java/.../integrations/hinge/**` | flag on only | the connector, `HingeModule`, `HingeExperimentalActivity`, `THIRD_PARTY_NOTICES.md` |
+| `src/experimental/java/.../experimental/ExperimentalModules.kt` | flag on only | wires `HingeModule.init` and the Settings row |
+| `src/standard/java/.../experimental/ExperimentalModules.kt` | flag off only | no-op stub with the same members; names no experimental class |
+| `src/experimental/AndroidManifest-entries.xml` | flag on only | the activity declaration, merged into a generated copy of the main manifest |
+| `src/testExperimental/java/.../integrations/hinge/**` | flag on only | the connector's JVM tests |
+
+`MainActivity` and Settings call `com.wingman.experimental.ExperimentalModules`, which resolves to
+whichever stub the build compiled. Proof that a default build has none of it: the Gradle task
+`checkNoExperimentalClasses` (run before `testDebugUnitTest` whenever the flag is off) scans the
+debug and release Kotlin/Java class outputs and fails on any `com/wingman/integrations/hinge/` class
+outside `notifications/`, and the JVM test `ExperimentalSourceSetTest` checks the compiled classes,
+that none of the connector classes can be loaded, and the source tree. `scripts/android-build.sh`
+also builds and tests the experimental variant so it cannot rot. With the flag on but an
+incomplete identity, `HingeBuildFlags.fromBuildConfig()` returns OFF, `HingeModule.init` builds no
+connector and schedules no worker, the Settings row is hidden, and the gate refuses every call.
 
 ### 3a. What is in `android/app/build.gradle.kts`
 
@@ -179,17 +195,16 @@ internal `bundle<BuildType>ClassesTo*Jar` tasks, which unit tests depend on, are
 3. Settings now shows **Hinge (experimental)** under "Dating apps (notifications)"; **Open** starts
    the opt-in screen (§4). Without the flag or with an incomplete identity the row is not shown.
 
-**Open (D-026):** the non-experimental APK still *contains* the inert connector classes. D-023
-says a Play build contains no unofficial-API code at all, so before any Play submission
-(`docs/beta/release_checklist.md` has Play as NO-GO today) `integrations/hinge` except
-`notifications/` must move to a separate source set or flavor that only the experimental build
-compiles. The package layout already separates the two.
+**Closed by WING-031 (D-026's open item):** the non-experimental APK no longer contains the
+connector classes; see the source-set table above.
 
 ### 3c. Wiring (`MainActivity.onCreate`)
 
 ```kotlin
-HingeModule.init(applicationContext, container) // after SmsConnectorRuntime, before NotificationSyncRuntime / setContent
+ExperimentalModules.init(applicationContext, container) // after SmsConnectorRuntime, before NotificationSyncRuntime / setContent
 ```
+
+In the experimental build this is `HingeModule.init`; in every other build it does nothing.
 
 It runs before anything builds the notification core. The Hinge notification plugin is also in
 `PlatformPlugins.all()` next to Tinder and Bumble, so a cold process started by the listener
@@ -199,7 +214,8 @@ nothing. The connector itself is built only in the experimental build with a com
 ### 3d. Manifest
 
 `HingeExperimentalActivity` is declared with `android:exported="false"` (reached only from the
-Settings row). `POST_NOTIFICATIONS` is **not** requested: the stop reason is shown in-app, and a
+Settings row), in `src/experimental/AndroidManifest-entries.xml`: only the experimental build's
+generated manifest contains it. `POST_NOTIFICATIONS` is **not** requested: the stop reason is shown in-app, and a
 system notification is posted only if the permission is already granted. No SMS,
 notification-listener, accessibility or foreground-service permission is needed by the
 experimental connector. `co.hinge.app` is already in `<queries>` (WING-017).
@@ -298,7 +314,7 @@ values of `experiments/dating_platforms/live_test_observation.schema.json` (test
 ## 8. Notification fallback plugin
 
 `HingeNotificationPlugin` (`co.hinge.app`) implements WING-017's `NotificationAppPlugin`. It is
-not experimental and is registered by `HingeModule.init` in every build. Every shape is an
+not experimental and is in every build (registered through `PlatformPlugins.all()`; the experimental build's `HingeModule.init` also checks it). Every shape is an
 assumption until the WING-017 device run (`notification_matrix.md`, matrix §8):
 
 - Like, comment ("commented on", "liked your photo and said"), match, "Your Turn", standouts and

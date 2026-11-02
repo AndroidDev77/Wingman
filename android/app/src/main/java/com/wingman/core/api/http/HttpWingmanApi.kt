@@ -9,6 +9,7 @@ import com.wingman.core.api.AssistedDeliveryFilter
 import com.wingman.core.api.ConversationFilter
 import com.wingman.core.api.IdempotencyKey
 import com.wingman.core.api.PageRequest
+import com.wingman.core.api.ProfileQueueFilter
 import com.wingman.core.api.WingmanApi
 import com.wingman.core.api.WingmanJson
 import com.wingman.core.auth.BearerTokenAuthenticator
@@ -25,6 +26,7 @@ import com.wingman.core.model.AssistedDeliveryConfirmRequest
 import com.wingman.core.model.AssistedDeliveryResult
 import com.wingman.core.model.AutomationActionRequest
 import com.wingman.core.model.Connection
+import com.wingman.core.model.ConnectionSettingsUpdate
 import com.wingman.core.model.ConnectionCreateRequest
 import com.wingman.core.model.ConnectionUnpairRequest
 import com.wingman.core.model.ConnectionUnpairResult
@@ -44,6 +46,10 @@ import com.wingman.core.model.OutboxClaimRequest
 import com.wingman.core.model.OutboxClaimResult
 import com.wingman.core.model.Page
 import com.wingman.core.model.Preferences
+import com.wingman.core.model.Profile
+import com.wingman.core.model.ProfileAction
+import com.wingman.core.model.ProfileDecisionRequest
+import com.wingman.core.model.ProfileImportRequest
 import com.wingman.core.model.PreferencesUpdate
 import com.wingman.core.model.Problem
 import com.wingman.core.model.RejectRequest
@@ -213,6 +219,27 @@ class HttpWingmanApi(
 
     override suspend fun listInboundNotices(page: PageRequest, connectionId: String?): ApiResult<Page<InboundNotice>> =
         call { service.listInboundNotices(page.cursor, page.limit, connectionId) }
+
+    override suspend fun importProfile(body: ProfileImportRequest, key: IdempotencyKey): ApiResult<Profile> =
+        call { service.importProfile(key.value, body) }
+
+    override suspend fun listProfileReviewQueue(page: PageRequest, filter: ProfileQueueFilter): ApiResult<Page<Profile>> =
+        call {
+            service.listProfileReviewQueue(
+                page.cursor, page.limit, filter.provider?.wireName(),
+                // Sent only when true: absent is the contract default (false).
+                filter.includeExcluded.takeIf { it },
+            )
+        }
+
+    override suspend fun recordProfileDecision(profileId: String, body: ProfileDecisionRequest, key: IdempotencyKey): ApiResult<ProfileAction> =
+        call { service.recordProfileDecision(profileId, key.value, body) }
+
+    override suspend fun requestProfileActionExecution(profileActionId: String, key: IdempotencyKey): ApiResult<ProfileAction> =
+        call { service.requestProfileActionExecution(profileActionId, key.value, ConnectionUnpairRequest) }
+
+    override suspend fun putConnectionSettings(connectionId: String, body: ConnectionSettingsUpdate): ApiResult<Connection> =
+        call { service.putConnectionSettings(connectionId, body) }
 
     private fun ifMatch(version: Int?): String? = version?.let { "\"$it\"" }
 

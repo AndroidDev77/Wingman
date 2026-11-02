@@ -12,8 +12,12 @@ import java.nio.file.Files
  * Token isolation (D-021 item 3, ADR 0008 §3) and log privacy, statically and dynamically.
  */
 class HingeTokenIsolationAndPrivacyTest {
-    private val src = File("src/main/java/com/wingman").let { if (it.isDirectory) it else File("android/app/src/main/java/com/wingman") }
-    private val hingeDir = File(src, "integrations/hinge")
+    // WING-031 (D-026): the connector lives in src/experimental (compiled only by the experimental
+    // build); the rest of the app in src/main. Both trees are scanned.
+    private val appDir = File("src").let { if (it.isDirectory) File(".") else File("android/app") }
+    private val src = File(appDir, "src/main/java/com/wingman")
+    private val experimental = File(appDir, "src/experimental/java/com/wingman")
+    private val hingeDir = File(experimental, "integrations/hinge")
 
     private fun kt(dir: File) = dir.walkTopDown().filter { it.isFile && it.name.endsWith(".kt") }.toList()
 
@@ -26,7 +30,9 @@ class HingeTokenIsolationAndPrivacyTest {
     @Test fun `static - no Hinge session type or token field is used outside integrations-hinge`() {
         // Integrator (D-026): the whole app tree, not only core/, so no screen, API client, DI or
         // other connector can carry a Hinge credential towards Wingman.
-        val outside = kt(src).filter { "integrations/hinge" !in it.invariantSeparatorsPath }
+        val outside = (kt(src) + kt(experimental)).filter {
+            "integrations/hinge" !in it.invariantSeparatorsPath || "integrations/hinge/notifications" in it.invariantSeparatorsPath
+        }
         assertTrue(outside.size > 50)
         val forbidden = listOf("HingeSession", "HingeSessionStore", "EncryptedFileHingeSessionStore", "hingeToken", "KeystoreHingeCipher", "SendbirdChatTransport")
         val offenders = outside.flatMap { f -> forbidden.filter { f.readText().contains(it) }.map { "${f.name}: $it" } }

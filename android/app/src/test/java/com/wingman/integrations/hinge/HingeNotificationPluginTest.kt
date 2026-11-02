@@ -22,6 +22,12 @@ import org.junit.Test
  * device run records real Hinge notifications; these tests pin the conservative rules.
  */
 class HingeNotificationPluginTest {
+    // WING-031: the experimental connector's test fakes (and their T0) moved to src/testExperimental;
+    // this test runs in every build, so it keeps its own fixed instant (same value).
+    private companion object {
+        const val T0 = 1_793_600_000_000L // 2026-11-02
+    }
+
     private val plugin = HingeNotificationPlugin()
     private val reply = SnapshotAction(0, "Reply", listOf(SnapshotRemoteInput("reply_text", true)), SnapshotAction.SEMANTIC_ACTION_REPLY)
 
