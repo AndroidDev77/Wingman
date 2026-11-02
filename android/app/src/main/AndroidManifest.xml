@@ -109,13 +109,9 @@
             android:exported="true"
             android:label="Notification access" />
 
-        <!-- WING-029 (D-021, D-023, D-026): opt-in screen of the experimental Hinge connector. Not
-             exported: reached only from Settings, where the row is shown only when
-             HingeModule.connector() != null (experimental build with the client identity). In
-             every other build it shows one line ("not part of this build") and does nothing. -->
-        <activity
-            android:name=".integrations.hinge.android.HingeExperimentalActivity"
-            android:exported="false"
-            android:label="Hinge (experimental)" />
+        <!-- WING-029 / WING-031 (D-023, D-026): the experimental Hinge connector's opt-in activity is
+             declared in src/experimental/AndroidManifest-entries.xml and merged in only by the
+             experimental build (build.gradle.kts). This manifest, used by every other build, names
+             no experimental class. -->
     </application>
 </manifest>

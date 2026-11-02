@@ -1,0 +1,10 @@
+        <!-- EXPERIMENTAL BUILD ONLY (-Pwingman.experimental=true). build.gradle.kts inserts these lines
+             before </application> of src/main/AndroidManifest.xml to make the experimental build's
+             manifest; no other build sees them (D-023, D-026).
+             WING-029: opt-in screen of the experimental Hinge connector. Not exported: reached only
+             from Settings, where the row is shown only when HingeModule.connector() != null (the
+             client identity is configured). -->
+        <activity
+            android:name=".integrations.hinge.android.HingeExperimentalActivity"
+            android:exported="false"
+            android:label="Hinge (experimental)" />

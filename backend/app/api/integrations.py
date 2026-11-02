@@ -13,7 +13,8 @@
   ``POST /v1/profiles/{id}/decision``
   (``recordProfileDecision``), ``POST /v1/profile-actions/{id}/execute``
   (``requestProfileActionExecution``: the swipe gate; ``queued`` at most, never
-  executed here).
+  executed here). WING-031 (:mod:`app.discovery`): decision rate limits (``429``),
+  audited gate refusals, the superseded-decision and per-connection execution limits.
 
 No request model accepts a platform credential or session field (``extra="forbid"``).
 """
@@ -60,8 +61,10 @@ from app.db.repositories import (
     ProfileActionRepository,
     ProfileRepository,
 )
+from app.db.repositories.idempotency import IdempotencyRepository
 from app.db.scope import UserScope
 from app.db.session import get_session
+from app.discovery import DEFAULT_LIMITS, DecisionRateLimited, DiscoveryLimits, DiscoveryService
 from app.security.deps import get_current_user_scope
 from app.services.conversations import ConversationReadService
 from app.services.integrations import (
@@ -69,7 +72,6 @@ from app.services.integrations import (
     AssistedDeliveryService,
     IdentityLinkService,
     InvalidRequest,
-    ProfileService,
     ProfileView,
     SwipeExecutionDisabled,
 )
@@ -491,11 +493,19 @@ def _check_import(body: ProfileImportRequest) -> None:
             )
 
 
-def _profile_service(services: Services) -> ProfileService:
-    return ProfileService(now=services.dispatcher._now)  # noqa: SLF001
+def get_discovery_limits(request: Request) -> DiscoveryLimits:
+    """WING-031 limits; ``app.state.discovery_limits`` overrides the defaults (tests)."""
+    configured: DiscoveryLimits | None = getattr(request.app.state, "discovery_limits", None)
+    return configured or DEFAULT_LIMITS
 
 
-ProfileSvc = Annotated[ProfileService, Depends(_profile_service)]
+def _profile_service(
+    services: Services, limits: Annotated[DiscoveryLimits, Depends(get_discovery_limits)]
+) -> DiscoveryService:
+    return DiscoveryService(now=services.dispatcher._now, limits=limits)  # noqa: SLF001
+
+
+ProfileSvc = Annotated[DiscoveryService, Depends(_profile_service)]
 
 
 @router.post("/v1/profiles", operation_id="importProfile", tags=["profiles"])
@@ -597,6 +607,22 @@ async def record_profile_decision(
     idempotency_key: IdemKey = None,
 ) -> JSONResponse:
     await ProfileRepository(session, scope).require(profile_id)
+    if idempotency_key is not None and (
+        await IdempotencyRepository(session, scope).lookup(
+            key=idempotency_key, method="POST", route="/v1/profiles/{profile_id}/decision"
+        )
+        is None
+    ):
+        # A new key only: replays are never limited, and a limited request is not stored.
+        try:
+            await service.check_decision_rate(session, scope)
+        except DecisionRateLimited as exc:
+            raise ProblemException(
+                429,
+                ErrorCode.RATE_LIMITED,
+                f"Too many decisions in the last {exc.window}; try again later.",
+                headers={"Retry-After": str(exc.retry_after_s)},
+            ) from None
     async with idempotent(
         session,
         scope,
