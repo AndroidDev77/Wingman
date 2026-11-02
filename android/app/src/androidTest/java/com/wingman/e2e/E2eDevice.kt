@@ -129,7 +129,13 @@ class E2eDevice(private val timeoutMs: Long = UI_TIMEOUT_MS) {
                 if (!moved) return@repeat
             }
         }
-        return device.findObject(sel) ?: throw AssertionError("could not scroll to $what")
+        return device.findObject(sel) ?: run {
+            // TEMP DEBUG (WING-027/028): dump the hierarchy to logcat.
+            val out = java.io.ByteArrayOutputStream()
+            runCatching { device.dumpWindowHierarchy(out) }
+            out.toString().chunked(3000).forEach { android.util.Log.i("E2EDUMP", it) }
+            throw AssertionError("could not scroll to $what")
+        }
     }
 
     /** Taps the top-most "Refresh" until [sel] shows up (screens re-read the server on request). */
