@@ -1,0 +1,75 @@
+# WING-030: the Swift iMessage companion (macos/wingman-companion).
+# * core-linux: builds and tests WingmanCompanionCore (pure logic, system SQLite) in the
+#   official Swift 6.0.3 image, pinned by digest. No Apple API runs here.
+# * macos-app: builds the whole package on macOS, including the SwiftUI menu-bar app and the
+#   macOS adapters (Keychain, NSAppleScript, ASWebAuthenticationSession, SMAppService), runs
+#   the Core tests against macOS's own SQLite, and assembles an ad-hoc-signed .app with the
+#   hardened runtime to check the bundle, Info.plist and entitlements. It never opens
+#   Messages, never sends an Apple event, and has no Full Disk Access: real reads and sends
+#   stay UNVERIFIED (docs/integrations/imessage_companion.md §6).
+# Least privilege: read-only token, no secrets, checkout without persisted credentials.
+name: macOS companion
+
+on:
+  pull_request:
+    paths:
+      - "macos/wingman-companion/**"
+      - ".github/workflows/macos-companion.yml"
+  push:
+    branches: [main]
+    paths:
+      - "macos/wingman-companion/**"
+      - ".github/workflows/macos-companion.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-companion-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core-linux:
+    name: Companion core (Swift 6.0.3, Linux)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    container:
+      # swift:6.0.3-noble
+      image: swift@sha256:1a1c10372d9c6c0ba9b6151085e0a26ee83a79968b3c738a47a70eac1a70bba4
+    defaults:
+      run:
+        working-directory: macos/wingman-companion
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: System SQLite headers
+        run: apt-get update -qq && apt-get install -y -qq --no-install-recommends libsqlite3-dev
+      - name: Build
+        run: swift build --build-tests
+      - name: Test
+        run: swift test
+
+  macos-app:
+    name: Companion app (macOS build, tests, ad-hoc bundle)
+    runs-on: macos-15
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: macos/wingman-companion
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Toolchain
+        run: |
+          sw_vers
+          xcodebuild -version
+          swift --version
+      - name: Build (Core + app)
+        run: swift build --build-tests
+      - name: Test (Core)
+        run: swift test
+      - name: Bundle, ad-hoc sign with hardened runtime, verify
+        run: Packaging/build-app.sh --adhoc

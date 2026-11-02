@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleDisplayName</key>
+	<string>Wingman Companion</string>
+	<key>CFBundleExecutable</key>
+	<string>WingmanCompanion</string>
+	<key>CFBundleIdentifier</key>
+	<string>ai.wingman.companion</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>Wingman Companion</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1.0</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>LSMinimumSystemVersion</key>
+	<string>14.0</string>
+	<key>LSApplicationCategoryType</key>
+	<string>public.app-category.productivity</string>
+	<!-- Menu-bar only: no Dock icon, no main window. -->
+	<key>LSUIElement</key>
+	<true/>
+	<!-- Shown by macOS in the Automation consent prompt the first time a send runs. -->
+	<key>NSAppleEventsUsageDescription</key>
+	<string>Wingman Companion sends a reply through Messages only after you approve it in Wingman. It never sends on its own and never reads anything through Automation.</string>
+	<!-- The Auth0 redirect for this app's own Native application (docs §3). -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>ai.wingman.companion.auth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.wingman.companion</string>
+			</array>
+		</dict>
+	</array>
+	<!-- Wingman configuration. Values starting with REPLACE_ disable sign-in until set. -->
+	<key>WingmanAPIBaseURL</key>
+	<string>REPLACE_WITH_HTTPS_API_BASE_URL</string>
+	<key>WingmanAuth0Issuer</key>
+	<string>https://dev-zumw4z1t7m8hefst.us.auth0.com/</string>
+	<key>WingmanAuth0ClientId</key>
+	<string>REPLACE_WITH_MAC_NATIVE_APP_CLIENT_ID</string>
+	<key>WingmanAuth0Audience</key>
+	<string>https://api.wingman.app</string>
+	<key>WingmanAuth0RedirectURI</key>
+	<string>com.wingman.companion:/oauth2redirect</string>
+	<key>WingmanAuth0Connection</key>
+	<string>google-oauth2</string>
+</dict>
+</plist>

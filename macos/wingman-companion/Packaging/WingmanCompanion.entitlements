@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Hardened runtime: lets this app send Apple events (to Messages only, by design). -->
+	<key>com.apple.security.automation.apple-events</key>
+	<true/>
+	<!-- NOT sandboxed: a sandboxed app cannot read ~/Library/Messages (QA1888). There is
+	     deliberately no com.apple.security.app-sandbox key, and no network-server or
+	     temporary-exception entitlement. -->
+	<!-- Data-protection keychain (kSecUseDataProtectionKeychain). TEAMID is replaced by
+	     Packaging/build-app.sh; it needs a Developer ID provisioning profile. -->
+	<key>com.apple.application-identifier</key>
+	<string>TEAMID.ai.wingman.companion</string>
+	<key>keychain-access-groups</key>
+	<array>
+		<string>TEAMID.ai.wingman.companion</string>
+	</array>
+</dict>
+</plist>
