@@ -92,9 +92,9 @@ Enforced by `config/release/feature_gates.json` (`docs/integrations/release_gate
 5. **Owner: decide I-031** (experimental build distribution) and **I-032** (Tinder/Bumble stay
    assisted-only); only then the Hinge live test L0-L10 with the owner's own account.
 6. Engineering: periodic Android sync (I-024), so approved SMS replies do not wait for the app to open.
-7. Engineering: the backend ignores `connection.status_changed` (`error`/`disconnected`) when
-   queuing or leasing; only a capability downgrade or unpair stops sends (§8). Decide whether an
-   expired connection should cancel queued work server-side.
+7. ~~Engineering: the backend ignores `connection.status_changed` (`error`/`disconnected`) when
+   queuing or leasing.~~ **Fixed** (PR #58, D-030): such a connection holds its sends (no new
+   instruction, direct send or lease; nothing canceled) and resumes once on `connected` (mock E2E P8).
 8. Engineering: contract follow-ups already recorded: a "handed to app" outcome for RemoteInput
    (I-033), an `is_group` flag (D-028), a swipe outcome event (D-027).
 9. Engineering: a scripted adversarial LLM mock for guardrails in E2E (I-026; WING-032's
@@ -300,10 +300,11 @@ Real-device and real-account runs only, newest last, one block per run from
 - **The Android and macOS client code paths**: the suite drives the backend with their wire
   shapes; the clients' own logic is covered by JVM tests and XCTests (and, for SMS, the WING-025
   emulator job), not here.
-- **Expired connection handling server-side**: `connection.status_changed` (`error`,
-  `disconnected`) is stored but neither the dispatcher nor the claim re-check uses it (code read,
-  `app/services/dispatcher.py`, `app/services/outbox.py`). A device that stops claiming is the
-  only stop; a capability downgrade or unpair stops the server side (C3). Recorded as blocker 7.
+- **Expired connection handling server-side** (resolved after WING-032 by PR #58, D-030):
+  `connection.status_changed` `error`/`disconnected` now holds the connection's sends in the
+  dispatcher, the claim and the worker; `connected` resumes them exactly once (mock E2E P8,
+  `backend/tests/automation/test_connection_status_hold.py`). What a real device reports, and when,
+  is still UNVERIFIED.
 - **Content guardrails** beyond dates (fabricated facts, explicit wording, escalation): unit
   level only (I-026).
 - **Real LLM quality**: only the deterministic dev mock ran (I-009).
