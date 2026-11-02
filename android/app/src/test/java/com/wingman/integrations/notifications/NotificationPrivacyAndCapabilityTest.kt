@@ -1,6 +1,7 @@
 package com.wingman.integrations.notifications
 
 import com.wingman.core.model.ContractFiles
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -111,7 +112,7 @@ class NotificationPrivacyAndCapabilityTest {
     }
 
     @Test
-    fun `capabilities document never claims verified and drops profile_read`() {
+    fun `capabilities document never claims verified and states profile_read`() {
         val caps = NotificationPlatformCapabilities(
             "tinder",
             read = CapabilityState(CapabilityStatus.VERIFIED, "x"),
@@ -123,41 +124,79 @@ class NotificationPrivacyAndCapabilityTest {
         )
         val doc = NotificationContractMapping.capabilitiesDocument(caps, 1_793_473_200_000L)
         val c = doc["capabilities"]!!.jsonObject
-        assertEquals(setOf("read", "draft", "send", "swipe", "calendar_write"), c.keys)
+        assertEquals(setOf("read", "draft", "send", "swipe", "calendar_write", "profile_read"), c.keys)
         assertEquals("UNVERIFIED", c["read"]!!.jsonObject["status"]!!.jsonPrimitive.content)
+        assertEquals("UNSUPPORTED", c["profile_read"]!!.jsonObject["status"]!!.jsonPrimitive.content)
         assertEquals("false", c["send"]!!.jsonObject["reports_delivery_receipts"]!!.jsonPrimitive.content)
     }
 
     // ---------------------------------------------------------------- contract mapping
 
     @Test
-    fun `only linked messages with visible text become v1_2 message_received`() {
+    fun `every event maps to a v1_3 message_received and only linked complete messages are linked chats`() {
         val h = Harness()
         val linked = (h.post() as PostedOutcome.Processed).newEvents.single()
-        val env = NotificationContractMapping.receivedEnvelope(N_SCOPE, linked)!!
+        val env = NotificationContractMapping.receivedEnvelope(N_SCOPE, linked)
         assertEquals("message.received", env["type"]!!.jsonPrimitive.content)
         assertEquals("conv-abc", env["external_thread_id"]!!.jsonPrimitive.content)
         assertEquals(env, NotificationContractMapping.receivedEnvelope(N_SCOPE, linked)) // deterministic event_id
-        val unlinked = (h.post(chatSnapshot(key = "k2", shortcut = null, messages = listOf(SnapshotMessage("hi", 9L, "Kim")))) as PostedOutcome.Processed).newEvents.single()
-        assertNull(NotificationContractMapping.receivedEnvelope(N_SCOPE, unlinked))
-        val hidden = (h.post(chatSnapshot(key = "k3", title = "Kim", text = "You have a new message", messages = emptyList())) as PostedOutcome.Processed).newEvents.single()
-        assertNull(NotificationContractMapping.receivedEnvelope(N_SCOPE, hidden))
-        val v13 = NotificationContractMapping.v13Fields(hidden)
-        assertEquals("notification", v13["source"]!!.jsonPrimitive.content)
-        assertEquals("unlinked", v13["identity"]!!.jsonPrimitive.content)
-        assertEquals("true", v13["content_hidden"]!!.jsonPrimitive.content)
+        val p = env["payload"]!!.jsonObject
+        assertEquals("chat_message", p["kind"]!!.jsonPrimitive.content)
+        assertEquals("linked", p["identity"]!!.jsonPrimitive.content)
+        assertEquals("notification", p["source"]!!.jsonPrimitive.content)
+        assertEquals("false", p["content_hidden"]!!.jsonPrimitive.content)
+        assertEquals("conv-abc", p["sender"]!!.jsonObject["external_contact_id"]!!.jsonPrimitive.content)
         maybeWriteFixture("event.notification_message_received", env)
+
+        // No stable conversation ID: unlinked, no thread, and the label never becomes an ID.
+        val unlinked = (h.post(chatSnapshot(key = "k2", shortcut = null, messages = listOf(SnapshotMessage("hi", 9L, "Kim")))) as PostedOutcome.Processed).newEvents.single()
+        val u = NotificationContractMapping.receivedEnvelope(N_SCOPE, unlinked)
+        val up = u["payload"]!!.jsonObject
+        assertEquals("unlinked", up["identity"]!!.jsonPrimitive.content)
+        assertEquals(JsonNull, u["external_thread_id"])
+        assertEquals("$FAKE_PLATFORM:unlinked", up["sender"]!!.jsonObject["external_contact_id"]!!.jsonPrimitive.content)
+        assertFalse(up.toString().contains("\"external_contact_id\":\"Kim"))
+        maybeWriteFixture("event.notification_unlinked", u)
+
+        // Hidden content: content_hidden with empty text (the backend stores a notice).
+        val hidden = (h.post(chatSnapshot(key = "k3", title = "Kim", text = "You have a new message", messages = emptyList())) as PostedOutcome.Processed).newEvents.single()
+        val hp = NotificationContractMapping.receivedEnvelope(N_SCOPE, hidden)["payload"]!!.jsonObject
+        assertEquals("true", hp["content_hidden"]!!.jsonPrimitive.content)
+        assertEquals("", hp["text"]!!.jsonPrimitive.content)
+        assertEquals("notification", hp["source"]!!.jsonPrimitive.content)
+        maybeWriteFixture("event.notification_hidden", NotificationContractMapping.receivedEnvelope(N_SCOPE, hidden))
+    }
+
+    @Test
+    fun `kinds map to the v1_3 wire values and a linked label without a conversation is unlinked`() {
+        assertEquals("chat_message", NotificationContractMapping.wireKind(NotificationEventKind.MESSAGE))
+        assertEquals("match", NotificationContractMapping.wireKind(NotificationEventKind.MATCH))
+        assertEquals("like_comment", NotificationContractMapping.wireKind(NotificationEventKind.LIKE))
+        assertEquals("like_comment", NotificationContractMapping.wireKind(NotificationEventKind.COMMENT))
+        assertEquals("expiry", NotificationContractMapping.wireKind(NotificationEventKind.EXPIRY))
+        assertEquals("system", NotificationContractMapping.wireKind(NotificationEventKind.SYSTEM))
+        assertEquals("unknown", NotificationContractMapping.wireKind(NotificationEventKind.UNKNOWN))
+        val h = Harness()
+        val linked = (h.post() as PostedOutcome.Processed).newEvents.single()
+        val noConv = linked.copy(externalConversationId = null, kind = NotificationEventKind.MATCH)
+        val p = NotificationContractMapping.receivedEnvelope(N_SCOPE, noConv)["payload"]!!.jsonObject
+        assertEquals("unlinked", p["identity"]!!.jsonPrimitive.content)
+        assertEquals("match", p["kind"]!!.jsonPrimitive.content)
+        maybeWriteFixture("event.notification_match", NotificationContractMapping.receivedEnvelope(N_SCOPE, noConv))
     }
 
     @Test
     fun `emitted envelopes use only keys the frozen contract example has`() {
         val h = Harness()
         val e = (h.post() as PostedOutcome.Processed).newEvents.single()
-        val env = NotificationContractMapping.receivedEnvelope(N_SCOPE, e)!!
-        val example = File(ContractFiles.examplesDir(), "event.sms_message_received.json")
+        val env = NotificationContractMapping.receivedEnvelope(N_SCOPE, e)
+        val example = File(ContractFiles.examplesDir(), "event.hinge_unofficial_chat_message.json")
         if (example.isFile) {
             val ex = kotlinx.serialization.json.Json.parseToJsonElement(example.readText()).jsonObject
             assertTrue("unexpected keys ${env.keys - ex.keys}", (env.keys - ex.keys).isEmpty())
+            val payloadKeys = env["payload"]!!.jsonObject.keys
+            val exPayloadKeys = ex["payload"]!!.jsonObject.keys
+            assertTrue("unexpected payload keys ${payloadKeys - exPayloadKeys}", (payloadKeys - exPayloadKeys).isEmpty())
         }
         val failed = h.adapter.reply(h.command(conv = "nope")).record
         val failEnv = NotificationContractMapping.outcomeEnvelope(N_SCOPE, failed, h.clock.now)!!

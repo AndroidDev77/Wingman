@@ -27,28 +27,38 @@ data class NotificationConnectionScope(val userId: String, val connectionId: Str
 /**
  * THE ONLY PLACE where the notification foundation's types meet the wire contract.
  *
- * Today it targets frozen contract **v1.2.0** (`connector_event.v1`, `connector_capabilities.v1`,
- * `OutboxInstruction`). Contract **v1.3** (in progress in parallel) adds platforms
- * `tinder`/`bumble`/`hinge`, an event `kind`, `identity` (linked/unlinked/ambiguous),
- * `truncated`/`content_hidden`, `source = notification` and an assisted-delivery state. Until it is
- * merged:
- * - [receivedEnvelope] emits a v1.2-valid `message.received` for LINKED MESSAGE events only; every
- *   other kind or identity returns null and stays in the local inbox.
- * - [v13Fields] holds the proposed v1.3 fields, kept apart so the integrator can merge them into
- *   the payload (or the envelope) under the names v1.3 finally uses. Nothing else needs changing.
- * - [outcomeEnvelope] maps a FAILED reply to `message.send_failed`. A SUBMITTED reply returns null:
- *   v1.2's only success event is `message.send_acknowledged`, which drives `sent`, and a fired
- *   PendingIntent is NOT a send acknowledgement. It waits for v1.3's assisted-delivery state.
- * - `profile_read` has no slot in `connector_capabilities.v1` and is dropped by [capabilitiesDocument].
+ * Targets contract **v1.3.0** (ADR 0008): `connector_event.v1`, `connector_capabilities.v1` (with
+ * the optional `profile_read`) and `OutboxInstruction`. A dating app's notifications are paired per
+ * app (`tinder`/`bumble`/`hinge`, `transport: notification`, or `android_notification`).
+ * - [receivedEnvelope] reports EVERY processed event as `message.received` with the 1.3.0 payload
+ *   fields `kind`, `identity`, `truncated`, `content_hidden`, `sender_label`, `source:
+ *   notification` and, when known, `external_conversation_id`. The backend lets only a `linked`,
+ *   complete `chat_message` reach the pipeline; everything else becomes an `InboundNotice` that is
+ *   never replied to or merged. An event without a stable conversation ID is never `linked`, a
+ *   label never becomes a contact or thread ID, and missing text is reported as hidden.
+ * - [outcomeEnvelope] maps a FAILED reply to `message.send_failed`. A SUBMITTED reply returns
+ *   null: firing a notification's RemoteInput only hands the text to the other app, and Wingman
+ *   cannot observe that it was sent. 1.3.0's only success event, `message.send_acknowledged`,
+ *   drives `sent`, and `user_reported_sent` exists only for an assisted draft the USER confirms
+ *   (`confirmAssistedDelivery`), so neither fits. Reporting nothing leaves the message `sending`
+ *   until its lease lapses, which the backend records as `lease_expired` (outcome unknown, never
+ *   `sent`, never retried; ADR 0006). The uplink marks the record reported without sending it.
+ * - [capabilitiesDocument] includes `profile_read` (always UNSUPPORTED for notifications).
  */
 object NotificationContractMapping {
     const val SOURCE_NOTIFICATION = "notification"
 
-    /** `connector_event.v1` `message.received`, or null when v1.2 cannot represent the event faithfully. */
-    fun receivedEnvelope(scope: NotificationConnectionScope, e: NotificationInboxEvent): JsonObject? {
-        if (e.kind != NotificationEventKind.MESSAGE || e.identity != NotificationIdentity.LINKED) return null
-        val conversation = e.externalConversationId ?: return null
-        if (e.contentHidden || e.body == null) return null // v1.2 requires text and has no hidden flag
+    /** `connector_event.v1` `message.received` (contract 1.3.0 inbound payload) for any processed event. */
+    fun receivedEnvelope(scope: NotificationConnectionScope, e: NotificationInboxEvent): JsonObject {
+        val conversation = e.externalConversationId?.takeIf { it.isNotBlank() }
+        // `linked` needs a stable platform conversation ID (ADR 0008 §4); a label alone is not one.
+        val identity = if (e.identity == NotificationIdentity.LINKED && conversation == null) {
+            NotificationIdentity.UNLINKED
+        } else {
+            e.identity
+        }
+        val linked = identity == NotificationIdentity.LINKED
+        val hidden = e.contentHidden || e.body == null
         return buildJsonObject {
             put("schema_version", "connector_event.v1")
             put("event_id", eventId(scope.userId, "message.received", e.platform, e.externalMessageId))
@@ -57,29 +67,42 @@ object NotificationContractMapping {
             put("connection_id", scope.connectionId)
             put("user_id", scope.userId)
             put("external_message_id", e.externalMessageId)
-            put("external_thread_id", conversation)
+            if (linked) put("external_thread_id", conversation) else put("external_thread_id", JsonNull)
             put("occurred_at", ts(e.occurredAtMillis))
             put("observed_at", ts(e.observedAtMillis))
             putJsonObject("payload") {
                 putJsonObject("sender") {
-                    put("external_contact_id", conversation)
-                    put("display_name", e.senderLabel)
+                    // Only a linked event names a contact; otherwise a fixed per-platform placeholder,
+                    // so no label ever becomes an identity (the backend stores a notice, no contact).
+                    put("external_contact_id", if (linked) conversation else "${e.platform}:unlinked")
+                    put("display_name", e.senderLabel?.take(MAX_LABEL))
                 }
-                put("text", e.body)
+                put("text", if (hidden) "" else e.body)
+                put("kind", wireKind(e.kind))
+                if (conversation != null) put("external_conversation_id", conversation)
+                put("sender_label", e.senderLabel?.take(MAX_LABEL))
+                put("identity", identity.name.lowercase())
+                put("truncated", e.truncated)
+                put("content_hidden", hidden)
+                put("source", SOURCE_NOTIFICATION)
             }
         }
     }
 
-    /** Proposed v1.3 fields for an inbound event (names follow the v1.3 brief; adjust when it merges). */
-    fun v13Fields(e: NotificationInboxEvent): JsonObject = buildJsonObject {
-        put("source", SOURCE_NOTIFICATION)
-        put("kind", e.kind.name.lowercase())
-        put("identity", e.identity.name.lowercase())
-        put("truncated", e.truncated)
-        put("content_hidden", e.contentHidden)
+    /** Contract 1.3.0 `kind`. Hinge comments and likes are both `like_comment`: never a chat. */
+    fun wireKind(kind: NotificationEventKind): String = when (kind) {
+        NotificationEventKind.MESSAGE -> "chat_message"
+        NotificationEventKind.MATCH -> "match"
+        NotificationEventKind.LIKE, NotificationEventKind.COMMENT -> "like_comment"
+        NotificationEventKind.EXPIRY -> "expiry"
+        NotificationEventKind.SYSTEM -> "system"
+        NotificationEventKind.UNKNOWN -> "unknown"
     }
 
-    /** `message.send_failed` for a failed reply; null for SUBMITTED (see the object doc) and CLAIMED. */
+    /**
+     * `message.send_failed` for a failed reply; null for SUBMITTED (never a send claim, see the
+     * object doc) and CLAIMED.
+     */
     fun outcomeEnvelope(scope: NotificationConnectionScope, r: ReplyRecord, nowMillis: Long): JsonObject? {
         if (r.state != ReplyState.FAILED) return null
         val reason = r.failureReason ?: ReplyFailureReason.OUTCOME_UNKNOWN
@@ -120,7 +143,7 @@ object NotificationContractMapping {
         -> "timeout"
     }
 
-    /** `connector_capabilities.v1` for one platform. `profile_read` is dropped (no v1 slot). */
+    /** `connector_capabilities.v1` for one platform, with the 1.3.0 optional `profile_read`. */
     fun capabilitiesDocument(c: NotificationPlatformCapabilities, assessedAtMillis: Long): JsonObject = buildJsonObject {
         put("schema_version", "connector_capabilities.v1")
         put("platform", c.platform)
@@ -131,6 +154,7 @@ object NotificationContractMapping {
             put("send", capability(c.send, deliveryReceipts = false))
             put("swipe", capability(c.swipe, null))
             put("calendar_write", capability(c.calendarWrite, null))
+            put("profile_read", capability(c.profileRead, null))
         }
         put("assessed_at", ts(assessedAtMillis))
     }
@@ -177,6 +201,8 @@ object NotificationContractMapping {
         s.note?.let { put("notes", it.take(500)) }
         if (deliveryReceipts != null && status != CapabilityStatus.UNSUPPORTED) put("reports_delivery_receipts", deliveryReceipts)
     }
+
+    private const val MAX_LABEL = 200
 
     private fun ts(millis: Long): String = UtcTimestamps.format(Instant.ofEpochMilli(millis))
 

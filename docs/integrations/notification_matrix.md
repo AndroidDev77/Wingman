@@ -1,8 +1,8 @@
 # Android notification listener and direct reply (WING-017)
 
 **Overall status: UNVERIFIED.** No physical device was available to the authoring agent (I-003). The
-pure-Kotlin core is unit-tested on the JVM and its envelopes validate against the frozen contract
-(v1.2.0). The Android adapters compile against `android-35` (locally and in the CI `android` job) and
+pure-Kotlin core is unit-tested on the JVM and its envelopes validate against contract v1.3.0
+(ADR 0008). The Android adapters compile against `android-35` (locally and in the CI `android` job) and
 have never run. **No dating app has been tested.** Every device claim below is UNVERIFIED until the
 [device test procedure](#4-device-test-procedure-using-the-inspector) has been run and recorded.
 
@@ -111,7 +111,7 @@ interface NotificationAppPlugin {
 | Update re-listing old MessagingStyle messages | Event dedup on a content-derived message ID (`notif:` + hash of platform, kind, conversation or label, time, body); only new messages recorded | `update re-listing old messages...` |
 | Same content, new post time | Recorded once | `same content reposted...` |
 | Group summary | Skipped, no action registered | `group summaries are skipped` |
-| Hidden content ("You have a new message") | `contentHidden=true`, `body=null`; not mapped to v1.2 `message.received` | `hidden and truncated content are flagged` |
+| Hidden content ("You have a new message") | `contentHidden=true`, `body=null`; reported with `content_hidden: true` and empty text, so the backend stores a notice | `hidden and truncated content are flagged` |
 | Truncated preview | `truncated=true` | same |
 | Empty notification | `can_read=false` | same |
 | Match / like | Distinct kinds, never repliable | `match and like are kept apart...` |
@@ -146,17 +146,24 @@ interface NotificationAppPlugin {
 
 ### Contract mapping (isolated in `NotificationContractMapping.kt`)
 
-Targets frozen **v1.2.0** today. Contract v1.3 (in progress) adds platforms `tinder`/`bumble`/`hinge`,
-event `kind`, `identity`, `truncated`/`content_hidden`, `source=notification` and assisted delivery.
-Until it merges:
+Targets contract **v1.3.0** (ADR 0008; integrator update when v1.3 merged). Pair per app
+(`tinder`/`bumble`/`hinge` with `transport: notification`) or as `android_notification`.
 
-* Only `LINKED` `MESSAGE` events with visible text map to `message.received` (`external_thread_id` =
-  `external_contact_id` = the plugin's conversation ID). Everything else stays in the local inbox.
-* `v13Fields(event)` returns the proposed fields (`source`, `kind`, `identity`, `truncated`,
-  `content_hidden`) for the integrator to merge under v1.3's final names.
-* A `SUBMITTED` reply produces **no** envelope: v1.2's only success event, `send_acknowledged`,
-  means `sent`. It waits for v1.3's assisted-delivery state. Failures map to `message.send_failed`.
-* `profile_read` has no slot in `connector_capabilities.v1` and is dropped from the document.
+* **Every** processed event maps to `message.received` with the 1.3.0 payload fields `kind`
+  (`MESSAGE` to `chat_message`, `LIKE` and `COMMENT` to `like_comment`, ...), `identity`,
+  `truncated`, `content_hidden`, `sender_label`, `source: notification` and, when the plugin has
+  one, `external_conversation_id`. Only a `linked`, complete `chat_message` reaches the backend
+  pipeline; everything else becomes a notice that is never replied to or merged.
+* `linked` needs the plugin's conversation ID (then `external_thread_id` = `external_contact_id` =
+  that ID). Without one the event is sent as `unlinked`, with no thread and a fixed
+  `<platform>:unlinked` contact placeholder: a sender label never becomes an identity. Missing
+  text is reported as `content_hidden` with empty text.
+* A `SUBMITTED` reply produces **no** envelope. Firing a RemoteInput only hands the text to the
+  other app; `send_acknowledged` would mean `sent`, and `user_reported_sent` is only for an
+  assisted draft the user confirms. The message stays `sending` until its lease lapses and the
+  backend records `lease_expired` (outcome unknown, never `sent`, never retried). Failures map to
+  `message.send_failed`.
+* The capability document includes the 1.3.0 optional `profile_read` (UNSUPPORTED).
 
 ## 3. Privacy
 
