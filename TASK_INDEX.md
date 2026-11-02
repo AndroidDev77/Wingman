@@ -43,3 +43,16 @@ Live status lives in [`docs/STATUS.md`](docs/STATUS.md).
 4. Keep a dedicated integration owner to merge contract and application wiring changes.
 
 Read `EXECUTION_PLAN.md` for concurrency waves and MVP cutline.
+
+## Phase 7–8: platform integrations (added 2026-11-01)
+
+Order: prerequisites WING-017, WING-019, WING-020, WING-021 and contract v1.3 first; then WING-027/028/029 (after 017 + 021), WING-030 (after 020), WING-031 (after 019); WING-032 last. A tested mock is not evidence of a working commercial-app integration; every capability carries VERIFIED / UNVERIFIED / UNSUPPORTED / BLOCKED.
+
+| Ticket | Task | Depends on | Phase |
+|---|---|---|---|
+| [WING-027](tasks/WING-027_tinder-message-connector.md) | Tinder message connector | WING-006, 011, 017, 021 | 7 |
+| [WING-028](tasks/WING-028_bumble-message-connector.md) | Bumble message connector | WING-006, 011, 017, 021 | 7 |
+| [WING-029](tasks/WING-029_hinge-message-connector.md) | Hinge message connector | WING-006, 011, 017, 021 | 7 |
+| [WING-030](tasks/WING-030_imessage-macos-companion.md) | iMessage macOS companion | WING-006, 011, 020 | 7 |
+| [WING-031](tasks/WING-031_discovery-and-swiping.md) | Profile discovery and swiping | WING-006, 007, 011, 019, 021 | 7 |
+| [WING-032](tasks/WING-032_cross-platform-e2e.md) | Cross-platform E2E and release gates | WING-011, 015, 025, 027–031 | 8 |
