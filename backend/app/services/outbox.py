@@ -17,6 +17,11 @@ Claim, per instruction, atomically (one transaction, row locks):
 4. Also return this install's own unexpired leases (same lease, not extended), counting
    toward ``max_instructions``.
 
+Connection hold (D-030): while the connection reports ``error`` or ``disconnected``, a
+claim leases nothing new and dispatches nothing: it returns only this install's own
+unexpired leases (step 4, ADR 0006 unchanged). ``pending`` instructions stay ``pending``
+and are leased by the first claim after the connection is ``connected`` again.
+
 Install binding (I-018, ADR 0007 ``device_install_id``): only the install a connection
 is paired with may claim. A claim from any other install, on an unpaired connection,
 or on a device-side connection that was never paired raises :class:`ClaimRejected`
@@ -59,7 +64,7 @@ from app.db.repositories import (
     UserRepository,
 )
 from app.db.scope import UserScope
-from app.services.dispatcher import Dispatcher, recheck_send
+from app.services.dispatcher import Dispatcher, connection_held, recheck_send
 
 __all__ = [
     "DEFAULT_LEASE",
@@ -138,14 +143,22 @@ class OutboxService:
         if connection is None:  # pragma: no cover - deleted concurrently
             raise NotFoundError("connection not found")
         self._check_binding(connection, device_install_id)
+        held = connection_held(connection)
+        now = self._now()
+        outbox = OutboxRepository(session, scope)
+        if held:
+            # D-030: nothing new while the connection reports error/disconnected; only
+            # this install's own unexpired leases are recovered (ADR 0006).
+            own = await outbox.own_leases(connection_id, device_install_id, now=now)
+            held_out = [await self._claimed(session, scope, i) for i in own[:max_instructions]]
+            held_out.sort(key=lambda c: (c.instruction.created_at, c.instruction.id))
+            return held_out, now
         # Due queued messages without an instruction (a retry after its backoff, a reply
         # delay that has passed) get one now, through the dispatcher and its re-check.
         await self.dispatcher.dispatch_due(session, scope, connection_id=connection_id)
         user = await users.get(scope)
         if user is None:  # pragma: no cover
             raise NotFoundError("user not found")
-        now = self._now()
-        outbox = OutboxRepository(session, scope)
         own = await outbox.own_leases(connection_id, device_install_id, now=now)
         out: list[ClaimedInstruction] = []
         for instruction in own[:max_instructions]:

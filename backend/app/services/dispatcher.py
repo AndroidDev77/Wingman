@@ -39,6 +39,15 @@ Delivery state machine (``DeliveryState``)::
   :meth:`Dispatcher.confirm_assisted` records an ``assisted_draft`` message in
   ``user_reported_sent``: never ``sent``/``delivered``, never ``sent_at``.
 
+* **Connection hold** (D-030): while the connection reports ``error`` or
+  ``disconnected`` (``connection.status_changed``), a queued message that passes the
+  re-check is *held*: it stays ``queued``, no instruction is created and no backend
+  connector is called (outcome ``held``, audited ``policy_blocked`` with reason
+  ``connection_unavailable`` and ``details.hold: true``). The hold cancels nothing; the
+  D-014 cancellations still apply through the re-check, which runs first. When the
+  status is ``connected`` again, the worker (and a device claim) dispatch the held
+  messages through the normal path, with the same per-attempt keys (D-006).
+
 Lock order used everywhere (avoids deadlocks with pause/takeover):
 user -> contact -> approval -> outbox instruction -> message.
 
@@ -68,6 +77,7 @@ from app.db.enums import (
     ApprovalReason,
     AssistedDeliveryStatus,
     CapabilityVerification,
+    ConnectionStatus,
     ContactAutomationStatus,
     DeliveryState,
     GlobalAutomationStatus,
@@ -100,6 +110,7 @@ from app.db.scope import UserScope
 
 __all__ = [
     "AUTOMATED_ORIGINS",
+    "HOLD_STATUSES",
     "PAUSE_CANCELS",
     "DEVICE_SIDE_PLATFORMS",
     "ConnectorRegistry",
@@ -108,6 +119,7 @@ __all__ = [
     "Dispatcher",
     "RecheckReason",
     "RetryPolicy",
+    "connection_held",
     "recheck_send",
     "send_key",
 ]
@@ -129,6 +141,18 @@ DEVICE_SIDE_PLATFORMS = frozenset(
 #   (it also cancels pending approvals; the user is driving now).
 PAUSE_CANCELS = (MessageOrigin.AUTOPILOT,)
 AUTOMATED_ORIGINS = (MessageOrigin.AUTOPILOT, MessageOrigin.APPROVED_DRAFT)
+
+
+# D-030: a connection reporting one of these statuses holds its sends (nothing is
+# canceled by the hold itself; queued work resumes when it is ``connected`` again).
+HOLD_STATUSES = frozenset({ConnectionStatus.ERROR, ConnectionStatus.DISCONNECTED})
+HOLD_REASON = "connection_unavailable"
+
+
+def connection_held(connection: PlatformConnection) -> bool:
+    """True while the connection's reported status is ``error`` or ``disconnected``:
+    no new outbox instruction, direct send or lease for it (D-030)."""
+    return connection.status in HOLD_STATUSES
 
 
 def send_key(message_id: uuid.UUID, attempt: int) -> str:
@@ -245,6 +269,7 @@ class DispatchOutcome(StrEnum):
     CANCELED = "canceled"  # policy re-check removed it before any transport attempt
     INSTRUCTION_CREATED = "instruction_created"  # device-side: waiting for a lease
     NOT_DUE = "not_due"  # ``send_after`` in the future
+    HELD = "held"  # connection reports error/disconnected; stays ``queued`` (D-030)
     NOOP = "noop"  # not ``queued`` (already handled) or instruction already live
 
 
@@ -446,7 +471,12 @@ class Dispatcher:
         contact = await ContactRepository(session, scope).lock_shared(conversation.contact_id)
         if user is None or contact is None:  # pragma: no cover - deleted concurrently
             raise LookupError("user or contact vanished during dispatch")
-        return _Context(user, contact, conversation, connection)
+        # Re-read under the user lock: a status change takes the user lock exclusively
+        # before it writes (D-030), so the status checked here is the one in force.
+        fresh = await ConnectionRepository(session, scope).get_fresh(connection.id)
+        if fresh is None:  # pragma: no cover - deleted concurrently
+            raise LookupError("connection vanished during dispatch")
+        return _Context(user, contact, conversation, fresh)
 
     async def dispatch(
         self, session: AsyncSession, scope: UserScope, message_id: uuid.UUID
@@ -485,6 +515,8 @@ class Dispatcher:
         if reason is not None:
             canceled = await self._cancel(session, scope, message, ctx.conversation, reason, now)
             return DispatchResult(canceled, DispatchOutcome.CANCELED, reason=reason.value)
+        if connection_held(ctx.connection):
+            return await self._hold(session, scope, message, ctx, now)
 
         if self.registry.is_device_side(ctx.connection):
             return await self._create_instruction(session, scope, message, ctx, now)
@@ -504,6 +536,35 @@ class Dispatcher:
                 now=now,
             )
         return await self._send_backend(session, scope, message, ctx, connector, now)
+
+    async def _hold(
+        self,
+        session: AsyncSession,
+        scope: UserScope,
+        message: Message,
+        ctx: _Context,
+        now: datetime,
+    ) -> DispatchResult:
+        """D-030: leave the message ``queued`` (no instruction, no transport call) while
+        the connection reports ``error``/``disconnected``, and audit the hold."""
+        await AgentActionRepository(session, scope).record(
+            type=AgentActionType.POLICY_BLOCKED,
+            actor=Actor.DISPATCHER,
+            conversation_id=ctx.conversation.id,
+            contact_id=ctx.conversation.contact_id,
+            message_id=message.id,
+            approval_id=message.approval_id,
+            reason_code=HOLD_REASON,
+            occurred_at=now,
+            details={
+                "hold": True,
+                "connection_id": str(ctx.connection.id),
+                "connection_status": ctx.connection.status.value,
+                "origin": message.origin.value,
+                "delivery_state": message.delivery_state.value,
+            },
+        )
+        return DispatchResult(message, DispatchOutcome.HELD, reason=HOLD_REASON)
 
     async def dispatch_due(
         self,

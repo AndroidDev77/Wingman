@@ -16,6 +16,10 @@
 * ``connection.capabilities_changed`` / ``connection.status_changed``: stored as
   reported, except that a claimed ``VERIFIED`` is never raised above what the server
   already holds (ADR 0007, ``trust_claimed_capabilities``); they authorize nothing.
+  A status of ``error`` or ``disconnected`` *holds* the connection's sends (D-030): the
+  dispatcher creates no instruction and calls no connector for it, and claims lease
+  nothing new, until it reports ``connected`` again. Entering the hold is audited once
+  (``policy_blocked``, reason ``connection_unavailable``, ``details.hold: "started"``).
 * an unpaired connection (contract 1.2.0) accepts only send outcomes (``422`` at
   ``/connection_id`` otherwise).
 * contract 1.3.0 (ADR 0008): an inbound event becomes a ``Message`` (and reaches the
@@ -64,6 +68,7 @@ from app.db.enums import (
     AgentActionType,
     ConnectionStatus,
     ConnectionTransport,
+    DeliveryState,
     InboundEventKind,
     OutboxInstructionState,
     SenderIdentity,
@@ -83,7 +88,7 @@ from app.db.repositories import (
 )
 from app.db.scope import UserScope
 from app.services.connections import trust_claimed_capabilities
-from app.services.dispatcher import Dispatcher
+from app.services.dispatcher import HOLD_REASON, HOLD_STATUSES, Dispatcher
 
 __all__ = ["IngestError", "IngestOutcome", "IngestResult", "IngestService"]
 
@@ -384,7 +389,51 @@ class IngestService:
                 connection.id, trust_claimed_capabilities(caps, connection.capabilities)
             )
         elif isinstance(payload, ConnectionStatusPayload):
-            await connections.set_status(connection.id, ConnectionStatus(payload.status.value))
+            await self._status_event(
+                session, scope, connection, ConnectionStatus(payload.status.value)
+            )
+
+    async def _status_event(
+        self,
+        session: AsyncSession,
+        scope: UserScope,
+        connection: PlatformConnection,
+        status: ConnectionStatus,
+    ) -> None:
+        """Store the reported status (D-030). The user lock (taken first, global lock
+        order) serializes the change with claims and with the dispatcher's re-read of
+        the connection, so no instruction is created or leased against a stale status.
+        Nothing is canceled: held work stays queued (or ``pending``) and resumes on
+        ``connected``; a lease already handed out follows ADR 0006."""
+        await UserRepository(session).lock(scope)
+        connections = ConnectionRepository(session, scope)
+        current = await connections.get_fresh(connection.id)
+        if current is None:  # pragma: no cover - deleted concurrently
+            raise LookupError("connection vanished during ingest")
+        before = current.status
+        await connections.set_status(connection.id, status)
+        if status in HOLD_STATUSES and before not in HOLD_STATUSES:
+            messages = MessageRepository(session, scope)
+            queued = await messages.outbound_for_connection(
+                connection.id, states=(DeliveryState.QUEUED,)
+            )
+            in_flight = await messages.outbound_for_connection(
+                connection.id, states=(DeliveryState.SENDING,)
+            )
+            await AgentActionRepository(session, scope).record(
+                type=AgentActionType.POLICY_BLOCKED,
+                actor=Actor.CONNECTOR,
+                reason_code=HOLD_REASON,
+                occurred_at=self._now(),
+                details={
+                    "hold": "started",
+                    "connection_id": str(connection.id),
+                    "platform": connection.platform,
+                    "connection_status": status.value,
+                    "held_queued_messages": len(queued),
+                    "in_flight_messages": len(in_flight),
+                },
+            )
 
     # ------------------------------------------------------------------ send outcomes
 

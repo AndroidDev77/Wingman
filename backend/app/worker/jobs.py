@@ -5,7 +5,9 @@ functions; nothing here sends, leases or decides anything on its own.
   passed (reply delays, retry backoff) go through ``Dispatcher.dispatch``, **one
   message per transaction**, so a failure on one message never rolls back the recorded
   outcome of another and every transport call happens after the ``queued`` row was
-  committed (D-006, PR #24).
+  committed (D-006, PR #24). Messages of a connection that reports ``error`` or
+  ``disconnected`` are left out (held, D-030) and picked up again once it is
+  ``connected``.
 * :func:`expire_leases`: ``app.services.outbox.expire_lapsed_leases`` (lapsed device
   leases -> ``expired``; outcome unknown, never retried).
 * :func:`expire_due_approvals`: ``AutomationController.expire_approvals`` per user with
@@ -37,11 +39,12 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.enums import (
     ApprovalStatus,
+    ConnectionStatus,
     DeliveryState,
     MessageDirection,
     OutboxInstructionState,
 )
-from app.db.models import Approval, Message, OutboxInstruction
+from app.db.models import Approval, Conversation, Message, OutboxInstruction, PlatformConnection
 from app.db.scope import UserScope
 from app.services.automation import AutomationController
 from app.services.dispatcher import Dispatcher
@@ -84,6 +87,8 @@ async def due_message_ids(
     message is then handled under its own ``UserScope``. Messages that already have a
     live device instruction are left out: they wait for a device claim, and including
     them would let a phone that is offline fill every batch and starve newer sends.
+    For the same reason, messages of a connection that is not ``connected`` (held,
+    D-030) are left out; they come back here as soon as the connection recovers.
     """
     stmt = select(Message.user_id, Message.id).where(
         Message.direction == MessageDirection.OUTBOUND,
@@ -93,6 +98,13 @@ async def due_message_ids(
             OutboxInstruction.user_id == Message.user_id,
             OutboxInstruction.outbound_message_id == Message.id,
             OutboxInstruction.state.in_(_LIVE),
+        ),
+        exists().where(
+            Conversation.user_id == Message.user_id,
+            Conversation.id == Message.conversation_id,
+            PlatformConnection.user_id == Conversation.user_id,
+            PlatformConnection.id == Conversation.connection_id,
+            PlatformConnection.status == ConnectionStatus.CONNECTED,
         ),
     )
     if not include_mock:
