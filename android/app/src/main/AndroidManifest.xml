@@ -12,6 +12,14 @@
     <!-- Held by default SMS apps; UNVERIFIED whether the role needs it on every OEM. -->
     <uses-permission android:name="android.permission.RECEIVE_MMS" />
 
+    <!-- WING-017: read signing certificates of the dating apps for authenticity checks
+         (package visibility, API 30+). Package names UNVERIFIED until the device run. -->
+    <queries>
+        <package android:name="com.tinder" />
+        <package android:name="com.bumble.app" />
+        <package android:name="co.hinge.app" />
+    </queries>
+
     <application
         android:allowBackup="false"
         android:label="@string/app_name"
@@ -79,5 +87,26 @@
         <receiver
             android:name=".integrations.sms.android.SmsResultReceiver"
             android:exported="false" />
+
+        <!-- WING-017: notification listener. Bound by the system only after the user grants
+             notification access. Ignores every package outside the plugin allowlist (empty
+             until WING-027..029 register plugins). Device behaviour UNVERIFIED (I-003). -->
+        <service
+            android:name=".integrations.notifications.android.WingmanNotificationListenerService"
+            android:exported="true"
+            android:label="@string/app_name"
+            android:permission="android.permission.BIND_NOTIFICATION_LISTENER_SERVICE">
+            <intent-filter>
+                <action android:name="android.service.notification.NotificationListenerService" />
+            </intent-filter>
+        </service>
+
+        <!-- WING-017: notification-access explainer (and, on debug builds only, the redacted
+             inspector toggle). Exported so the device test can open it with `adb shell am start`;
+             it only shows text and a button to the system settings. -->
+        <activity
+            android:name=".integrations.notifications.android.NotificationAccessActivity"
+            android:exported="true"
+            android:label="Notification access" />
     </application>
 </manifest>
