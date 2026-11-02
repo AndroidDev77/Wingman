@@ -118,15 +118,6 @@ class E2eDevice(private val timeoutMs: Long = UI_TIMEOUT_MS) {
     /** A TabRow tab: the top-most node with exactly [title] (a tab's label may also be on a button). */
     fun openInnerTab(title: String) = clickTopMost(By.text(title), "tab \"$title\"")
 
-    /** TEMP DEBUG (WING-027/028). */
-    fun dump(tag: String) {
-        val out = java.io.ByteArrayOutputStream()
-        runCatching { device.dumpWindowHierarchy(out) }
-        val txt = Regex("text=\"([^\"]*)\"[^>]*bounds=\"([^\"]*)\"").findAll(out.toString())
-            .filter { it.groupValues[1].isNotEmpty() }.joinToString("|") { it.groupValues[2] + " " + it.groupValues[1].take(60) }
-        txt.chunked(3000).forEach { android.util.Log.i("E2EDUMP", "$tag: $it") }
-    }
-
     /** Scrolls the largest scrollable container until [sel] is on screen (down, then back up). */
     fun scrollTo(sel: BySelector, what: String, maxSwipes: Int = 15): UiObject2 {
         device.findObject(sel)?.let { return it }
@@ -138,13 +129,7 @@ class E2eDevice(private val timeoutMs: Long = UI_TIMEOUT_MS) {
                 if (!moved) return@repeat
             }
         }
-        return device.findObject(sel) ?: run {
-            // TEMP DEBUG (WING-027/028): dump the hierarchy to logcat.
-            val out = java.io.ByteArrayOutputStream()
-            runCatching { device.dumpWindowHierarchy(out) }
-            out.toString().chunked(3000).forEach { android.util.Log.i("E2EDUMP", it) }
-            throw AssertionError("could not scroll to $what")
-        }
+        return device.findObject(sel) ?: throw AssertionError("could not scroll to $what")
     }
 
     /** Taps the top-most "Refresh" until [sel] shows up (screens re-read the server on request). */

@@ -15,9 +15,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -47,9 +51,23 @@ class NotificationConnectionsViewModel(app: Application) : ViewModel() {
     )
 }
 
-/** Settings section: notification access, then one card per dating app (Tinder, Bumble). */
+/**
+ * Settings section, collapsed by default to one row so the Settings page keeps its length (the SMS
+ * section above it and the E2E scroll flow are unchanged). Expanded: notification access, then one
+ * card per dating app (Tinder, Bumble). The ViewModel is created only when expanded.
+ */
 @Composable
 fun NotificationConnectionSection() {
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(NotificationConnectionCopy.COLLAPSED_SUMMARY, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+        TextButton(onClick = { expanded = !expanded }) { Text(if (expanded) "Hide" else "Manage") }
+    }
+    if (expanded) NotificationConnectionDetails()
+}
+
+@Composable
+private fun NotificationConnectionDetails() {
     val app = LocalContext.current.applicationContext as Application
     val vm = wingmanViewModel(key = "notification-connections") { NotificationConnectionsViewModel(app) }
     val ui by vm.holder.state.collectAsStateWithLifecycle()

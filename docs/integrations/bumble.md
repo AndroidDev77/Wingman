@@ -59,7 +59,7 @@ merged by display name. Truncated (ellipsis) and hidden (generic text) messages 
 Run `docs/integrations/notification_matrix.md` §4 **N1 to N13** for Bumble. N8 must include an
 expiry reminder if Bumble sends one during the test window, a reaction, a Beeline like and a new
 match with the first-move prompt. Then run the Tinder steps **T1 to T8** of
-`docs/integrations/tinder.md` §4 with Bumble (Settings > Bumble), plus:
+`docs/integrations/tinder.md` §4 with Bumble (Settings > Dating apps (notifications) > *Manage* > Bumble), plus:
 
 * **B1 Expiry is never a chat.** When an expiry reminder arrives, it appears under Notices as
   "Expiring", has no reply option, and produces no draft or assisted delivery.

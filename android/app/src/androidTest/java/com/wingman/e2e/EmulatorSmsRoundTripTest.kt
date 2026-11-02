@@ -81,12 +81,7 @@ class EmulatorSmsRoundTripTest {
 
         // 1. Pair from Settings > Connections > Phone SMS (the app's pairing flow).
         ui.openTab("Settings")
-        ui.scrollTo(By.text("Pair this phone's SMS"), "pair button")
-        Thread.sleep(1500)
-        ui.dump("before-pair")
         ui.scrollTo(By.text("Pair this phone's SMS"), "pair button").click()
-        Thread.sleep(4000)
-        ui.dump("after-pair")
         ui.scrollTo(By.text("Status: Connected"), "Status: Connected")
         ui.scrollTo(By.text("Send replies: UNVERIFIED (not yet tested on a device)"), "send UNVERIFIED")
         ui.scrollTo(By.text("Autopilot: not available for SMS"), "autopilot not available")

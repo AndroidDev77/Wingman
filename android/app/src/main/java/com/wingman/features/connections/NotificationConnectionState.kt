@@ -22,6 +22,7 @@ import kotlin.coroutines.EmptyCoroutineContext
 
 object NotificationConnectionCopy {
     const val ASSISTED_ONLY = "Assisted only: Wingman drafts, you send"
+    const val COLLAPSED_SUMMARY = "Tinder and Bumble, through their notifications. Assisted only: Wingman drafts, you send."
 
     const val READING_EXPLANATION =
         "Wingman reads this app's notification previews (sender name and message text, when the app shows them) " +

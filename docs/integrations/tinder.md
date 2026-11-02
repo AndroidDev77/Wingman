@@ -78,7 +78,7 @@ adapter fails it as `direct_reply_disabled` and reports `message.send_failed` wi
 
 ## 3. Sync loop (I-033)
 
-* **Pairing is the reading switch.** Settings > Connections > Dating apps > Tinder > *Read
+* **Pairing is the reading switch.** Settings > Connections > Dating apps (notifications) > *Manage* > Tinder > *Read
   notifications* pairs first (`createConnection` with the persisted key, the shared per-install
   `device_install_id`, and a claim of `read: UNVERIFIED`, `send: UNSUPPORTED`) and only then turns
   reading on. Turning it off stops reading at once, drops unrecorded events and queued inbound
@@ -104,7 +104,7 @@ package, shapes, RemoteInput, certificates, revoke, privacy). Then:
 2. **T2 Shapes.** From N4 to N8, fill the per-app table: template, `shortcut_id` present, sender
    keys, hidden/truncated behaviour, match/like/super-like shapes. Adjust the keyword rules if the
    real titles differ (add a synthetic test per real shape, never real text).
-3. **T3 Pair.** Debug build against a dev backend, signed in. Settings > Tinder > *Read
+3. **T3 Pair.** Debug build against a dev backend, signed in. Settings > Dating apps (notifications) > *Manage* > Tinder > *Read
    notifications* on: the card shows "Connected", read UNVERIFIED, send not supported, and
    "Assisted only: Wingman drafts, you send". Direct reply is greyed out with its explanation.
 4. **T4 Message.** From the second account send a message. Check the backend received one
