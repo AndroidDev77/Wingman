@@ -19,9 +19,9 @@ this path. No accessibility-service tapping or swiping exists, and none will be 
 
 | Platform | Package (from Play listing, UNVERIFIED) | read | RemoteInput reply action seen? | send | draft | swipe | profile_read | Plugin |
 |---|---|---|---|---|---|---|---|---|
-| Tinder | `com.tinder` | UNVERIFIED | unknown (not inspected) | UNSUPPORTED until a RemoteInput is observed and the user enables direct reply; then UNVERIFIED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | none yet (WING-027) |
-| Bumble | `com.bumble.app` | UNVERIFIED | unknown (not inspected) | same rule | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | none yet (WING-028) |
-| Hinge | `co.hinge.app` | UNVERIFIED | unknown (not inspected) | same rule | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | none yet (WING-029) |
+| Tinder | `com.tinder` | UNVERIFIED | unknown (not inspected) | UNSUPPORTED until a RemoteInput is observed and the user enables direct reply; then UNVERIFIED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | `TinderNotificationPlugin` (WING-027, PR #50) |
+| Bumble | `com.bumble.app` | UNVERIFIED | unknown (not inspected) | same rule | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | `BumbleNotificationPlugin` (WING-028, PR #50) |
+| Hinge | `co.hinge.app` | UNVERIFIED | unknown (not inspected) | same rule | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | `HingeNotificationPlugin` (WING-029, PR #51; every build, separate from the experimental API connector) |
 | SMS (reference) | n/a, WING-016 uses the default-SMS-app role | not via this path | n/a | not via this path | UNSUPPORTED | UNSUPPORTED | n/a | none: notification access is never SMS capability (`docs/integrations/android_sms.md`) |
 
 Per-app fields to fill from the inspector (all **unknown** today):
@@ -75,9 +75,11 @@ What the code does with these today:
   `WingmanNotificationListenerService`, `NotificationSnapshotExtractor`,
   `AndroidReplyActionHandle`, `NotificationConnectorRuntime` (process holder),
   `NotificationAccessActivity` (explainer + debug inspector toggle).
-* **No plugin ships in this ticket.** The allowlist is empty by default; the service returns on
-  the first line for every notification until WING-027..029 call
-  `NotificationConnectorRuntime.installPlugins(...)`.
+* **No plugin shipped in WING-017.** Since WING-027..029 (PRs #50, #51) the allowlist is
+  `PlatformPlugins.all()`: Tinder, Bumble and Hinge, registered by default so a cold process the
+  system starts for the listener has them too. Reading a platform still needs the user's opt-in
+  in Settings, which pairs it first (`transport: notification`, I-033 closed on the client side).
+  Every shape the plugins parse is synthetic until the device run (N1 to N13, I-003).
 
 ### Plugin interface (for WING-027..029)
 
