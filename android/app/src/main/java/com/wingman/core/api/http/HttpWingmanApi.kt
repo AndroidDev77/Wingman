@@ -5,6 +5,7 @@ import com.wingman.core.api.AgentActionFilter
 import com.wingman.core.api.ApiError
 import com.wingman.core.api.ApiResult
 import com.wingman.core.api.ApprovalFilter
+import com.wingman.core.api.AssistedDeliveryFilter
 import com.wingman.core.api.ConversationFilter
 import com.wingman.core.api.IdempotencyKey
 import com.wingman.core.api.PageRequest
@@ -19,6 +20,9 @@ import com.wingman.core.model.AgentAction
 import com.wingman.core.model.Approval
 import com.wingman.core.model.ApprovalDecisionResult
 import com.wingman.core.model.ApproveRequest
+import com.wingman.core.model.AssistedDelivery
+import com.wingman.core.model.AssistedDeliveryConfirmRequest
+import com.wingman.core.model.AssistedDeliveryResult
 import com.wingman.core.model.AutomationActionRequest
 import com.wingman.core.model.Connection
 import com.wingman.core.model.ConnectionCreateRequest
@@ -34,6 +38,7 @@ import com.wingman.core.model.Draft
 import com.wingman.core.model.DraftCreateRequest
 import com.wingman.core.model.GlobalAutomationState
 import com.wingman.core.model.HealthResponse
+import com.wingman.core.model.InboundNotice
 import com.wingman.core.model.Message
 import com.wingman.core.model.OutboxClaimRequest
 import com.wingman.core.model.OutboxClaimResult
@@ -190,6 +195,24 @@ class HttpWingmanApi(
 
     override suspend fun claimOutboxInstructions(connectionId: String, body: OutboxClaimRequest, key: IdempotencyKey): ApiResult<OutboxClaimResult> =
         call { service.claimOutboxInstructions(connectionId, key.value, body) }
+
+    override suspend fun listAssistedDeliveries(page: PageRequest, filter: AssistedDeliveryFilter): ApiResult<Page<AssistedDelivery>> =
+        call { service.listAssistedDeliveries(page.cursor, page.limit, filter.status?.wireName(), filter.conversationId) }
+
+    override suspend fun confirmAssistedDelivery(
+        assistedDeliveryId: String,
+        body: AssistedDeliveryConfirmRequest,
+        key: IdempotencyKey,
+    ): ApiResult<AssistedDeliveryResult> = call { service.confirmAssistedDelivery(assistedDeliveryId, key.value, body) }
+
+    override suspend fun dismissAssistedDelivery(
+        assistedDeliveryId: String,
+        body: RejectRequest,
+        key: IdempotencyKey,
+    ): ApiResult<AssistedDeliveryResult> = call { service.dismissAssistedDelivery(assistedDeliveryId, key.value, body) }
+
+    override suspend fun listInboundNotices(page: PageRequest, connectionId: String?): ApiResult<Page<InboundNotice>> =
+        call { service.listInboundNotices(page.cursor, page.limit, connectionId) }
 
     private fun ifMatch(version: Int?): String? = version?.let { "\"$it\"" }
 

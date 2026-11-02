@@ -6,6 +6,10 @@ import com.wingman.core.model.Approval
 import com.wingman.core.model.ApprovalDecisionResult
 import com.wingman.core.model.ApprovalStatus
 import com.wingman.core.model.ApproveRequest
+import com.wingman.core.model.AssistedDelivery
+import com.wingman.core.model.AssistedDeliveryConfirmRequest
+import com.wingman.core.model.AssistedDeliveryResult
+import com.wingman.core.model.AssistedDeliveryStatus
 import com.wingman.core.model.AutomationActionRequest
 import com.wingman.core.model.AutomationMode
 import com.wingman.core.model.Connection
@@ -23,6 +27,7 @@ import com.wingman.core.model.Draft
 import com.wingman.core.model.DraftCreateRequest
 import com.wingman.core.model.GlobalAutomationState
 import com.wingman.core.model.HealthResponse
+import com.wingman.core.model.InboundNotice
 import com.wingman.core.model.IntentMode
 import com.wingman.core.model.Message
 import com.wingman.core.model.OutboxClaimRequest
@@ -59,6 +64,12 @@ data class ApprovalFilter(
     val status: ApprovalStatus? = null,
     val conversationId: String? = null,
     val contactId: String? = null,
+)
+
+/** (1.3.0) `listAssistedDeliveries` filters. Null [status] lets the server default to `pending`. */
+data class AssistedDeliveryFilter(
+    val status: AssistedDeliveryStatus? = null,
+    val conversationId: String? = null,
 )
 
 data class AgentActionFilter(
@@ -181,4 +192,39 @@ interface WingmanApi {
      * original instructions with `idempotentReplayed = true`.
      */
     suspend fun claimOutboxInstructions(connectionId: String, body: OutboxClaimRequest, key: IdempotencyKey): ApiResult<OutboxClaimResult>
+
+    // assisted delivery and inbound notices (contract v1.3.0, ADR 0008; WING-027/028)
+
+    /**
+     * `listAssistedDeliveries`: drafts waiting for the user to send them by hand, newest first.
+     * Nothing listed here was or will be transmitted by Wingman. `text` is private: never log it.
+     */
+    suspend fun listAssistedDeliveries(
+        page: PageRequest = PageRequest.FIRST,
+        filter: AssistedDeliveryFilter = AssistedDeliveryFilter(),
+    ): ApiResult<Page<AssistedDelivery>>
+
+    /**
+     * `confirmAssistedDelivery`: the USER reports they sent it in the platform app. The server
+     * records an `assisted_draft` message in `user_reported_sent` (never `sent`/`delivered`).
+     * `409 assisted_delivery_not_pending` when it was already confirmed, dismissed or canceled.
+     */
+    suspend fun confirmAssistedDelivery(
+        assistedDeliveryId: String,
+        body: AssistedDeliveryConfirmRequest,
+        key: IdempotencyKey,
+    ): ApiResult<AssistedDeliveryResult>
+
+    /** `dismissAssistedDelivery`: the user will not send it. Nothing is recorded as sent. */
+    suspend fun dismissAssistedDelivery(
+        assistedDeliveryId: String,
+        body: RejectRequest,
+        key: IdempotencyKey,
+    ): ApiResult<AssistedDeliveryResult>
+
+    /** `listInboundNotices`: matches, likes, expiry and other notices; never reply targets. */
+    suspend fun listInboundNotices(
+        page: PageRequest = PageRequest.FIRST,
+        connectionId: String? = null,
+    ): ApiResult<Page<InboundNotice>>
 }
