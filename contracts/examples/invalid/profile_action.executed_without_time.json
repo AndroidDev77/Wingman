@@ -1,0 +1,13 @@
+{
+  "id": "0192f3a0-0000-7000-8000-000000000c21",
+  "profile_id": "0192f3a0-0000-7000-8000-000000000c01",
+  "connection_id": "0192f3a0-0000-7000-8000-0000000000a5",
+  "decision": "like",
+  "idempotency_key": "decide-3141-0001",
+  "execution": "executed",
+  "execution_detail": null,
+  "decided_at": "2026-11-02T08:40:00Z",
+  "execution_requested_at": "2026-11-02T08:41:00Z",
+  "executed_at": null,
+  "created_at": "2026-11-02T08:40:00Z"
+}

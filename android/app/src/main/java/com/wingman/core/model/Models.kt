@@ -243,6 +243,8 @@ data class CapabilitySet(
     val send: Capability,
     val swipe: Capability,
     @SerialName("calendar_write") val calendarWrite: Capability,
+    /** (1.3.0, optional) Absent means UNSUPPORTED. Independent of `read` and `swipe`. */
+    @SerialName("profile_read") val profileRead: Capability? = null,
 )
 
 @Serializable
@@ -270,10 +272,30 @@ data class Connection(
     @SerialName("paired_at") val pairedAt: Instant? = null,
     /** (1.2.0, optional) Set by `unpairConnection`; null while paired. */
     @SerialName("unpaired_at") val unpairedAt: Instant? = null,
+    /** (1.3.0, optional) How the device reaches the platform. */
+    val transport: ConnectionTransport? = null,
+    /** (1.3.0, optional) Unofficial-API connector (D-021): approval-only until operator-verified. */
+    val experimental: Boolean? = null,
+    @SerialName("experimental_consent") val experimentalConsent: ExperimentalConsent? = null,
+    @SerialName("experimental_verified_at") val experimentalVerifiedAt: Instant? = null,
+    @SerialName("auto_swipe_enabled") val autoSwipeEnabled: Boolean? = null,
 ) {
+    /** (1.3.0) Experimental and not operator-verified: never autopilot, never swipes. */
+    val isExperimentalUnverified: Boolean get() = experimental == true && experimentalVerifiedAt == null
+
     /** True while the server still treats this connection as paired (not unpaired, not disconnected). */
     val isPaired: Boolean get() = unpairedAt == null && status != ConnectionStatus.DISCONNECTED
 }
+
+/** (1.3.0) `ExperimentalConsent` as recorded by the server. */
+@Serializable
+data class ExperimentalConsent(
+    val platform: String,
+    @SerialName("consent_text_version") val consentTextVersion: String,
+    @SerialName("accepted_at") val acceptedAt: Instant,
+    @SerialName("recorded_at") val recordedAt: Instant,
+    @SerialName("revoked_at") val revokedAt: Instant?,
+)
 
 /**
  * `components.schemas.ConnectionCreateRequest` (1.2.0, ADR 0007). Device-side platforms (`sms`,

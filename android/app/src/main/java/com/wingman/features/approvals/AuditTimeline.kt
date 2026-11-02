@@ -64,6 +64,20 @@ object AuditLabels {
         AgentActionType.LEASE_EXPIRED -> AuditLabel("Phone didn't confirm; outcome unknown", LabelTone.WARNING, SendStage.NONE)
         AgentActionType.CONNECTION_PAIRED -> AuditLabel("Messaging app connected", LabelTone.NEUTRAL, SendStage.NONE)
         AgentActionType.CONNECTION_UNPAIRED -> AuditLabel("Messaging app disconnected", LabelTone.WARNING, SendStage.NONE)
+        // Contract 1.3.0 (ADR 0008). None of these is a send: a user's report is not an observed send,
+        // and a queued swipe has not happened.
+        AgentActionType.NOTICE_RECEIVED -> AuditLabel("Notification noted (no reply)", LabelTone.NEUTRAL, SendStage.NONE)
+        AgentActionType.ASSISTED_DELIVERY_QUEUED -> AuditLabel("Draft ready for you to send yourself", LabelTone.PENDING, SendStage.NONE)
+        AgentActionType.ASSISTED_DELIVERY_CONFIRMED -> AuditLabel("You reported sending the draft yourself (not confirmed)", LabelTone.NEUTRAL, SendStage.NONE)
+        AgentActionType.ASSISTED_DELIVERY_DISMISSED -> AuditLabel("Draft dismissed (nothing sent)", LabelTone.NEUTRAL, SendStage.NONE)
+        AgentActionType.ASSISTED_DELIVERY_CANCELED -> AuditLabel("Draft withdrawn (nothing sent)", LabelTone.WARNING, SendStage.NONE)
+        AgentActionType.EXPERIMENTAL_CONSENT_RECORDED -> AuditLabel("Experimental connector turned on", LabelTone.WARNING, SendStage.NONE)
+        AgentActionType.EXPERIMENTAL_CONSENT_REVOKED -> AuditLabel("Experimental connector turned off", LabelTone.WARNING, SendStage.NONE)
+        AgentActionType.IDENTITY_LINK_CREATED -> AuditLabel("You linked two contacts", LabelTone.NEUTRAL, SendStage.NONE)
+        AgentActionType.IDENTITY_LINK_DELETED -> AuditLabel("You unlinked two contacts", LabelTone.NEUTRAL, SendStage.NONE)
+        AgentActionType.PROFILE_IMPORTED -> AuditLabel("Profile added for review", LabelTone.NEUTRAL, SendStage.NONE)
+        AgentActionType.PROFILE_DECISION_RECORDED -> AuditLabel("Your choice saved (not swiped)", LabelTone.NEUTRAL, SendStage.NONE)
+        AgentActionType.PROFILE_ACTION_QUEUED -> AuditLabel("Swipe queued (not done yet)", LabelTone.PENDING, SendStage.NONE)
     }
 
     fun actor(a: Actor): String = when (a) {

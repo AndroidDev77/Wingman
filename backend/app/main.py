@@ -23,6 +23,7 @@ from app.api.demo_connector import create_demo_connector_router
 from app.api.device_connector import router as device_connector_router
 from app.api.drafts import router as drafts_router
 from app.api.errors import register_error_handlers
+from app.api.integrations import router as integrations_router
 from app.api.memories import create_memories_router
 from app.api.messages import router as messages_router
 from app.api.preferences import router as preferences_router
@@ -89,6 +90,9 @@ def create_app() -> FastAPI:
     app.include_router(connections_router)
     # I-021: listConversations, getConversation, listMessages (read-only, user-scoped).
     app.include_router(conversations_router)
+    # Contract 1.3.0 (ADR 0008): mark-read (I-022), inbound notices, assisted delivery,
+    # user-made identity links, profiles and the swipe execution gate.
+    app.include_router(integrations_router)
 
     # WING-006 simulator: unauthenticated, in-memory, single demo user. Never in prod.
     if settings.env != "prod":

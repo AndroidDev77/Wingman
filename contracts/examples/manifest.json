@@ -398,8 +398,8 @@
     {
       "file": "invalid/connection.create.unpairable_platform.json",
       "schema": "openapi.yaml#/components/schemas/ConnectionCreateRequest",
-      "why_invalid": "only sms, android_notification and mock are pairable in 1.2.0",
-      "expect_error": "'tinder' is not one of"
+      "why_invalid": "whatsapp is not a pairable platform (1.3.0 adds tinder, bumble, hinge and imessage only)",
+      "expect_error": "'whatsapp' is not one of"
     },
     {
       "file": "invalid/connection.create.unknown_field.json",
@@ -442,6 +442,328 @@
       "schema": "openapi.yaml#/components/schemas/Connection",
       "why_invalid": "device_install_id is a Wingman-format UUID",
       "expect_error": "'phone-1' is not valid under any of the given schemas"
+    },
+    {
+      "file": "capabilities.hinge_unofficial_api.json",
+      "schema": "schemas/connector_capabilities.v1.json"
+    },
+    {
+      "file": "connection.create.hinge_experimental.request.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionCreateRequest"
+    },
+    {
+      "file": "connection.create.tinder_notification.request.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionCreateRequest"
+    },
+    {
+      "file": "connection.create.imessage_companion.request.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionCreateRequest"
+    },
+    {
+      "file": "connection.hinge_experimental.response.json",
+      "schema": "openapi.yaml#/components/schemas/Connection"
+    },
+    {
+      "file": "connection.revoke_consent.response.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionUnpairResult"
+    },
+    {
+      "file": "connection.settings.put.request.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionSettingsUpdate"
+    },
+    {
+      "file": "event.hinge_unofficial_chat_message.json",
+      "schema": "schemas/connector_event.v1.json"
+    },
+    {
+      "file": "event.hinge_like_comment.json",
+      "schema": "schemas/connector_event.v1.json"
+    },
+    {
+      "file": "event.tinder_notification_ambiguous.json",
+      "schema": "schemas/connector_event.v1.json"
+    },
+    {
+      "file": "event.bumble_content_hidden.json",
+      "schema": "schemas/connector_event.v1.json"
+    },
+    {
+      "file": "ingest.notice.response.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectorEventIngestResult"
+    },
+    {
+      "file": "inbound_notices.page.json",
+      "schema": "openapi.yaml#/components/schemas/InboundNoticePage"
+    },
+    {
+      "file": "assisted_deliveries.page.json",
+      "schema": "openapi.yaml#/components/schemas/AssistedDeliveryPage"
+    },
+    {
+      "file": "assisted_delivery.confirm.request.json",
+      "schema": "openapi.yaml#/components/schemas/AssistedDeliveryConfirmRequest"
+    },
+    {
+      "file": "assisted_delivery.confirm.response.json",
+      "schema": "openapi.yaml#/components/schemas/AssistedDeliveryResult"
+    },
+    {
+      "file": "message.user_reported_sent.json",
+      "schema": "openapi.yaml#/components/schemas/Message"
+    },
+    {
+      "file": "problem.assisted_delivery_not_pending.json",
+      "schema": "openapi.yaml#/components/schemas/Problem"
+    },
+    {
+      "file": "identity_link.create.request.json",
+      "schema": "openapi.yaml#/components/schemas/IdentityLinkCreateRequest"
+    },
+    {
+      "file": "identity_link.response.json",
+      "schema": "openapi.yaml#/components/schemas/IdentityLink"
+    },
+    {
+      "file": "identity_links.page.json",
+      "schema": "openapi.yaml#/components/schemas/IdentityLinkPage"
+    },
+    {
+      "file": "profile.import.request.json",
+      "schema": "openapi.yaml#/components/schemas/ProfileImportRequest"
+    },
+    {
+      "file": "profile.response.json",
+      "schema": "openapi.yaml#/components/schemas/Profile"
+    },
+    {
+      "file": "profiles.review_queue.page.json",
+      "schema": "openapi.yaml#/components/schemas/ProfilePage"
+    },
+    {
+      "file": "profile.decision.request.json",
+      "schema": "openapi.yaml#/components/schemas/ProfileDecisionRequest"
+    },
+    {
+      "file": "profile_action.recorded.response.json",
+      "schema": "openapi.yaml#/components/schemas/ProfileAction"
+    },
+    {
+      "file": "profile_action.queued.response.json",
+      "schema": "openapi.yaml#/components/schemas/ProfileAction"
+    },
+    {
+      "file": "problem.swipe_execution_disabled.json",
+      "schema": "openapi.yaml#/components/schemas/Problem"
+    },
+    {
+      "file": "problem.experimental_consent_required.json",
+      "schema": "openapi.yaml#/components/schemas/Problem"
+    },
+    {
+      "file": "conversation.read.response.json",
+      "schema": "openapi.yaml#/components/schemas/ConversationDetail"
+    },
+    {
+      "file": "conversation.read.request.json",
+      "schema": "openapi.yaml#/components/schemas/MarkReadRequest"
+    },
+    {
+      "file": "invalid/capabilities.blocked_label.json",
+      "schema": "schemas/connector_capabilities.v1.json",
+      "why_invalid": "there is no BLOCKED label: use UNVERIFIED or UNSUPPORTED with the blocker in notes (ADR 0008)",
+      "expect_error": "'BLOCKED' is not one of"
+    },
+    {
+      "file": "invalid/connection.create.unofficial_api_not_experimental.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionCreateRequest",
+      "why_invalid": "transport unofficial_api must be flagged experimental: true (ADR 0008)",
+      "expect_error": "True was expected"
+    },
+    {
+      "file": "invalid/connection.create.consent_on_non_experimental.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionCreateRequest",
+      "why_invalid": "an experimental consent is only for transport unofficial_api",
+      "expect_error": "False schema does not allow"
+    },
+    {
+      "file": "invalid/connection.create.with_session_token.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionCreateRequest",
+      "why_invalid": "platform session tokens never reach the backend (ADR 0008); unknown fields are rejected",
+      "expect_error": "'session_token' was unexpected"
+    },
+    {
+      "file": "invalid/connection.create.consent_not_acknowledged.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionCreateRequest",
+      "why_invalid": "the ban-risk acknowledgement must be true",
+      "expect_error": "True was expected"
+    },
+    {
+      "file": "invalid/connection.create.dating_without_transport.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionCreateRequest",
+      "why_invalid": "a dating platform must say which transport it pairs (notification or unofficial_api)",
+      "expect_error": "'transport' is a required property"
+    },
+    {
+      "file": "invalid/connection.create.imessage_unofficial_api.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionCreateRequest",
+      "why_invalid": "iMessage pairs only through the Mac companion",
+      "expect_error": "'companion' was expected"
+    },
+    {
+      "file": "invalid/connection.experimental_without_consent.json",
+      "schema": "openapi.yaml#/components/schemas/Connection",
+      "why_invalid": "a paired experimental connection always carries its recorded consent",
+      "expect_error": "'experimental_consent' is a required property"
+    },
+    {
+      "file": "invalid/connection.experimental_paired_with_revoked_consent.json",
+      "schema": "openapi.yaml#/components/schemas/Connection",
+      "why_invalid": "revoking the consent unpairs the connection, so a paired one never has a revoked consent",
+      "expect_error": "is not of type 'null'"
+    },
+    {
+      "file": "invalid/connection.settings.with_password.json",
+      "schema": "openapi.yaml#/components/schemas/ConnectionSettingsUpdate",
+      "why_invalid": "settings never carry credentials",
+      "expect_error": "'password' was unexpected"
+    },
+    {
+      "file": "invalid/event.content_hidden_with_text.json",
+      "schema": "schemas/connector_event.v1.json",
+      "why_invalid": "hidden content carries no text",
+      "expect_error": "is expected to be empty"
+    },
+    {
+      "file": "invalid/event.unknown_kind.json",
+      "schema": "schemas/connector_event.v1.json",
+      "why_invalid": "kind is one of the 1.3.0 values",
+      "expect_error": "'swipe_right' is not one of"
+    },
+    {
+      "file": "invalid/event.unknown_identity.json",
+      "schema": "schemas/connector_event.v1.json",
+      "why_invalid": "identity is linked, unlinked or ambiguous; there is no fuzzy match",
+      "expect_error": "'probably_linked' is not one of"
+    },
+    {
+      "file": "invalid/event.credential_in_payload.json",
+      "schema": "schemas/connector_event.v1.json",
+      "why_invalid": "an event never carries platform credentials",
+      "expect_error": "'auth_token' was unexpected"
+    },
+    {
+      "file": "invalid/message.assisted_draft_claims_delivered.json",
+      "schema": "openapi.yaml#/components/schemas/Message",
+      "why_invalid": "a draft the user sent by hand is only ever user_reported_sent, never delivered",
+      "expect_error": "'user_reported_sent' was expected"
+    },
+    {
+      "file": "invalid/message.user_reported_sent_with_sent_at.json",
+      "schema": "openapi.yaml#/components/schemas/Message",
+      "why_invalid": "nobody observed a send, so there is no sent_at",
+      "expect_error": "is not of type 'null'"
+    },
+    {
+      "file": "invalid/message.manual_user_reported_sent.json",
+      "schema": "openapi.yaml#/components/schemas/Message",
+      "why_invalid": "user_reported_sent is only for assisted_draft messages",
+      "expect_error": "should not be valid under"
+    },
+    {
+      "file": "invalid/assisted_delivery.pending_with_message.json",
+      "schema": "openapi.yaml#/components/schemas/AssistedDelivery",
+      "why_invalid": "a pending assisted delivery has recorded nothing yet",
+      "expect_error": "is not of type 'null'"
+    },
+    {
+      "file": "invalid/assisted_delivery.reported_without_text.json",
+      "schema": "openapi.yaml#/components/schemas/AssistedDelivery",
+      "why_invalid": "a user_reported_sent delivery records what the user said they sent",
+      "expect_error": "None is not of type 'string'"
+    },
+    {
+      "file": "invalid/assisted_delivery.confirm.unknown_field.json",
+      "schema": "openapi.yaml#/components/schemas/AssistedDeliveryConfirmRequest",
+      "why_invalid": "the user can report sending, never delivery",
+      "expect_error": "'delivered' was unexpected"
+    },
+    {
+      "file": "invalid/identity_link.agent_origin.json",
+      "schema": "openapi.yaml#/components/schemas/IdentityLink",
+      "why_invalid": "identity links are only ever made by the user",
+      "expect_error": "'user' was expected"
+    },
+    {
+      "file": "invalid/identity_link.same_contact.json",
+      "schema": "openapi.yaml#/components/schemas/IdentityLink",
+      "why_invalid": "a link joins two different contacts",
+      "expect_error": "has non-unique elements"
+    },
+    {
+      "file": "invalid/identity_link.create.with_confidence.json",
+      "schema": "openapi.yaml#/components/schemas/IdentityLinkCreateRequest",
+      "why_invalid": "there is no inferred or scored linking",
+      "expect_error": "'confidence' was unexpected"
+    },
+    {
+      "file": "invalid/profile.import.device_without_connection.json",
+      "schema": "openapi.yaml#/components/schemas/ProfileImportRequest",
+      "why_invalid": "a device import names the connection whose profile_read it used",
+      "expect_error": "'connection_id' is a required property"
+    },
+    {
+      "file": "invalid/profile.import.mock_not_fixture.json",
+      "schema": "openapi.yaml#/components/schemas/ProfileImportRequest",
+      "why_invalid": "mock profiles are fixtures only",
+      "expect_error": "'fixture' was expected"
+    },
+    {
+      "file": "invalid/profile.import.inferred_object_attribute.json",
+      "schema": "openapi.yaml#/components/schemas/ProfileImportRequest",
+      "why_invalid": "attributes are flat provided values; no nested inferences",
+      "expect_error": "is not valid under any of the given schemas"
+    },
+    {
+      "file": "invalid/profile.import.with_cookie.json",
+      "schema": "openapi.yaml#/components/schemas/ProfileImportRequest",
+      "why_invalid": "imports never carry platform session material",
+      "expect_error": "'cookie' was unexpected"
+    },
+    {
+      "file": "invalid/profile_action.skip_queued.json",
+      "schema": "openapi.yaml#/components/schemas/ProfileAction",
+      "why_invalid": "skip is never executed",
+      "expect_error": "'not_executable' was expected"
+    },
+    {
+      "file": "invalid/profile_action.executed_without_time.json",
+      "schema": "openapi.yaml#/components/schemas/ProfileAction",
+      "why_invalid": "executed needs the observed executed_at",
+      "expect_error": "None is not of type 'string'"
+    },
+    {
+      "file": "invalid/profile_action.queued_without_connection.json",
+      "schema": "openapi.yaml#/components/schemas/ProfileAction",
+      "why_invalid": "execution needs a connection",
+      "expect_error": "None is not of type 'string'"
+    },
+    {
+      "file": "invalid/profile.decision.unknown.json",
+      "schema": "openapi.yaml#/components/schemas/ProfileDecisionRequest",
+      "why_invalid": "decisions are like, pass, skip or superlike",
+      "expect_error": "'match' is not one of"
+    },
+    {
+      "file": "invalid/evaluation.score_out_of_range.json",
+      "schema": "openapi.yaml#/components/schemas/Evaluation",
+      "why_invalid": "scores are 0 to 100",
+      "expect_error": "is greater than the maximum of 100"
+    },
+    {
+      "file": "invalid/conversation.read.with_body.json",
+      "schema": "openapi.yaml#/components/schemas/MarkReadRequest",
+      "why_invalid": "mark-read takes no options",
+      "expect_error": "'unread_count' was unexpected"
     }
   ]
 }

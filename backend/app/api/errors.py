@@ -60,6 +60,10 @@ class ErrorCode(StrEnum):
     RATE_LIMITED = "rate_limited"
     UPSTREAM_UNAVAILABLE = "upstream_unavailable"
     INTERNAL_ERROR = "internal_error"
+    # contract 1.3.0 (ADR 0008)
+    EXPERIMENTAL_CONSENT_REQUIRED = "experimental_consent_required"
+    ASSISTED_DELIVERY_NOT_PENDING = "assisted_delivery_not_pending"
+    SWIPE_EXECUTION_DISABLED = "swipe_execution_disabled"
 
 
 _TITLES: dict[ErrorCode, str] = {
@@ -78,6 +82,9 @@ _TITLES: dict[ErrorCode, str] = {
     ErrorCode.RATE_LIMITED: "Rate limited",
     ErrorCode.UPSTREAM_UNAVAILABLE: "Upstream unavailable",
     ErrorCode.INTERNAL_ERROR: "Internal server error",
+    ErrorCode.EXPERIMENTAL_CONSENT_REQUIRED: "Experimental connector needs your consent",
+    ErrorCode.ASSISTED_DELIVERY_NOT_PENDING: "Assisted delivery is not pending",
+    ErrorCode.SWIPE_EXECUTION_DISABLED: "Swipe execution is disabled",
 }
 
 # Best-effort mapping for plain HTTPException. Raise ProblemException for anything

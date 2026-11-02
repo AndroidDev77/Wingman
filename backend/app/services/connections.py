@@ -24,6 +24,15 @@ conversations, its unclaimed (``pending``) outbox instructions and its ``queued`
 outbound messages are canceled (reason ``connection_unavailable``) and audited. A
 message a device already leased (``sending``) cannot be recalled; its outcome is still
 accepted (ADR 0006).
+
+**Contract 1.3.0 (ADR 0008).** Dating and iMessage platforms pair as device-side
+connections with a ``transport``. ``unofficial_api`` (D-021) makes the connection
+*experimental*: pairing needs the user's recorded ban-risk consent
+(``experimental_consent_required`` otherwise), the policy treats its ``send`` as
+unverified and swipe execution is refused until an operator records a live test
+(:meth:`ConnectionService.record_experimental_verification`, no HTTP route), and
+:meth:`ConnectionService.revoke_consent` works exactly like unpair. No platform
+credential or session token is ever accepted or stored here.
 """
 
 import argparse
@@ -46,6 +55,9 @@ from app.db.base import utc_now
 from app.db.enums import (
     Actor,
     AgentActionType,
+    CapabilityVerification,
+    ConnectionStatus,
+    ConnectionTransport,
     DeliveryState,
 )
 from app.db.errors import NotFoundError
@@ -53,22 +65,29 @@ from app.db.models import PlatformConnection
 from app.db.repositories import (
     AgentActionRepository,
     ApprovalRepository,
+    AssistedDeliveryRepository,
     ConnectionRepository,
     ConversationRepository,
     MessageRepository,
     OutboxRepository,
     UserRepository,
 )
-from app.db.repositories.connections import CAPABILITY_NAMES
+from app.db.repositories.connections import CAPABILITY_NAMES, OPTIONAL_CAPABILITY_NAMES
 from app.db.scope import UserScope
 
 __all__ = [
+    "ASSISTED_PLATFORMS",
     "CLIENT_VERIFIED_NOTE",
     "DEVICE_PAIRABLE_PLATFORMS",
+    "DATING_PLATFORMS",
+    "ExperimentalConsentInput",
+    "experimental_unverified",
+    "swipe_gate_failure",
     "MOCK_PLATFORM",
     "UNAVAILABLE_REASON",
     "ConnectionService",
     "PairingError",
+    "SwipeGateClosed",
     "PairResult",
     "UnpairResult",
     "trust_claimed_capabilities",
@@ -78,7 +97,22 @@ __all__ = [
 logger = logging.getLogger(__name__)
 
 MOCK_PLATFORM = "mock"
-DEVICE_PAIRABLE_PLATFORMS = frozenset({"sms", "android_notification"})
+DATING_PLATFORMS = frozenset({"tinder", "bumble", "hinge"})
+# Contract 1.3.0: platforms whose drafts can be delivered by hand when `send` is
+# UNSUPPORTED (assisted delivery, ADR 0008).
+ASSISTED_PLATFORMS = DATING_PLATFORMS | {"imessage"}
+DEVICE_PAIRABLE_PLATFORMS = frozenset({"sms", "android_notification"}) | ASSISTED_PLATFORMS
+# Which transports each platform may pair with (contract 1.3.0 ConnectionCreateRequest).
+ALLOWED_TRANSPORTS: dict[str, frozenset[ConnectionTransport]] = {
+    "mock": frozenset({ConnectionTransport.SIMULATOR}),
+    "sms": frozenset({ConnectionTransport.SMS_PROVIDER}),
+    "android_notification": frozenset({ConnectionTransport.NOTIFICATION}),
+    "imessage": frozenset({ConnectionTransport.COMPANION}),
+    **{
+        p: frozenset({ConnectionTransport.NOTIFICATION, ConnectionTransport.UNOFFICIAL_API})
+        for p in DATING_PLATFORMS
+    },
+}
 UNAVAILABLE_REASON = "connection_unavailable"
 CLIENT_VERIFIED_NOTE = (
     "Claimed VERIFIED by the client; stored as UNVERIFIED until server-side evidence "
@@ -104,7 +138,8 @@ def trust_claimed_capabilities(
     )
     current_caps: dict[str, Any] = (current or {}).get("capabilities") or {}
     out: dict[str, Any] = {}
-    for name in CAPABILITY_NAMES:
+    present = [n for n in OPTIONAL_CAPABILITY_NAMES if n in doc["capabilities"]]
+    for name in (*CAPABILITY_NAMES, *present):
         entry: dict[str, Any] = dict(doc["capabilities"][name])
         status = entry["status"]
         if status == VerificationStatus.VERIFIED.value:
@@ -131,18 +166,61 @@ def unpaired_capabilities(current: dict[str, Any]) -> dict[str, Any]:
     doc["capabilities"] = {
         name: {"status": "UNSUPPORTED", "notes": UNPAIRED_NOTE} for name in CAPABILITY_NAMES
     }
+    if "profile_read" in (current.get("capabilities") or {}):
+        doc["capabilities"]["profile_read"] = {"status": "UNSUPPORTED", "notes": UNPAIRED_NOTE}
     return doc
+
+
+def experimental_unverified(connection: PlatformConnection) -> bool:
+    """An experimental (unofficial API) connection without an operator-recorded live
+    test: approval-only and never swipes, whatever its capability document says."""
+    return connection.experimental and connection.experimental_verified_at is None
+
+
+def swipe_gate_failure(connection: PlatformConnection) -> tuple[str, str] | None:
+    """The connection-level part of the swipe execution gate (ADR 0008), shared by
+    ``putConnectionSettings`` and ``requestProfileActionExecution``. ``None`` = passes;
+    otherwise ``(pointer, message)`` naming the failed check."""
+    if connection.unpaired_at is not None or connection.status is not ConnectionStatus.CONNECTED:
+        return "/connection_id", "connection is not paired and connected"
+    if connection.swipe_capability is not CapabilityVerification.VERIFIED:
+        return "/connection_id", "swipe capability is not VERIFIED"
+    if experimental_unverified(connection):
+        return "/connection_id", "experimental connection is not operator-verified"
+    return None
 
 
 # --------------------------------------------------------------------------- service
 
 
-class PairingError(Exception):
-    """A rejected pairing request: ``422 validation_error`` at ``pointer``."""
+@dataclass(frozen=True)
+class ExperimentalConsentInput:
+    """The user's ban-risk consent as received (contract ``ExperimentalConsentInput``)."""
 
-    def __init__(self, detail: str, *, pointer: str, message: str) -> None:
+    platform: str
+    consent_text_version: str
+    accepted_at: datetime
+
+
+class PairingError(Exception):
+    """A rejected pairing request: ``422`` (``validation_error`` unless ``code`` says
+    otherwise, e.g. ``experimental_consent_required``) at ``pointer``."""
+
+    def __init__(
+        self, detail: str, *, pointer: str, message: str, code: str = "validation_error"
+    ) -> None:
         super().__init__(detail)
         self.detail = detail
+        self.pointer = pointer
+        self.message = message
+        self.code = code
+
+
+class SwipeGateClosed(Exception):  # noqa: N818 - maps to the contract error code
+    """The swipe execution gate refused (``422 swipe_execution_disabled``, ADR 0008)."""
+
+    def __init__(self, pointer: str, message: str) -> None:
+        super().__init__(message)
         self.pointer = pointer
         self.message = message
 
@@ -176,10 +254,18 @@ class ConnectionService:
         display_name: str,
         device_install_id: uuid.UUID | None,
         capabilities: ConnectorCapabilities | None,
+        transport: ConnectionTransport | None = None,
+        experimental: bool | None = None,
+        consent: ExperimentalConsentInput | None = None,
     ) -> PairResult:
-        """``createConnection``. Capabilities are stored per :func:`trust_claimed_capabilities`."""
+        """``createConnection``. Capabilities are stored per :func:`trust_claimed_capabilities`.
+
+        Contract 1.3.0: ``transport`` (defaulted for single-transport platforms) and, for
+        ``unofficial_api``, the experimental flag and the user's consent (ADR 0008).
+        """
         repo = ConnectionRepository(session, scope)
         now = self._now()
+        chosen = self._check_transport(platform, transport, experimental, consent)
         if platform == MOCK_PLATFORM:
             if self.env == "prod":
                 raise PairingError(
@@ -217,26 +303,52 @@ class ConnectionService:
             await UserRepository(session).lock(scope)
             existing = await repo.paired_for_install(platform, device_install_id)
             if existing is not None:
+                if existing.transport is not chosen:
+                    raise PairingError(
+                        "this install already has a paired connection for the platform with"
+                        " another transport; unpair it first",
+                        pointer="/transport",
+                        message=f"already paired with transport '{existing.transport.value}'",
+                    )
                 return PairResult(existing, created=False)
             stored = trust_claimed_capabilities(capabilities)
         else:  # pragma: no cover - the request schema enumerates platforms
             raise PairingError(
                 "platform is not pairable", pointer="/platform", message="unsupported"
             )
+        is_experimental = chosen is ConnectionTransport.UNOFFICIAL_API
         connection = await repo.create(
             platform=platform,
             display_name=display_name,
             capabilities=stored,
             device_install_id=device_install_id,
             paired_at=now,
+            transport=chosen,
+            consent_text_version=consent.consent_text_version if consent else None,
+            consent_accepted_at=consent.accepted_at if consent else None,
         )
-        await AgentActionRepository(session, scope).record(
+        audit = AgentActionRepository(session, scope)
+        if is_experimental and consent is not None:
+            await audit.record(
+                type=AgentActionType.EXPERIMENTAL_CONSENT_RECORDED,
+                actor=Actor.USER,
+                occurred_at=now,
+                details={
+                    "connection_id": str(connection.id),
+                    "platform": platform,
+                    "consent_text_version": consent.consent_text_version,
+                    "accepted_at": consent.accepted_at.isoformat().replace("+00:00", "Z"),
+                },
+            )
+        await audit.record(
             type=AgentActionType.CONNECTION_PAIRED,
             actor=Actor.USER,
             occurred_at=now,
             details={
                 "connection_id": str(connection.id),
                 "platform": platform,
+                "transport": chosen.value,
+                "experimental": is_experimental,
                 "device_side": device_install_id is not None,
                 "send_capability": connection.send_capability.value,
                 "client_claimed_verified": sorted(
@@ -248,6 +360,108 @@ class ConnectionService:
             },
         )
         return PairResult(connection, created=True)
+
+    @staticmethod
+    def _check_transport(
+        platform: str,
+        transport: ConnectionTransport | None,
+        experimental: bool | None,
+        consent: ExperimentalConsentInput | None,
+    ) -> ConnectionTransport:
+        allowed = ALLOWED_TRANSPORTS.get(platform)
+        if allowed is None:  # pragma: no cover - the request schema enumerates platforms
+            raise PairingError(
+                "platform is not pairable", pointer="/platform", message="unsupported"
+            )
+        if transport is None:
+            if len(allowed) != 1:
+                raise PairingError(
+                    "this platform needs a transport",
+                    pointer="/transport",
+                    message="required: notification or unofficial_api",
+                )
+            (transport,) = allowed
+        if transport not in allowed:
+            raise PairingError(
+                "transport not available for this platform",
+                pointer="/transport",
+                message=f"must be one of {sorted(t.value for t in allowed)}",
+            )
+        is_experimental = transport is ConnectionTransport.UNOFFICIAL_API
+        if bool(experimental) is not is_experimental:
+            raise PairingError(
+                "experimental must be true exactly for transport unofficial_api",
+                pointer="/experimental",
+                message="must be true" if is_experimental else "must be false or absent",
+            )
+        if not is_experimental:
+            if consent is not None:
+                raise PairingError(
+                    "an experimental consent is only for transport unofficial_api",
+                    pointer="/experimental_consent",
+                    message="must be absent",
+                )
+            return transport
+        if consent is None:
+            raise PairingError(
+                "pairing an unofficial-API connector needs the user's recorded ban-risk consent",
+                pointer="/experimental_consent",
+                message="required for transport unofficial_api",
+                code="experimental_consent_required",
+            )
+        if consent.platform != platform:
+            raise PairingError(
+                "the consent was given for another platform",
+                pointer="/experimental_consent/platform",
+                message="must equal platform",
+            )
+        return transport
+
+    async def revoke_consent(
+        self, session: AsyncSession, scope: UserScope, connection_id: uuid.UUID
+    ) -> UnpairResult:
+        """``revokeExperimentalConsent``: unpair (ADR 0007) plus the consent revocation
+        audit. Only for experimental connections; idempotent."""
+        connection = await ConnectionRepository(session, scope).require(connection_id)
+        if not connection.experimental:
+            raise PairingError(
+                "only an experimental connection has a consent to revoke",
+                pointer="/connection_id",
+                message="connection is not experimental",
+            )
+        was_paired = connection.unpaired_at is None
+        result = await self.unpair(session, scope, connection_id)
+        if was_paired:
+            await AgentActionRepository(session, scope).record(
+                type=AgentActionType.EXPERIMENTAL_CONSENT_REVOKED,
+                actor=Actor.USER,
+                occurred_at=self._now(),
+                reason_code=UNAVAILABLE_REASON,
+                details={
+                    "connection_id": str(connection_id),
+                    "platform": result.connection.platform,
+                    "canceled_messages": result.canceled_message_count,
+                    "canceled_instructions": result.canceled_instruction_count,
+                    "canceled_approvals": result.canceled_approval_count,
+                },
+            )
+        return result
+
+    async def set_auto_swipe(
+        self, session: AsyncSession, scope: UserScope, connection_id: uuid.UUID, enabled: bool
+    ) -> PlatformConnection:
+        """``putConnectionSettings``. Enabling needs the connection-level swipe gate;
+        disabling always works."""
+        repo = ConnectionRepository(session, scope)
+        await repo.require(connection_id)
+        connection = await repo.lock_for_update(connection_id)
+        if connection is None:  # pragma: no cover
+            raise NotFoundError("connection not found")
+        if enabled:
+            failure = swipe_gate_failure(connection)
+            if failure is not None:
+                raise SwipeGateClosed(*failure)
+        return await repo.set_auto_swipe(connection_id, enabled)
 
     async def unpair(
         self, session: AsyncSession, scope: UserScope, connection_id: uuid.UUID
@@ -287,6 +501,21 @@ class ConnectionService:
                     occurred_at=now,
                     details={"draft_id": str(approval.draft_id), "stage": "unpair"},
                 )
+
+        # Contract 1.3.0: pending assisted deliveries go too (counted with approvals).
+        for assisted in await AssistedDeliveryRepository(session, scope).cancel_pending(
+            at=now, reason=UNAVAILABLE_REASON, connection_id=connection_id
+        ):
+            canceled_approvals += 1
+            await audit.record(
+                type=AgentActionType.ASSISTED_DELIVERY_CANCELED,
+                actor=Actor.USER,
+                conversation_id=assisted.conversation_id,
+                contact_id=assisted.contact_id,
+                reason_code=UNAVAILABLE_REASON,
+                occurred_at=now,
+                details={"assisted_delivery_id": str(assisted.id), "stage": "unpair"},
+            )
 
         canceled_instructions = await OutboxRepository(
             session, scope
@@ -332,6 +561,36 @@ class ConnectionService:
         return UnpairResult(
             connection, canceled_messages, canceled_instructions, canceled_approvals, in_flight
         )
+
+    async def record_experimental_verification(
+        self,
+        session: AsyncSession,
+        scope: UserScope,
+        connection_id: uuid.UUID,
+        *,
+        evidence: str,
+        verified_at: datetime,
+    ) -> PlatformConnection:
+        """Operator-only (no HTTP route, D-016, ADR 0008): the owner's live test of an
+        experimental connection passed. Lifts the experimental-unverified gate only;
+        each capability still needs :meth:`record_verification` to become VERIFIED."""
+        if not evidence.strip():
+            raise ValueError("evidence is required to record an experimental verification")
+        if verified_at.tzinfo is None:
+            raise ValueError("verified_at must be timezone-aware")
+        repo = ConnectionRepository(session, scope)
+        connection = await repo.require(connection_id)
+        if not connection.experimental:
+            raise ValueError("only an experimental connection needs this verification")
+        if connection.unpaired_at is not None:
+            raise ValueError("an unpaired connection cannot be verified")
+        updated = await repo.mark_experimental_verified(connection_id, at=verified_at)
+        logger.warning(
+            "experimental connection verified by operator user=%s connection=%s",
+            scope.user_id,
+            connection_id,
+        )
+        return updated
 
     async def record_verification(
         self,
@@ -393,13 +652,27 @@ def _main() -> None:  # pragma: no cover - thin operator CLI
     verify.add_argument("--connection-id", type=uuid.UUID, required=True)
     verify.add_argument("--capability", choices=[c.value for c in CapabilityName], required=True)
     verify.add_argument("--evidence", required=True)
+    exp = sub.add_parser("verify-experimental")
+    exp.add_argument("--user-id", type=uuid.UUID, required=True)
+    exp.add_argument("--connection-id", type=uuid.UUID, required=True)
+    exp.add_argument("--evidence", required=True)
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO)
 
     async def run() -> None:
         try:
             async with session_scope() as session:
-                await ConnectionService(env="operator").record_verification(
+                service = ConnectionService(env="operator")
+                if args.cmd == "verify-experimental":
+                    await service.record_experimental_verification(
+                        session,
+                        UserScope(args.user_id),
+                        args.connection_id,
+                        evidence=args.evidence,
+                        verified_at=utc_now(),
+                    )
+                    return
+                await service.record_verification(
                     session,
                     UserScope(args.user_id),
                     args.connection_id,

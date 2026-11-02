@@ -1,0 +1,26 @@
+{
+  "schema_version": "connector_event.v1",
+  "event_id": "0192f3a0-0000-7000-8000-000000000401",
+  "type": "message.received",
+  "platform": "hinge",
+  "connection_id": "0192f3a0-0000-7000-8000-0000000000a5",
+  "user_id": "0192f3a0-0000-7000-8000-000000000001",
+  "external_message_id": "hinge:msg:abc123",
+  "external_thread_id": "hinge-match-55",
+  "occurred_at": "2026-11-02T11:00:00Z",
+  "observed_at": "2026-11-02T11:00:01Z",
+  "payload": {
+    "sender": {
+      "external_contact_id": "hinge-subject-77",
+      "display_name": "Riley"
+    },
+    "text": "Ha, that prompt answer was great. Coffee sometime?",
+    "kind": "chat_message",
+    "external_conversation_id": "hinge-match-55",
+    "sender_label": "Riley",
+    "identity": "linked",
+    "truncated": false,
+    "content_hidden": false,
+    "source": "unofficial_api"
+  }
+}
