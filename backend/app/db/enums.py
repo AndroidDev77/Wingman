@@ -56,6 +56,9 @@ class DeliveryState(StrEnum):
     FAILED = "failed"
     DEAD_LETTERED = "dead_lettered"
     CANCELED = "canceled"
+    # contract 1.3.0: the user said they sent an assisted draft by hand. Never sent or
+    # delivered (nothing was transmitted or observed by Wingman).
+    USER_REPORTED_SENT = "user_reported_sent"
 
 
 class MessageDirection(StrEnum):
@@ -68,6 +71,7 @@ class MessageOrigin(StrEnum):
     USER_MANUAL = "user_manual"
     APPROVED_DRAFT = "approved_draft"
     AUTOPILOT = "autopilot"
+    ASSISTED_DRAFT = "assisted_draft"  # contract 1.3.0
 
 
 class ApprovalReason(StrEnum):
@@ -151,12 +155,85 @@ class AgentActionType(StrEnum):
     LEASE_EXPIRED = "lease_expired"
     CONNECTION_PAIRED = "connection_paired"
     CONNECTION_UNPAIRED = "connection_unpaired"
+    # contract 1.3.0 (ADR 0008)
+    NOTICE_RECEIVED = "notice_received"
+    ASSISTED_DELIVERY_QUEUED = "assisted_delivery_queued"
+    ASSISTED_DELIVERY_CONFIRMED = "assisted_delivery_confirmed"
+    ASSISTED_DELIVERY_DISMISSED = "assisted_delivery_dismissed"
+    ASSISTED_DELIVERY_CANCELED = "assisted_delivery_canceled"
+    EXPERIMENTAL_CONSENT_RECORDED = "experimental_consent_recorded"
+    EXPERIMENTAL_CONSENT_REVOKED = "experimental_consent_revoked"
+    IDENTITY_LINK_CREATED = "identity_link_created"
+    IDENTITY_LINK_DELETED = "identity_link_deleted"
+    PROFILE_IMPORTED = "profile_imported"
+    PROFILE_DECISION_RECORDED = "profile_decision_recorded"
+    PROFILE_ACTION_QUEUED = "profile_action_queued"
 
 
 class ConnectionStatus(StrEnum):
     CONNECTED = "connected"
     DISCONNECTED = "disconnected"
     ERROR = "error"
+
+
+class ConnectionTransport(StrEnum):
+    """Contract 1.3.0: how the paired device reaches the platform (ADR 0008)."""
+
+    SIMULATOR = "simulator"
+    SMS_PROVIDER = "sms_provider"
+    NOTIFICATION = "notification"
+    COMPANION = "companion"
+    UNOFFICIAL_API = "unofficial_api"
+
+
+class InboundEventKind(StrEnum):
+    CHAT_MESSAGE = "chat_message"
+    MATCH = "match"
+    LIKE_COMMENT = "like_comment"
+    EXPIRY = "expiry"
+    SYSTEM = "system"
+    UNKNOWN = "unknown"
+
+
+class SenderIdentity(StrEnum):
+    LINKED = "linked"
+    UNLINKED = "unlinked"
+    AMBIGUOUS = "ambiguous"
+
+
+class AssistedDeliveryStatus(StrEnum):
+    PENDING = "pending"
+    USER_REPORTED_SENT = "user_reported_sent"
+    DISMISSED = "dismissed"
+    CANCELED = "canceled"
+
+
+class ProfileProvider(StrEnum):
+    TINDER = "tinder"
+    BUMBLE = "bumble"
+    HINGE = "hinge"
+    MOCK = "mock"
+
+
+class ProfileSource(StrEnum):
+    MANUAL = "manual"
+    FIXTURE = "fixture"
+    DEVICE = "device"
+
+
+class ProfileDecision(StrEnum):
+    LIKE = "like"
+    PASS = "pass"  # noqa: S105 - a swipe decision, not a password
+    SKIP = "skip"
+    SUPERLIKE = "superlike"
+
+
+class ProfileActionExecution(StrEnum):
+    NOT_EXECUTABLE = "not_executable"
+    QUEUED = "queued"
+    EXECUTED = "executed"
+    FAILED = "failed"
+    UNKNOWN = "unknown"
 
 
 class CapabilityVerification(StrEnum):
@@ -250,6 +327,19 @@ CONTRACT_ENUMS: tuple[ContractEnum, ...] = (
     ContractEnum(Actor, "actor", _schema("Actor")),
     ContractEnum(AgentActionType, "agent_action_type", _schema("AgentActionType")),
     ContractEnum(ConnectionStatus, "connection_status", _schema("ConnectionStatus")),
+    # contract 1.3.0 (ADR 0008)
+    ContractEnum(ConnectionTransport, "connection_transport", _schema("ConnectionTransport")),
+    ContractEnum(InboundEventKind, "inbound_event_kind", _schema("InboundEventKind")),
+    ContractEnum(SenderIdentity, "sender_identity", _schema("SenderIdentity")),
+    ContractEnum(
+        AssistedDeliveryStatus, "assisted_delivery_status", _schema("AssistedDeliveryStatus")
+    ),
+    ContractEnum(ProfileProvider, "profile_provider", _schema("ProfileProvider")),
+    ContractEnum(ProfileSource, "profile_source", _schema("ProfileSource")),
+    ContractEnum(ProfileDecision, "profile_decision", _schema("ProfileDecision")),
+    ContractEnum(
+        ProfileActionExecution, "profile_action_execution", _schema("ProfileActionExecution")
+    ),
     ContractEnum(
         CapabilityVerification,
         "capability_verification",

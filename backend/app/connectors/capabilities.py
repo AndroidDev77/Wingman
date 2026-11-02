@@ -30,6 +30,7 @@ class CapabilityName(StrEnum):
     SEND = "send"
     SWIPE = "swipe"
     CALENDAR_WRITE = "calendar_write"
+    PROFILE_READ = "profile_read"  # contract 1.3.0, optional in the document
 
 
 class Capability(ContractModel):
@@ -91,17 +92,21 @@ class Capability(ContractModel):
 
 
 class CapabilitySet(ContractModel):
-    """All five capabilities, each stated explicitly (none may be omitted)."""
+    """All five capabilities, each stated explicitly (none may be omitted), plus the
+    optional ``profile_read`` (contract 1.3.0; absent means UNSUPPORTED)."""
+
+    _omit_if_none: ClassVar[frozenset[str]] = frozenset({"profile_read"})
 
     read: Capability
     draft: Capability
     send: Capability
     swipe: Capability
     calendar_write: Capability
+    profile_read: Capability | None = None
 
     def get(self, name: CapabilityName) -> Capability:
-        capability: Capability = getattr(self, name.value)
-        return capability
+        capability: Capability | None = getattr(self, name.value)
+        return capability if capability is not None else Capability.unsupported()
 
 
 class ConnectorCapabilities(ContractModel):

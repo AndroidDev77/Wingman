@@ -46,9 +46,10 @@ ENUMS: dict[str, tuple[str, ...]] = {
         "failed",
         "dead_lettered",
         "canceled",
+        "user_reported_sent",
     ),
     "message_direction": ("inbound", "outbound"),
-    "message_origin": ("contact", "user_manual", "approved_draft", "autopilot"),
+    "message_origin": ("contact", "user_manual", "approved_draft", "autopilot", "assisted_draft"),
     "approval_reason": (
         "assisted_mode",
         "sensitive_content",
@@ -91,8 +92,35 @@ ENUMS: dict[str, tuple[str, ...]] = {
         "lease_expired",
         "connection_paired",
         "connection_unpaired",
+        "notice_received",
+        "assisted_delivery_queued",
+        "assisted_delivery_confirmed",
+        "assisted_delivery_dismissed",
+        "assisted_delivery_canceled",
+        "experimental_consent_recorded",
+        "experimental_consent_revoked",
+        "identity_link_created",
+        "identity_link_deleted",
+        "profile_imported",
+        "profile_decision_recorded",
+        "profile_action_queued",
     ),
     "connection_status": ("connected", "disconnected", "error"),
+    # Contract 1.3.0 (ADR 0008).
+    "connection_transport": (
+        "simulator",
+        "sms_provider",
+        "notification",
+        "companion",
+        "unofficial_api",
+    ),
+    "inbound_event_kind": ("chat_message", "match", "like_comment", "expiry", "system", "unknown"),
+    "sender_identity": ("linked", "unlinked", "ambiguous"),
+    "assisted_delivery_status": ("pending", "user_reported_sent", "dismissed", "canceled"),
+    "profile_provider": ("tinder", "bumble", "hinge", "mock"),
+    "profile_source": ("manual", "fixture", "device"),
+    "profile_decision": ("like", "pass", "skip", "superlike"),
+    "profile_action_execution": ("not_executable", "queued", "executed", "failed", "unknown"),
     "capability_verification": ("VERIFIED", "UNVERIFIED", "UNSUPPORTED"),
     "style_punctuation": ("minimal", "standard", "expressive"),
     "style_emoji_frequency": ("none", "rare", "occasional", "frequent"),
@@ -298,6 +326,41 @@ def upgrade() -> None:
         sa.Column("device_install_id", sa.UUID(), nullable=True),
         sa.Column("paired_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("unpaired_at", sa.DateTime(timezone=True), nullable=True),
+        # Contract 1.3.0 (ADR 0008): profile_read, transport, experimental consent.
+        sa.Column(
+            "profile_read_capability",
+            postgresql.ENUM(
+                "VERIFIED",
+                "UNVERIFIED",
+                "UNSUPPORTED",
+                name="capability_verification",
+                create_type=False,
+            ),
+            server_default="UNSUPPORTED",
+            nullable=False,
+        ),
+        sa.Column(
+            "transport",
+            postgresql.ENUM(
+                "simulator",
+                "sms_provider",
+                "notification",
+                "companion",
+                "unofficial_api",
+                name="connection_transport",
+                create_type=False,
+            ),
+            nullable=False,
+        ),
+        sa.Column("experimental", sa.Boolean(), server_default=sa.text("false"), nullable=False),
+        sa.Column("consent_text_version", sa.String(length=32), nullable=True),
+        sa.Column("consent_accepted_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("consent_recorded_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("consent_revoked_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("experimental_verified_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "auto_swipe_enabled", sa.Boolean(), server_default=sa.text("false"), nullable=False
+        ),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -349,6 +412,26 @@ def upgrade() -> None:
         sa.CheckConstraint(
             "unpaired_at IS NULL OR status = 'disconnected'",
             name=op.f("ck_platform_connections_unpaired_is_disconnected"),
+        ),
+        sa.CheckConstraint(
+            "experimental = (transport = 'unofficial_api')",
+            name=op.f("ck_platform_connections_experimental_iff_unofficial"),
+        ),
+        sa.CheckConstraint(
+            "NOT experimental OR (consent_text_version IS NOT NULL AND consent_accepted_at IS NOT NULL AND consent_recorded_at IS NOT NULL AND (unpaired_at IS NOT NULL OR consent_revoked_at IS NULL))",
+            name=op.f("ck_platform_connections_experimental_has_consent"),
+        ),
+        sa.CheckConstraint(
+            "experimental OR (consent_text_version IS NULL AND consent_accepted_at IS NULL AND consent_recorded_at IS NULL AND consent_revoked_at IS NULL AND experimental_verified_at IS NULL)",
+            name=op.f("ck_platform_connections_consent_only_experimental"),
+        ),
+        sa.CheckConstraint(
+            "NOT auto_swipe_enabled OR unpaired_at IS NULL",
+            name=op.f("ck_platform_connections_auto_swipe_only_paired"),
+        ),
+        sa.CheckConstraint(
+            "profile_read_capability::text IS NOT DISTINCT FROM coalesce(capabilities -> 'capabilities' -> 'profile_read' ->> 'status', 'UNSUPPORTED')",
+            name=op.f("ck_platform_connections_profile_read_capability_matches"),
         ),
         sa.ForeignKeyConstraint(
             ["user_id"],
@@ -1102,6 +1185,7 @@ def upgrade() -> None:
                 "user_manual",
                 "approved_draft",
                 "autopilot",
+                "assisted_draft",
                 name="message_origin",
                 create_type=False,
             ),
@@ -1119,6 +1203,7 @@ def upgrade() -> None:
                 "failed",
                 "dead_lettered",
                 "canceled",
+                "user_reported_sent",
                 name="delivery_state",
                 create_type=False,
             ),
@@ -1156,8 +1241,13 @@ def upgrade() -> None:
             name=op.f("ck_messages_delivered_has_timestamps"),
         ),
         sa.CheckConstraint(
-            "delivery_state NOT IN ('queued', 'sending', 'canceled') OR (sent_at IS NULL AND delivered_at IS NULL)",
+            "delivery_state NOT IN ('queued', 'sending', 'canceled', 'user_reported_sent') OR (sent_at IS NULL AND delivered_at IS NULL)",
             name=op.f("ck_messages_unsent_has_no_sent_at"),
+        ),
+        # Contract 1.3.0: a hand-sent assisted draft is exactly user_reported_sent.
+        sa.CheckConstraint(
+            "(origin = 'assisted_draft') = (delivery_state = 'user_reported_sent')",
+            name=op.f("ck_messages_assisted_draft_shape"),
         ),
         sa.CheckConstraint(
             "direction <> 'inbound' OR (origin = 'contact' AND delivery_state = 'received' AND external_message_id IS NOT NULL)",
@@ -1883,8 +1973,593 @@ def upgrade() -> None:
         ondelete="SET NULL (approval_id)",
     )
 
+    # ---- contract 1.3.0 (ADR 0008): notices, assisted delivery, identity links, profiles
+    op.create_table(
+        "inbound_notices",
+        sa.Column("id", sa.UUID(), nullable=False),
+        sa.Column("user_id", sa.UUID(), nullable=False),
+        sa.Column("connection_id", sa.UUID(), nullable=False),
+        sa.Column("platform", sa.String(length=32), nullable=False),
+        sa.Column("event_id", sa.UUID(), nullable=False),
+        sa.Column(
+            "kind",
+            postgresql.ENUM(
+                "chat_message",
+                "match",
+                "like_comment",
+                "expiry",
+                "system",
+                "unknown",
+                name="inbound_event_kind",
+                create_type=False,
+            ),
+            nullable=False,
+        ),
+        sa.Column(
+            "identity",
+            postgresql.ENUM(
+                "linked", "unlinked", "ambiguous", name="sender_identity", create_type=False
+            ),
+            nullable=False,
+        ),
+        sa.Column("sender_label", sa.String(length=200), nullable=True),
+        sa.Column("text", sa.Text(), nullable=False),
+        sa.Column("truncated", sa.Boolean(), nullable=False),
+        sa.Column("content_hidden", sa.Boolean(), nullable=False),
+        sa.Column("external_message_id", sa.String(length=256), nullable=False),
+        sa.Column("external_conversation_id", sa.String(length=256), nullable=True),
+        sa.Column(
+            "source",
+            postgresql.ENUM(
+                "simulator",
+                "sms_provider",
+                "notification",
+                "companion",
+                "unofficial_api",
+                name="connection_transport",
+                create_type=False,
+            ),
+            nullable=True,
+        ),
+        sa.Column("occurred_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.CheckConstraint(
+            "NOT (kind = 'chat_message' AND identity = 'linked' AND NOT truncated AND NOT content_hidden)",
+            name=op.f("ck_inbound_notices_not_a_pipeline_message"),
+        ),
+        sa.CheckConstraint(
+            "NOT content_hidden OR text = ''", name=op.f("ck_inbound_notices_hidden_has_no_text")
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "connection_id"],
+            ["platform_connections.user_id", "platform_connections.id"],
+            name=op.f("fk_inbound_notices_user_id_connection_id_platform_connections"),
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id"],
+            ["users.id"],
+            name=op.f("fk_inbound_notices_user_id_users"),
+            ondelete="CASCADE",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_inbound_notices")),
+        sa.UniqueConstraint("user_id", "id", name=op.f("uq_inbound_notices_user_id_id")),
+        sa.UniqueConstraint(
+            "user_id",
+            "platform",
+            "external_message_id",
+            name=op.f("uq_inbound_notices_user_id_platform_external_message_id"),
+        ),
+    )
+    op.create_index(
+        "ix_inbound_notices_user_id_occurred_at_id",
+        "inbound_notices",
+        ["user_id", sa.literal_column("occurred_at DESC"), sa.literal_column("id DESC")],
+        unique=False,
+    )
+    op.create_table(
+        "profiles",
+        sa.Column("id", sa.UUID(), nullable=False),
+        sa.Column("user_id", sa.UUID(), nullable=False),
+        sa.Column(
+            "provider",
+            postgresql.ENUM(
+                "tinder", "bumble", "hinge", "mock", name="profile_provider", create_type=False
+            ),
+            nullable=False,
+        ),
+        sa.Column("external_profile_id", sa.String(length=256), nullable=False),
+        sa.Column(
+            "source",
+            postgresql.ENUM(
+                "manual", "fixture", "device", name="profile_source", create_type=False
+            ),
+            nullable=False,
+        ),
+        sa.Column("connection_id", sa.UUID(), nullable=True),
+        sa.Column("display_name", sa.String(length=120), nullable=True),
+        sa.Column("bio", sa.Text(), nullable=True),
+        sa.Column(
+            "prompts",
+            postgresql.JSONB(none_as_null=True, astext_type=sa.Text()),
+            server_default=sa.text("'[]'::jsonb"),
+            nullable=False,
+        ),
+        sa.Column(
+            "attributes",
+            postgresql.JSONB(none_as_null=True, astext_type=sa.Text()),
+            server_default=sa.text("'{}'::jsonb"),
+            nullable=False,
+        ),
+        sa.Column("source_observed_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("imported_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("invalidated_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.CheckConstraint(
+            "jsonb_typeof(attributes) = 'object'", name=op.f("ck_profiles_attributes_object")
+        ),
+        sa.CheckConstraint(
+            "jsonb_typeof(prompts) = 'array'", name=op.f("ck_profiles_prompts_array")
+        ),
+        sa.CheckConstraint(
+            "provider <> 'mock' OR source = 'fixture'", name=op.f("ck_profiles_mock_is_fixture")
+        ),
+        sa.CheckConstraint(
+            "source <> 'device' OR connection_id IS NOT NULL",
+            name=op.f("ck_profiles_device_has_connection"),
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "connection_id"],
+            ["platform_connections.user_id", "platform_connections.id"],
+            name=op.f("fk_profiles_user_id_connection_id_platform_connections"),
+            ondelete="SET NULL (connection_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id"], ["users.id"], name=op.f("fk_profiles_user_id_users"), ondelete="CASCADE"
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_profiles")),
+        sa.UniqueConstraint("user_id", "id", name=op.f("uq_profiles_user_id_id")),
+        sa.UniqueConstraint(
+            "user_id",
+            "provider",
+            "external_profile_id",
+            name=op.f("uq_profiles_user_id_provider_external_profile_id"),
+        ),
+    )
+    op.create_index(
+        op.f("ix_profiles_user_id_created_at_id"),
+        "profiles",
+        ["user_id", "created_at", "id"],
+        unique=False,
+    )
+    op.create_table(
+        "identity_links",
+        sa.Column("id", sa.UUID(), nullable=False),
+        sa.Column("user_id", sa.UUID(), nullable=False),
+        sa.Column("contact_a_id", sa.UUID(), nullable=False),
+        sa.Column("contact_b_id", sa.UUID(), nullable=False),
+        sa.Column("origin", sa.String(length=16), server_default=sa.text("'user'"), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.CheckConstraint("origin = 'user'", name=op.f("ck_identity_links_user_made_only")),
+        sa.CheckConstraint(
+            "contact_a_id < contact_b_id", name=op.f("ck_identity_links_ordered_distinct_pair")
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "contact_a_id"],
+            ["contacts.user_id", "contacts.id"],
+            name=op.f("fk_identity_links_user_id_contact_a_id_contacts"),
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "contact_b_id"],
+            ["contacts.user_id", "contacts.id"],
+            name=op.f("fk_identity_links_user_id_contact_b_id_contacts"),
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id"],
+            ["users.id"],
+            name=op.f("fk_identity_links_user_id_users"),
+            ondelete="CASCADE",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_identity_links")),
+        sa.UniqueConstraint(
+            "user_id",
+            "contact_a_id",
+            "contact_b_id",
+            name=op.f("uq_identity_links_user_id_contact_a_id_contact_b_id"),
+        ),
+        sa.UniqueConstraint("user_id", "id", name=op.f("uq_identity_links_user_id_id")),
+    )
+    op.create_index(
+        op.f("ix_identity_links_user_id_contact_b_id"),
+        "identity_links",
+        ["user_id", "contact_b_id"],
+        unique=False,
+    )
+    op.create_table(
+        "profile_actions",
+        sa.Column("id", sa.UUID(), nullable=False),
+        sa.Column("user_id", sa.UUID(), nullable=False),
+        sa.Column("profile_id", sa.UUID(), nullable=False),
+        sa.Column("connection_id", sa.UUID(), nullable=True),
+        sa.Column(
+            "decision",
+            postgresql.ENUM(
+                "like", "pass", "skip", "superlike", name="profile_decision", create_type=False
+            ),
+            nullable=False,
+        ),
+        sa.Column("idempotency_key", sa.String(length=128), nullable=False),
+        sa.Column(
+            "execution",
+            postgresql.ENUM(
+                "not_executable",
+                "queued",
+                "executed",
+                "failed",
+                "unknown",
+                name="profile_action_execution",
+                create_type=False,
+            ),
+            server_default="not_executable",
+            nullable=False,
+        ),
+        sa.Column("execution_detail", sa.String(length=200), nullable=True),
+        sa.Column("decided_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("execution_requested_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("executed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.CheckConstraint(
+            "(execution = 'executed') = (executed_at IS NOT NULL)",
+            name=op.f("ck_profile_actions_executed_shape"),
+        ),
+        sa.CheckConstraint(
+            "(execution = 'not_executable') = (execution_requested_at IS NULL)",
+            name=op.f("ck_profile_actions_requested_shape"),
+        ),
+        sa.CheckConstraint(
+            "decision <> 'skip' OR execution = 'not_executable'",
+            name=op.f("ck_profile_actions_skip_never_executes"),
+        ),
+        sa.CheckConstraint(
+            "execution = 'not_executable' OR connection_id IS NOT NULL",
+            name=op.f("ck_profile_actions_execution_has_connection"),
+        ),
+        sa.CheckConstraint(
+            "idempotency_key ~ '^[A-Za-z0-9._:-]{8,128}$'",
+            name=op.f("ck_profile_actions_idempotency_key_format"),
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "connection_id"],
+            ["platform_connections.user_id", "platform_connections.id"],
+            name=op.f("fk_profile_actions_user_id_connection_id_platform_connections"),
+            ondelete="SET NULL (connection_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "profile_id"],
+            ["profiles.user_id", "profiles.id"],
+            name=op.f("fk_profile_actions_user_id_profile_id_profiles"),
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id"],
+            ["users.id"],
+            name=op.f("fk_profile_actions_user_id_users"),
+            ondelete="CASCADE",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_profile_actions")),
+        sa.UniqueConstraint("user_id", "id", name=op.f("uq_profile_actions_user_id_id")),
+        sa.UniqueConstraint(
+            "user_id", "idempotency_key", name=op.f("uq_profile_actions_user_id_idempotency_key")
+        ),
+    )
+    op.create_index(
+        op.f("ix_profile_actions_user_id_profile_id_created_at_id"),
+        "profile_actions",
+        ["user_id", "profile_id", "created_at", "id"],
+        unique=False,
+    )
+    op.create_index(
+        "uq_profile_actions_user_id_profile_id_live",
+        "profile_actions",
+        ["user_id", "profile_id"],
+        unique=True,
+        postgresql_where=sa.text("execution IN ('queued', 'executed')"),
+    )
+    op.create_table(
+        "profile_evaluations",
+        sa.Column("id", sa.UUID(), nullable=False),
+        sa.Column("user_id", sa.UUID(), nullable=False),
+        sa.Column("profile_id", sa.UUID(), nullable=False),
+        sa.Column("score", sa.Float(), nullable=True),
+        sa.Column(
+            "reasons",
+            postgresql.JSONB(none_as_null=True, astext_type=sa.Text()),
+            server_default=sa.text("'[]'::jsonb"),
+            nullable=False,
+        ),
+        sa.Column(
+            "known_unknowns",
+            postgresql.ARRAY(sa.Text()),
+            server_default=sa.text("'{}'"),
+            nullable=False,
+        ),
+        sa.Column(
+            "intent_mode",
+            postgresql.ENUM(
+                "serious",
+                "casual_dating",
+                "casual_physical",
+                "open",
+                "custom",
+                name="intent_mode",
+                create_type=False,
+            ),
+            nullable=False,
+        ),
+        sa.Column(
+            "dealbreakers_hit",
+            postgresql.ARRAY(sa.Text()),
+            server_default=sa.text("'{}'"),
+            nullable=False,
+        ),
+        sa.Column("confidence", sa.Float(), nullable=False),
+        sa.Column("evaluator_version", sa.String(length=64), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.CheckConstraint(
+            "jsonb_typeof(reasons) = 'array'", name=op.f("ck_profile_evaluations_reasons_array")
+        ),
+        sa.CheckConstraint(
+            "confidence >= 0 AND confidence <= 1",
+            name=op.f("ck_profile_evaluations_confidence_range"),
+        ),
+        sa.CheckConstraint(
+            "score IS NULL OR (score >= 0 AND score <= 100)",
+            name=op.f("ck_profile_evaluations_score_range"),
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "profile_id"],
+            ["profiles.user_id", "profiles.id"],
+            name=op.f("fk_profile_evaluations_user_id_profile_id_profiles"),
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id"],
+            ["users.id"],
+            name=op.f("fk_profile_evaluations_user_id_users"),
+            ondelete="CASCADE",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_profile_evaluations")),
+        sa.UniqueConstraint("user_id", "id", name=op.f("uq_profile_evaluations_user_id_id")),
+    )
+    op.create_index(
+        op.f("ix_profile_evaluations_user_id_profile_id_created_at_id"),
+        "profile_evaluations",
+        ["user_id", "profile_id", "created_at", "id"],
+        unique=False,
+    )
+    op.create_table(
+        "assisted_deliveries",
+        sa.Column("id", sa.UUID(), nullable=False),
+        sa.Column("user_id", sa.UUID(), nullable=False),
+        sa.Column("conversation_id", sa.UUID(), nullable=False),
+        sa.Column("contact_id", sa.UUID(), nullable=False),
+        sa.Column("connection_id", sa.UUID(), nullable=False),
+        sa.Column("draft_id", sa.UUID(), nullable=False),
+        sa.Column("text", sa.Text(), nullable=False),
+        sa.Column(
+            "reasons",
+            postgresql.ARRAY(
+                postgresql.ENUM(
+                    "assisted_mode",
+                    "sensitive_content",
+                    "date_or_commitment",
+                    "low_confidence",
+                    "first_message",
+                    "outside_active_hours",
+                    "capability_unverified",
+                    "send_limit_reached",
+                    "user_rule",
+                    "paused",
+                    name="approval_reason",
+                    create_type=False,
+                )
+            ),
+            server_default=sa.text("'{}'"),
+            nullable=False,
+        ),
+        sa.Column(
+            "status",
+            postgresql.ENUM(
+                "pending",
+                "user_reported_sent",
+                "dismissed",
+                "canceled",
+                name="assisted_delivery_status",
+                create_type=False,
+            ),
+            server_default="pending",
+            nullable=False,
+        ),
+        sa.Column("final_text", sa.Text(), nullable=True),
+        sa.Column("message_id", sa.UUID(), nullable=True),
+        sa.Column("cancel_reason", sa.String(length=64), nullable=True),
+        sa.Column("decided_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.CheckConstraint(
+            "(status = 'canceled') = (cancel_reason IS NOT NULL)",
+            name=op.f("ck_assisted_deliveries_cancel_reason_shape"),
+        ),
+        sa.CheckConstraint(
+            "(status = 'pending') = (decided_at IS NULL)",
+            name=op.f("ck_assisted_deliveries_decided_iff_not_pending"),
+        ),
+        sa.CheckConstraint(
+            "(status = 'user_reported_sent') = (final_text IS NOT NULL)",
+            name=op.f("ck_assisted_deliveries_final_text_iff_reported"),
+        ),
+        sa.CheckConstraint(
+            "message_id IS NULL OR status = 'user_reported_sent'",
+            name=op.f("ck_assisted_deliveries_message_only_reported"),
+        ),
+        sa.CheckConstraint(
+            "char_length(text) BETWEEN 1 AND 4000", name=op.f("ck_assisted_deliveries_text_len")
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "connection_id"],
+            ["platform_connections.user_id", "platform_connections.id"],
+            name=op.f("fk_assisted_deliveries_user_id_connection_id_platform_connections"),
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "contact_id"],
+            ["contacts.user_id", "contacts.id"],
+            name=op.f("fk_assisted_deliveries_user_id_contact_id_contacts"),
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "conversation_id"],
+            ["conversations.user_id", "conversations.id"],
+            name=op.f("fk_assisted_deliveries_user_id_conversation_id_conversations"),
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "draft_id"],
+            ["drafts.user_id", "drafts.id"],
+            name=op.f("fk_assisted_deliveries_user_id_draft_id_drafts"),
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "message_id"],
+            ["messages.user_id", "messages.id"],
+            name=op.f("fk_assisted_deliveries_user_id_message_id_messages"),
+            ondelete="SET NULL (message_id)",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id"],
+            ["users.id"],
+            name=op.f("fk_assisted_deliveries_user_id_users"),
+            ondelete="CASCADE",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_assisted_deliveries")),
+        sa.UniqueConstraint(
+            "user_id", "draft_id", name=op.f("uq_assisted_deliveries_user_id_draft_id")
+        ),
+        sa.UniqueConstraint("user_id", "id", name=op.f("uq_assisted_deliveries_user_id_id")),
+    )
+    op.create_index(
+        "ix_assisted_deliveries_user_id_status_created_at_id",
+        "assisted_deliveries",
+        ["user_id", "status", sa.literal_column("created_at DESC"), sa.literal_column("id DESC")],
+        unique=False,
+    )
+    op.create_index(
+        "uq_assisted_deliveries_user_id_conversation_id_pending",
+        "assisted_deliveries",
+        ["user_id", "conversation_id"],
+        unique=True,
+        postgresql_where=sa.text("status = 'pending'"),
+    )
+
 
 def downgrade() -> None:
+    # ---- contract 1.3.0 (ADR 0008)
+    op.drop_index(
+        "uq_assisted_deliveries_user_id_conversation_id_pending",
+        table_name="assisted_deliveries",
+        postgresql_where=sa.text("status = 'pending'"),
+    )
+    op.drop_index(
+        "ix_assisted_deliveries_user_id_status_created_at_id", table_name="assisted_deliveries"
+    )
+    op.drop_table("assisted_deliveries")
+    op.drop_index(
+        op.f("ix_profile_evaluations_user_id_profile_id_created_at_id"),
+        table_name="profile_evaluations",
+    )
+    op.drop_table("profile_evaluations")
+    op.drop_index(
+        "uq_profile_actions_user_id_profile_id_live",
+        table_name="profile_actions",
+        postgresql_where=sa.text("execution IN ('queued', 'executed')"),
+    )
+    op.drop_index(
+        op.f("ix_profile_actions_user_id_profile_id_created_at_id"), table_name="profile_actions"
+    )
+    op.drop_table("profile_actions")
+    op.drop_index(op.f("ix_identity_links_user_id_contact_b_id"), table_name="identity_links")
+    op.drop_table("identity_links")
+    op.drop_index(op.f("ix_profiles_user_id_created_at_id"), table_name="profiles")
+    op.drop_table("profiles")
+    op.drop_index("ix_inbound_notices_user_id_occurred_at_id", table_name="inbound_notices")
+    op.drop_table("inbound_notices")
     # ---- WING-011
     op.drop_constraint(
         op.f("fk_messages_user_id_approval_id_approvals"), "messages", type_="foreignkey"

@@ -18,6 +18,12 @@
   already holds (ADR 0007, ``trust_claimed_capabilities``); they authorize nothing.
 * an unpaired connection (contract 1.2.0) accepts only send outcomes (``422`` at
   ``/connection_id`` otherwise).
+* contract 1.3.0 (ADR 0008): an inbound event becomes a ``Message`` (and reaches the
+  pipeline) only when it is a ``chat_message`` with ``identity: linked`` and neither
+  ``truncated`` nor ``content_hidden``. Anything else is stored as an
+  ``InboundNotice``: no contact, conversation, draft, approval or send is created, so
+  an unlinked or ambiguous sender can never be merged into a person. ``source``, when
+  given, must equal the connection's ``transport`` (``422`` at ``/payload/source``).
 
 Dedup is permanent on ``(user_id, event_id)`` (``connector_event_ingests``) and, for
 inbound messages, on ``(user_id, platform, external_message_id)``. A repeat changes
@@ -53,14 +59,23 @@ from app.connectors.events import (
     SendFailedPayload,
 )
 from app.db.base import utc_now
-from app.db.enums import Actor, AgentActionType, ConnectionStatus, OutboxInstructionState
-from app.db.models import Message, PlatformConnection
+from app.db.enums import (
+    Actor,
+    AgentActionType,
+    ConnectionStatus,
+    ConnectionTransport,
+    InboundEventKind,
+    OutboxInstructionState,
+    SenderIdentity,
+)
+from app.db.models import InboundNotice, Message, PlatformConnection
 from app.db.repositories import (
     AgentActionRepository,
     ConnectionRepository,
     ContactRepository,
     ConversationRepository,
     EventIngestRepository,
+    InboundNoticeRepository,
     MessageRepository,
     OutboxRepository,
     UserRepository,
@@ -87,6 +102,8 @@ class IngestResult:
     recorded_at: datetime
     # Set when a new inbound message was stored: the caller runs the pipeline for it.
     new_inbound_message_id: uuid.UUID | None = None
+    # Contract 1.3.0: the notice an inbound event was stored as (never the pipeline).
+    notice_id: uuid.UUID | None = None
 
 
 class IngestError(Exception):
@@ -179,6 +196,29 @@ class IngestService:
             return self._replay(previous, request_hash, event.event_id)
 
         if event.type in INBOUND_MESSAGE_TYPES:
+            payload = event.payload
+            assert isinstance(payload, InboundMessagePayload)  # noqa: S101 - by event type
+            if payload.source is not None and payload.source.value != connection.transport.value:
+                raise IngestError(
+                    422,
+                    "payload source does not match the connection's transport",
+                    pointer="/payload/source",
+                    message=f"must equal '{connection.transport.value}'",
+                )
+            if not payload.enters_pipeline:
+                notice, fresh = await self._notice(session, scope, connection, event, now)
+                if not fresh:
+                    await ingests.annotate(record.id, outcome=IngestOutcome.DUPLICATE_MESSAGE.value)
+                    return IngestResult(
+                        event.event_id,
+                        IngestOutcome.DUPLICATE_MESSAGE,
+                        None,
+                        now,
+                        notice_id=notice.id,
+                    )
+                return IngestResult(
+                    event.event_id, IngestOutcome.ACCEPTED, None, now, notice_id=notice.id
+                )
             stored, created = await self._inbound(session, scope, connection, event, now)
             if not created:
                 await ingests.annotate(
@@ -215,6 +255,55 @@ class IngestService:
         return IngestResult(
             event_id, IngestOutcome.DUPLICATE_EVENT, previous.message_id, previous.created_at
         )
+
+    # ------------------------------------------------------------------ notices (1.3.0)
+
+    async def _notice(
+        self,
+        session: AsyncSession,
+        scope: UserScope,
+        connection: PlatformConnection,
+        event: ConnectorEvent,
+        now: datetime,
+    ) -> tuple[InboundNotice, bool]:
+        """Store a non-pipeline inbound event. Creates no contact or conversation, so
+        nothing is merged by name, and nothing downstream (draft, approval, send) runs."""
+        payload = event.payload
+        assert isinstance(payload, InboundMessagePayload)  # noqa: S101
+        assert event.external_message_id is not None  # noqa: S101 - schema requires it
+        notice, created = await InboundNoticeRepository(session, scope).create_once(
+            connection_id=connection.id,
+            platform=connection.platform,
+            event_id=event.event_id,
+            kind=InboundEventKind(payload.effective_kind.value),
+            identity=SenderIdentity(payload.effective_identity.value),
+            sender_label=payload.sender_label,
+            text=payload.text,
+            truncated=bool(payload.truncated),
+            content_hidden=bool(payload.content_hidden),
+            external_message_id=event.external_message_id,
+            external_conversation_id=payload.external_conversation_id,
+            source=ConnectionTransport(payload.source.value) if payload.source else None,
+            occurred_at=event.occurred_at,
+        )
+        if created:
+            await AgentActionRepository(session, scope).record(
+                type=AgentActionType.NOTICE_RECEIVED,
+                actor=Actor.CONNECTOR,
+                occurred_at=now,
+                reason_code=payload.effective_kind.value,
+                details={
+                    "notice_id": str(notice.id),
+                    "connection_id": str(connection.id),
+                    "platform": connection.platform,
+                    "event_id": str(event.event_id),
+                    "kind": payload.effective_kind.value,
+                    "identity": payload.effective_identity.value,
+                    "truncated": bool(payload.truncated),
+                    "content_hidden": bool(payload.content_hidden),
+                },
+            )
+        return notice, created
 
     # ------------------------------------------------------------------ inbound
 

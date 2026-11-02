@@ -23,11 +23,15 @@ Checks:
      manifest entry has `expect_error`, at least one error must contain that text, so a
      negative example cannot pass by failing for an unrelated reason.
   6. No example file is missing from, or orphaned by, the manifest.
+  7. No schema anywhere (openapi.yaml components and schemas/*.json) has a property
+     whose name looks like a platform credential (password, OTP, session token,
+     cookie, API key...). Platform logins stay on the device (contract 1.3.0, ADR 0008).
 """
 
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -44,6 +48,12 @@ OPENAPI = HERE / "openapi.yaml"
 SCHEMAS = HERE / "schemas"
 EXAMPLES = HERE / "examples"
 HTTP_METHODS = {"get", "put", "post", "delete", "patch", "head", "options", "trace"}
+# ADR 0008: no schema may carry a platform credential or session secret.
+CREDENTIAL_NAME = re.compile(
+    r"(passw|passcode|secret|token|cookie|session|credential|otp|one_time|"
+    r"api_?key|auth_?code|verification_code|sms_code|login|bearer|jwt|private_key)",
+    re.IGNORECASE,
+)
 
 failures: list[str] = []
 
@@ -212,12 +222,45 @@ def check_examples(registry: Registry) -> None:
         ok(f"{n_valid} valid + {n_invalid} invalid examples, all listed")
 
 
+def property_names(node: Any, path: str = "") -> list[tuple[str, str]]:
+    """Every (location, property name) declared under any `properties` in a schema tree."""
+    found: list[tuple[str, str]] = []
+    if isinstance(node, dict):
+        props = node.get("properties")
+        if isinstance(props, dict):
+            found += [(path, name) for name in props]
+        for key, value in node.items():
+            found += property_names(value, f"{path}/{key}")
+    elif isinstance(node, list):
+        for i, value in enumerate(node):
+            found += property_names(value, f"{path}/{i}")
+    return found
+
+
+def check_no_credentials(openapi: dict[str, Any]) -> None:
+    print("[7] No platform credentials in any schema (ADR 0008)")
+    trees: list[tuple[str, Any]] = [("openapi.yaml#/components", openapi["components"])]
+    for path in sorted(SCHEMAS.glob("*.json")):
+        trees.append((str(path.relative_to(HERE)), json.loads(path.read_text())))
+    bad = 0
+    total = 0
+    for where, tree in trees:
+        for loc, name in property_names(tree):
+            total += 1
+            if CREDENTIAL_NAME.search(name):
+                bad += 1
+                fail(f"{where}{loc}: credential-like property name {name!r}")
+    if not bad:
+        ok(f"{total} property names scanned, none credential-like")
+
+
 def main() -> int:
     openapi = load_openapi()
     check_openapi(openapi)
     check_json_schemas()
     check_conventions(openapi)
     check_examples(build_registry(openapi))
+    check_no_credentials(openapi)
     print()
     if failures:
         print(f"CONTRACT VALIDATION FAILED: {len(failures)} problem(s)")

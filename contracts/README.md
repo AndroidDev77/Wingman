@@ -4,9 +4,9 @@ Canonical, versioned interfaces shared by backend, Android and connector work. *
 
 | File | What it defines |
 |---|---|
-| `openapi.yaml` | OpenAPI 3.1 HTTP API (v1.2.0): health, `/v1/me`, preferences (user-wide and per-contact), connections and connection pairing (ADR 0007), device event ingest and device outbox (ADR 0006), conversations, messages, drafts, approvals, automation (pause, resume, takeover), memories, audit log |
-| `schemas/connector_capabilities.v1.json` | JSON Schema 2020-12 for `ConnectorCapabilities`: `read`, `draft`, `send`, `swipe`, `calendar_write`, each labeled `VERIFIED` / `UNVERIFIED` / `UNSUPPORTED` |
-| `schemas/connector_event.v1.json` | JSON Schema 2020-12 for the connector event envelope, including the explicit `mock.*` event types used by the WING-006 simulator |
+| `openapi.yaml` | OpenAPI 3.1 HTTP API (v1.3.0): health, `/v1/me`, preferences (user-wide and per-contact), connections and connection pairing (ADR 0007) including dating/iMessage platforms, experimental consent and settings (ADR 0008), device event ingest and device outbox (ADR 0006), conversations (with mark-read), messages, drafts, approvals, automation (pause, resume, takeover), memories, inbound notices, assisted deliveries, identity links, profiles and swipe decisions (ADR 0008), audit log |
+| `schemas/connector_capabilities.v1.json` | JSON Schema 2020-12 for `ConnectorCapabilities`: `read`, `draft`, `send`, `swipe`, `calendar_write` (and, since 1.3.0, optional `profile_read`), each labeled `VERIFIED` / `UNVERIFIED` / `UNSUPPORTED` (there is no `BLOCKED` label) |
+| `schemas/connector_event.v1.json` | JSON Schema 2020-12 for the connector event envelope, including the explicit `mock.*` event types used by the WING-006 simulator and (1.3.0) the inbound `kind` / `identity` / `truncated` / `content_hidden` / `source` fields |
 | `examples/` | Example requests, responses and events. `manifest.json` maps each file to its schema |
 | `examples/invalid/` | Negative examples that **must** fail validation |
 | `validate.sh` / `validate.py` | The validation command |
@@ -25,6 +25,7 @@ This needs only [uv](https://docs.astral.sh/uv/). Dependency versions are pinned
 4. Every example validates against its schema, with format checking turned on.
 5. Every file in `examples/invalid/` is **rejected**, and for the reason in `expect_error` when the manifest gives one.
 6. Every example file is listed in `manifest.json`.
+7. No schema has a property whose name looks like a platform credential (password, one-time code, token, cookie, session, API key, ...). Platform logins stay on the device (ADR 0008).
 
 To add an example, put the JSON in `examples/` (or `examples/invalid/` with a `why_invalid` note and, optionally, an `expect_error` substring that one validation error must contain) and add an entry to `manifest.json`. Schema refs are relative to `contracts/`, for example `openapi.yaml#/components/schemas/Message`.
 
@@ -40,7 +41,8 @@ The details live in `openapi.yaml` (`info.description`) and in `docs/adr/`.
 - **Capabilities:** each capability is independent and verification-labeled. Notification access never implies `send`. Autopilot requires a `VERIFIED` send. ([ADR 0005](../docs/adr/0005-connector-capability-model.md))
 - **Device connectors:** report events via `POST /v1/connections/{id}/events` and execute only instructions leased from `POST /v1/connections/{id}/outbox/claim`. One lease per instruction, never renewed; a retry is a new instruction with a new key. ([ADR 0006](../docs/adr/0006-device-outbox-leases.md))
 - **Connection pairing:** the app pairs a connector with `POST /v1/connections` and unpairs it with `POST /v1/connections/{id}/unpair`. Capabilities a client submits are a claim and are never stored as `VERIFIED`; only a recorded, reproduced device run (an operator path, no API) can set `VERIFIED`. `mock` is never pairable in `prod`. ([ADR 0007](../docs/adr/0007-connection-pairing-and-capability-trust.md))
-- **Delivery states:** `queued -> sending -> sent -> delivered`, plus `failed`, `dead_lettered` and `canceled`. A state changes only when the matching connector event arrives.
+- **Delivery states:** `queued -> sending -> sent -> delivered`, plus `failed`, `dead_lettered` and `canceled`. A state changes only when the matching connector event arrives. `user_reported_sent` (1.3.0) is the user's own report about an assisted draft they sent by hand; it is never `sent` or `delivered`.
+- **Platform integrations** (1.3.0): dating and iMessage connections pair with a `transport`; `unofficial_api` connections are experimental, need a recorded ban-risk consent, and are approval-only (no autopilot, no swipe) until an operator records a live test. Only a linked, complete `chat_message` reaches the automation pipeline; everything else is an `InboundNotice`. Identity links are made by the user only. Swipe decisions execute only through a gate that ends in `queued`. No request ever carries platform credentials. ([ADR 0008](../docs/adr/0008-platform-integrations-experimental-connectors.md))
 
 ## Changing a contract
 

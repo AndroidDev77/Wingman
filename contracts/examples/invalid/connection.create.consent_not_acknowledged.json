@@ -1,0 +1,43 @@
+{
+  "platform": "hinge",
+  "display_name": "Hinge (experimental)",
+  "transport": "unofficial_api",
+  "experimental": true,
+  "device_install_id": "0192f3a0-0000-4000-8000-0000000000aa",
+  "capabilities": {
+    "schema_version": "connector_capabilities.v1",
+    "platform": "hinge",
+    "connector_version": "0.1.0",
+    "capabilities": {
+      "read": {
+        "status": "UNVERIFIED",
+        "notes": "Not yet tested on a real account."
+      },
+      "draft": {
+        "status": "UNSUPPORTED"
+      },
+      "send": {
+        "status": "UNVERIFIED",
+        "reports_delivery_receipts": false,
+        "notes": "Approval-only until the owner's live test (D-021)."
+      },
+      "swipe": {
+        "status": "UNSUPPORTED",
+        "notes": "Blocked: no tested swipe path (ADR 0008 has no BLOCKED label)."
+      },
+      "calendar_write": {
+        "status": "UNSUPPORTED"
+      },
+      "profile_read": {
+        "status": "UNVERIFIED"
+      }
+    },
+    "assessed_at": "2026-11-02T09:00:00Z"
+  },
+  "experimental_consent": {
+    "platform": "hinge",
+    "consent_text_version": "d021-v1",
+    "accepted_at": "2026-11-02T09:00:30Z",
+    "ban_risk_acknowledged": false
+  }
+}

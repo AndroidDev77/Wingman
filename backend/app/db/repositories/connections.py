@@ -7,12 +7,33 @@ from typing import Any
 from sqlalchemy.dialects.postgresql import insert
 
 from app.db.base import utc_now
-from app.db.enums import CapabilityVerification, ConnectionStatus, ContactAutomationStatus
+from app.db.enums import (
+    CapabilityVerification,
+    ConnectionStatus,
+    ConnectionTransport,
+    ContactAutomationStatus,
+)
 from app.db.models import Contact, PlatformConnection
 from app.db.pagination import Page
 from app.db.repositories.base import ScopedRepository
 
 CAPABILITY_NAMES = ("read", "draft", "send", "swipe", "calendar_write")
+# Contract 1.3.0: optional in the document; absent means UNSUPPORTED (ADR 0008).
+OPTIONAL_CAPABILITY_NAMES = ("profile_read",)
+
+# The transport a platform implies when it has only one (contract 1.3.0). Dating apps
+# have two (notification, unofficial_api), so pairing must say which.
+DEFAULT_TRANSPORT: dict[str, ConnectionTransport] = {
+    "mock": ConnectionTransport.SIMULATOR,
+    "sms": ConnectionTransport.SMS_PROVIDER,
+    "android_notification": ConnectionTransport.NOTIFICATION,
+    "imessage": ConnectionTransport.COMPANION,
+}
+
+
+def default_transport(platform: str) -> ConnectionTransport:
+    """The transport for a platform with a single one; ``notification`` otherwise."""
+    return DEFAULT_TRANSPORT.get(platform, ConnectionTransport.NOTIFICATION)
 
 
 def capability_columns(capabilities: dict[str, Any]) -> dict[str, CapabilityVerification]:
@@ -29,6 +50,10 @@ def capability_columns(capabilities: dict[str, Any]) -> dict[str, CapabilityVeri
         if not isinstance(entry, dict) or "status" not in entry:
             raise ValueError(f"capability '{name}' must be stated explicitly")
         out[f"{name}_capability"] = CapabilityVerification(entry["status"])
+    for name in OPTIONAL_CAPABILITY_NAMES:
+        entry = caps.get(name)
+        status = entry.get("status") if isinstance(entry, dict) else None
+        out[f"{name}_capability"] = CapabilityVerification(status or "UNSUPPORTED")
     return out
 
 
@@ -44,7 +69,14 @@ class ConnectionRepository(ScopedRepository[PlatformConnection]):
         status: ConnectionStatus = ConnectionStatus.CONNECTED,
         device_install_id: uuid.UUID | None = None,
         paired_at: datetime | None = None,
+        transport: ConnectionTransport | None = None,
+        consent_text_version: str | None = None,
+        consent_accepted_at: datetime | None = None,
     ) -> PlatformConnection:
+        """``transport`` defaults from the platform. ``unofficial_api`` makes the
+        connection experimental and needs the consent (DB CHECK, ADR 0008)."""
+        chosen = transport or default_transport(platform)
+        experimental = chosen is ConnectionTransport.UNOFFICIAL_API
         return await self._add(
             platform=platform,
             display_name=display_name,
@@ -52,6 +84,11 @@ class ConnectionRepository(ScopedRepository[PlatformConnection]):
             capabilities=capabilities,
             device_install_id=device_install_id,
             paired_at=paired_at,
+            transport=chosen,
+            experimental=experimental,
+            consent_text_version=consent_text_version if experimental else None,
+            consent_accepted_at=consent_accepted_at if experimental else None,
+            consent_recorded_at=paired_at if experimental else None,
             **capability_columns(capabilities),
         )
 
@@ -80,15 +117,31 @@ class ConnectionRepository(ScopedRepository[PlatformConnection]):
     async def mark_unpaired(
         self, connection_id: uuid.UUID, *, capabilities: dict[str, Any], at: datetime
     ) -> PlatformConnection:
-        """``unpairConnection``: disconnected, every capability as given, ``unpaired_at``."""
+        """``unpairConnection``: disconnected, every capability as given, ``unpaired_at``.
+        Contract 1.3.0: auto-swipe off, and an experimental consent is revoked."""
+        current = await self.get(connection_id)
+        extra: dict[str, Any] = {}
+        if current is not None and current.experimental and current.consent_revoked_at is None:
+            extra["consent_revoked_at"] = at
         return await self._update(
             connection_id,
             status=ConnectionStatus.DISCONNECTED,
             unpaired_at=at,
             capabilities=capabilities,
             updated_at=at,
+            auto_swipe_enabled=False,
+            **extra,
             **capability_columns(capabilities),
         )
+
+    async def set_auto_swipe(self, connection_id: uuid.UUID, enabled: bool) -> PlatformConnection:
+        return await self._update(connection_id, auto_swipe_enabled=enabled, updated_at=utc_now())
+
+    async def mark_experimental_verified(
+        self, connection_id: uuid.UUID, *, at: datetime
+    ) -> PlatformConnection:
+        """Operator-only (no route): an experimental connection passed its live test."""
+        return await self._update(connection_id, experimental_verified_at=at, updated_at=at)
 
     async def set_capabilities(
         self, connection_id: uuid.UUID, capabilities: dict[str, Any]

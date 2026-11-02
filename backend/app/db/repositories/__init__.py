@@ -34,12 +34,26 @@ from app.db.repositories.idempotency import (
     IdempotencyRepository,
     fingerprint,
 )
+from app.db.repositories.integrations import (
+    AssistedDeliveryRepository,
+    IdentityLinkRepository,
+    InboundNoticeRepository,
+    ProfileActionRepository,
+    ProfileEvaluationRepository,
+    ProfileRepository,
+)
 from app.db.repositories.preferences import PreferenceRepository, StyleProfileRepository
 from app.db.repositories.users import UserRepository
 
 __all__ = [
     "AgentActionRepository",
     "ApprovalRepository",
+    "AssistedDeliveryRepository",
+    "IdentityLinkRepository",
+    "InboundNoticeRepository",
+    "ProfileActionRepository",
+    "ProfileEvaluationRepository",
+    "ProfileRepository",
     "AutomationRuleRepository",
     "Claim",
     "ClaimOutcome",

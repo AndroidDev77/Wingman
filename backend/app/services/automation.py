@@ -18,13 +18,23 @@ Policy checks, in order (``docs/architecture.md`` step 5; the first stop wins):
    (the draft is stored and available on request only)
 5. approval-type checks, all collected:
    ``assisted_mode`` (mode ``assisted``), ``capability_unverified`` (``send`` not
-   ``VERIFIED``), ``outside_active_hours``, ``send_limit_reached``, the draft's content
+   ``VERIFIED``, or the connection is experimental and not operator-verified,
+   contract 1.3.0, ADR 0008), ``outside_active_hours``, ``send_limit_reached``, the draft's content
    reasons, and ``user_rule`` (an ``approval_required_for`` entry matched, or an enabled
    ``require_approval`` rule); global pause or contact ``paused`` also forces approval
    with reason ``paused`` (contract 1.2.0; ``ContactAutomationStatus``: "the agent may
    still queue drafts for approval").
    Any reason -> **approval queue**.
 6. otherwise (autopilot, all clear)                     -> **dispatch** (``autopilot``)
+
+Contract 1.3.0 (ADR 0008), assisted delivery: when ``send`` is ``UNSUPPORTED`` on a
+platform that has a hand-delivery path (``tinder``, ``bumble``, ``hinge``,
+``imessage``), step 3 does not block: the draft goes to the dispatcher as a draft-only
+**assisted delivery** (``PolicyOutcome.ASSISTED``) instead, with its content reasons
+for the user to review. Nothing is transmitted; the user sends it by hand and may
+report ``user_reported_sent``. Manual mode, takeover and a ``block_send`` rule still
+stop first. Only messages that entered the pipeline (a linked, complete
+``chat_message``) ever reach this code: notices never do.
 
 ``block_send`` rules stop like (3). The reply delay never blocks: it sets the message's
 ``send_after`` (uniform random within ``reply_delay_seconds``), and the dispatcher
@@ -79,6 +89,7 @@ from app.db.models import Approval, Contact, Conversation, Draft, Message, User
 from app.db.repositories import (
     AgentActionRepository,
     ApprovalRepository,
+    AssistedDeliveryRepository,
     AutomationRuleRepository,
     ConnectionRepository,
     ContactRepository,
@@ -88,6 +99,7 @@ from app.db.repositories import (
     UserRepository,
 )
 from app.db.scope import UserScope
+from app.services.connections import ASSISTED_PLATFORMS, experimental_unverified
 from app.services.dispatcher import (
     AUTOMATED_ORIGINS,
     PAUSE_CANCELS,
@@ -139,6 +151,7 @@ class PolicyOutcome(StrEnum):
     DISPATCH = "dispatch"
     APPROVAL = "approval"
     STOP = "stop"
+    ASSISTED = "assisted"  # contract 1.3.0: draft-only delivery, never transmitted
 
 
 class StopReason(StrEnum):
@@ -165,6 +178,11 @@ class PolicyInput:
     sends_today: int
     approval_required_for: tuple[ApprovalReason, ...]
     rule_actions: tuple[str, ...] = ()
+    # Contract 1.3.0 (ADR 0008): an experimental connection without an operator-recorded
+    # live test is approval-only, whatever its capability document says.
+    experimental_unverified: bool = False
+    # The platform has a hand-delivery path for when ``send`` is UNSUPPORTED.
+    assisted_available: bool = False
 
 
 @dataclass(frozen=True)
@@ -220,12 +238,13 @@ def evaluate_policy(p: PolicyInput) -> PolicyDecision:
         "send_capability": p.send_capability.value,
         "global_status": p.global_status.value,
         "contact_status": p.contact_status.value,
+        "experimental_unverified": p.experimental_unverified,
     }
     if p.draft_decision is not DraftDecision.SEND_CANDIDATE:
         return PolicyDecision(PolicyOutcome.STOP, stop=StopReason.DRAFT_NOT_SENDABLE, checks=checks)
     if p.contact_status is ContactAutomationStatus.TAKEN_OVER:
         return PolicyDecision(PolicyOutcome.STOP, stop=StopReason.TAKEN_OVER, checks=checks)
-    if p.send_capability is CapabilityVerification.UNSUPPORTED:
+    if p.send_capability is CapabilityVerification.UNSUPPORTED and not p.assisted_available:
         return PolicyDecision(
             PolicyOutcome.STOP, stop=StopReason.CAPABILITY_UNSUPPORTED, checks=checks
         )
@@ -233,11 +252,17 @@ def evaluate_policy(p: PolicyInput) -> PolicyDecision:
         return PolicyDecision(PolicyOutcome.STOP, stop=StopReason.USER_RULE, checks=checks)
     if p.mode is AutomationMode.MANUAL:
         return PolicyDecision(PolicyOutcome.STOP, stop=StopReason.MANUAL_MODE, checks=checks)
+    if p.send_capability is CapabilityVerification.UNSUPPORTED:
+        # Contract 1.3.0: no transport, but the user can deliver it by hand. Never sent
+        # by Wingman, so nothing else can make it more automatic.
+        assisted_reasons = tuple(r for r in p.content_reasons if r in CONTENT_REASONS)
+        checks["assisted_delivery"] = True
+        return PolicyDecision(PolicyOutcome.ASSISTED, reasons=assisted_reasons, checks=checks)
 
     reasons: list[ApprovalReason] = []
     if p.mode is AutomationMode.ASSISTED:
         reasons.append(ApprovalReason.ASSISTED_MODE)
-    if p.send_capability is not CapabilityVerification.VERIFIED:
+    if p.send_capability is not CapabilityVerification.VERIFIED or p.experimental_unverified:
         reasons.append(ApprovalReason.CAPABILITY_UNVERIFIED)
     in_hours = within_active_hours(p.active_hours, p.now)
     checks["within_active_hours"] = in_hours
@@ -334,6 +359,7 @@ class PipelineOutcome(StrEnum):
     # Autopilot send queued; the caller commits, then dispatches (``defer_dispatch``).
     QUEUED = "queued"
     BLOCKED = "blocked"  # capability unsupported / block rule
+    ASSISTED = "assisted"  # contract 1.3.0: draft-only delivery queued for the user
 
 
 @dataclass(frozen=True)
@@ -343,6 +369,7 @@ class PipelineResult:
     draft_id: uuid.UUID | None = None
     approval_id: uuid.UUID | None = None
     outbound_message_id: uuid.UUID | None = None
+    assisted_delivery_id: uuid.UUID | None = None
     dispatch: DispatchResult | None = None
     decision: PolicyDecision | None = None
 
@@ -473,6 +500,19 @@ class AutomationController:
         approvals = ApprovalRepository(session, scope)
         stale = await approvals.cancel_pending(at=now, conversation_id=conversation.id)
         audit = AgentActionRepository(session, scope)
+        # Contract 1.3.0: an older assisted draft is stale too.
+        for assisted in await AssistedDeliveryRepository(session, scope).cancel_pending(
+            at=now, reason="superseded", conversation_id=conversation.id
+        ):
+            await audit.record(
+                type=AgentActionType.ASSISTED_DELIVERY_CANCELED,
+                actor=Actor.AGENT,
+                conversation_id=conversation.id,
+                contact_id=conversation.contact_id,
+                reason_code="superseded",
+                occurred_at=now,
+                details={"assisted_delivery_id": str(assisted.id)},
+            )
         for approval in stale:
             await audit.record(
                 type=AgentActionType.APPROVAL_CANCELED,
@@ -532,6 +572,9 @@ class AutomationController:
                 sends_today=sends_today,
                 approval_required_for=tuple(automation.approval_required_for),
                 rule_actions=tuple(r.action for r in rules),
+                experimental_unverified=experimental_unverified(connection),
+                assisted_available=connection.platform in ASSISTED_PLATFORMS
+                and connection.unpaired_at is None,
             ),
             prefs,
         )
@@ -588,6 +631,20 @@ class AutomationController:
             if stop is StopReason.TAKEN_OVER:
                 return _replace(base, PipelineOutcome.TAKEN_OVER)
             return base
+
+        if decision.outcome is PolicyOutcome.ASSISTED:
+            if draft.text is None:  # pragma: no cover - DB CHECK: send_candidate has text
+                return base
+            assisted = await self.dispatcher.queue_assisted(
+                session,
+                scope,
+                conversation=conversation,
+                draft=draft,
+                reasons=decision.reasons,
+                trigger_message_id=trigger_message_id,
+                checks=decision.checks,
+            )
+            return _replace(base, PipelineOutcome.ASSISTED, assisted_delivery_id=assisted.id)
 
         if decision.outcome is PolicyOutcome.APPROVAL:
             approval = await ApprovalRepository(session, scope).create(
@@ -850,6 +907,20 @@ class AutomationController:
         canceled_messages = 0
         audit = AgentActionRepository(session, scope)
         if status is ContactAutomationStatus.TAKEN_OVER:
+            # Contract 1.3.0: assisted drafts are agent proposals too.
+            for assisted in await AssistedDeliveryRepository(session, scope).cancel_pending(
+                at=now, reason="automation_takeover", contact_id=contact_id
+            ):
+                canceled_approvals += 1
+                await audit.record(
+                    type=AgentActionType.ASSISTED_DELIVERY_CANCELED,
+                    actor=Actor.USER,
+                    conversation_id=assisted.conversation_id,
+                    contact_id=contact_id,
+                    reason_code="automation_takeover",
+                    occurred_at=now,
+                    details={"assisted_delivery_id": str(assisted.id)},
+                )
             for approval in await ApprovalRepository(session, scope).cancel_pending(
                 at=now, contact_id=contact_id
             ):

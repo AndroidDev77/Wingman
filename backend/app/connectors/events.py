@@ -127,12 +127,82 @@ class _Payload(ContractModel):
     mock: MockBlock | None = None
 
 
+class InboundKind(StrEnum):
+    """Contract 1.3.0 ``kind``: only ``chat_message`` can enter the pipeline."""
+
+    CHAT_MESSAGE = "chat_message"
+    MATCH = "match"
+    LIKE_COMMENT = "like_comment"
+    EXPIRY = "expiry"
+    SYSTEM = "system"
+    UNKNOWN = "unknown"
+
+
+class Identity(StrEnum):
+    LINKED = "linked"
+    UNLINKED = "unlinked"
+    AMBIGUOUS = "ambiguous"
+
+
+class EventSource(StrEnum):
+    SMS_PROVIDER = "sms_provider"
+    NOTIFICATION = "notification"
+    COMPANION = "companion"
+    UNOFFICIAL_API = "unofficial_api"
+
+
 class InboundMessagePayload(_Payload):
-    _omit_if_none: ClassVar[frozenset[str]] = frozenset({"mock", "attachment_count"})
+    """Inbound message or (contract 1.3.0) notice. The 1.3.0 fields are optional and
+    default to the 1.2.0 meaning: a linked, complete ``chat_message``."""
+
+    _omit_if_none: ClassVar[frozenset[str]] = frozenset(
+        {
+            "mock",
+            "attachment_count",
+            "kind",
+            "identity",
+            "truncated",
+            "content_hidden",
+            "source",
+            "external_conversation_id",
+            "sender_label",
+        }
+    )
 
     sender: Sender
     text: Annotated[str, StringConstraints(max_length=20000)]
     attachment_count: Annotated[int, Field(ge=0)] | None = None
+    kind: InboundKind | None = None
+    external_conversation_id: ExternalId | None = None
+    sender_label: Annotated[str, StringConstraints(max_length=200)] | None = None
+    identity: Identity | None = None
+    truncated: bool | None = None
+    content_hidden: bool | None = None
+    source: EventSource | None = None
+
+    @model_validator(mode="after")
+    def _hidden_has_no_text(self) -> InboundMessagePayload:
+        if self.content_hidden and self.text:
+            raise ValueError("content_hidden events carry no text")
+        return self
+
+    @property
+    def effective_kind(self) -> InboundKind:
+        return self.kind or InboundKind.CHAT_MESSAGE
+
+    @property
+    def effective_identity(self) -> Identity:
+        return self.identity or Identity.LINKED
+
+    @property
+    def enters_pipeline(self) -> bool:
+        """ADR 0008: only a linked, complete chat message becomes a ``Message``."""
+        return (
+            self.effective_kind is InboundKind.CHAT_MESSAGE
+            and self.effective_identity is Identity.LINKED
+            and not self.truncated
+            and not self.content_hidden
+        )
 
     def __repr_args__(self) -> Any:
         # Keep private text out of reprs (and therefore out of accidental logs).
