@@ -252,8 +252,12 @@ class MessageRepository(ScopedRepository[Message]):
         approval_id: uuid.UUID | None = None,
         send_after: datetime | None = None,
         created_at: datetime | None = None,
+        delivery_state: DeliveryState = DeliveryState.QUEUED,
     ) -> Message:
-        """Queue an outbound message (dispatcher only, WING-011)."""
+        """Queue an outbound message (dispatcher only, WING-011). Contract 1.3.0: the
+        dispatcher also records a hand-sent assisted draft (``user_reported_sent``)."""
+        if delivery_state not in (DeliveryState.QUEUED, DeliveryState.USER_REPORTED_SENT):
+            raise ValueError("an outbound message starts queued (or user_reported_sent)")
         extra: dict[str, Any] = {}
         if created_at is not None:
             extra = {"created_at": created_at, "updated_at": created_at}
@@ -263,7 +267,7 @@ class MessageRepository(ScopedRepository[Message]):
             direction=MessageDirection.OUTBOUND,
             origin=origin,
             text=text,
-            delivery_state=DeliveryState.QUEUED,
+            delivery_state=delivery_state,
             approval_id=approval_id,
             send_after=send_after,
             **extra,

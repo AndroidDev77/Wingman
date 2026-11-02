@@ -48,10 +48,12 @@ from app.db.enums import (
     AgentActionType,
     ApprovalReason,
     ApprovalStatus,
+    AssistedDeliveryStatus,
     AutomationMode,
     Brevity,
     CapabilityVerification,
     ConnectionStatus,
+    ConnectionTransport,
     ContactAutomationStatus,
     ConversationStage,
     DateProposalState,
@@ -60,12 +62,18 @@ from app.db.enums import (
     EmojiFrequency,
     GlobalAutomationStatus,
     Humor,
+    InboundEventKind,
     IntentMode,
     MessageDirection,
     MessageOrigin,
     OutboxInstructionState,
+    ProfileActionExecution,
+    ProfileDecision,
+    ProfileProvider,
+    ProfileSource,
     Punctuation,
     ResponsePace,
+    SenderIdentity,
     Tone,
 )
 
@@ -252,6 +260,32 @@ class PlatformConnection(UserOwnedMixin, Base):
         CheckConstraint(
             "unpaired_at IS NULL OR status = 'disconnected'", name="unpaired_is_disconnected"
         ),
+        # Contract 1.3.0 (ADR 0008): experimental exactly for unofficial_api; a paired
+        # experimental connection always has a recorded, unrevoked consent; consent and
+        # operator verification exist only on experimental connections.
+        CheckConstraint(
+            "experimental = (transport = 'unofficial_api')", name="experimental_iff_unofficial"
+        ),
+        CheckConstraint(
+            "NOT experimental OR (consent_text_version IS NOT NULL"
+            " AND consent_accepted_at IS NOT NULL AND consent_recorded_at IS NOT NULL"
+            " AND (unpaired_at IS NOT NULL OR consent_revoked_at IS NULL))",
+            name="experimental_has_consent",
+        ),
+        CheckConstraint(
+            "experimental OR (consent_text_version IS NULL AND consent_accepted_at IS NULL"
+            " AND consent_recorded_at IS NULL AND consent_revoked_at IS NULL"
+            " AND experimental_verified_at IS NULL)",
+            name="consent_only_experimental",
+        ),
+        CheckConstraint(
+            "NOT auto_swipe_enabled OR unpaired_at IS NULL", name="auto_swipe_only_paired"
+        ),
+        CheckConstraint(
+            "profile_read_capability::text IS NOT DISTINCT FROM coalesce("
+            "capabilities -> 'capabilities' -> 'profile_read' ->> 'status', 'UNSUPPORTED')",
+            name="profile_read_capability_matches",
+        ),
         CheckConstraint("jsonb_typeof(capabilities) = 'object'", name="capabilities_object"),
         CheckConstraint(
             "capabilities ->> 'platform' IS NOT DISTINCT FROM platform",
@@ -295,6 +329,28 @@ class PlatformConnection(UserOwnedMixin, Base):
     device_install_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
     paired_at: Mapped[datetime | None] = mapped_column(nullable=True)
     unpaired_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Contract 1.3.0 (ADR 0008). ``profile_read`` is optional in the document; absent
+    # means UNSUPPORTED (the CHECK above keeps the column equal to the document).
+    profile_read_capability: Mapped[CapabilityVerification] = mapped_column(
+        pg_enum("capability_verification"),
+        nullable=False,
+        default=CapabilityVerification.UNSUPPORTED,
+        server_default=CapabilityVerification.UNSUPPORTED.value,
+    )
+    transport: Mapped[ConnectionTransport] = mapped_column(pg_enum("connection_transport"))
+    experimental: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sql("false")
+    )
+    # The user's ban-risk consent (experimental only). Never any platform credential.
+    consent_text_version: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    consent_accepted_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    consent_recorded_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    consent_revoked_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Operator-recorded live test (D-016 path); null = experimental-unverified.
+    experimental_verified_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    auto_swipe_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default=sql("false")
+    )
 
 
 # --------------------------------------------------------------------------- contacts
@@ -461,9 +517,14 @@ class Message(UserOwnedMixin, Base):
             name="outbound_shape",
         ),
         CheckConstraint(
-            "delivery_state NOT IN ('queued', 'sending', 'canceled')"
+            "delivery_state NOT IN ('queued', 'sending', 'canceled', 'user_reported_sent')"
             " OR (sent_at IS NULL AND delivered_at IS NULL)",
             name="unsent_has_no_sent_at",
+        ),
+        # Contract 1.3.0: a hand-sent assisted draft is exactly user_reported_sent.
+        CheckConstraint(
+            "(origin = 'assisted_draft') = (delivery_state = 'user_reported_sent')",
+            name="assisted_draft_shape",
         ),
         CheckConstraint(
             "delivery_state <> 'delivered' OR (sent_at IS NOT NULL AND delivered_at IS NOT NULL)",
@@ -1074,6 +1135,276 @@ class IdempotencyKey(UserOwnedMixin, Base):
     expires_at: Mapped[datetime] = mapped_column(nullable=False)
 
 
+# --------------------------------------------------------------------------- 1.3.0 (ADR 0008)
+
+
+class InboundNotice(UserOwnedMixin, Base):
+    """``InboundNotice``: an inbound event that never enters the automation pipeline.
+
+    Anything but a linked, complete ``chat_message`` (a match, like or comment, expiry,
+    system or unknown notice, an unlinked or ambiguous sender, truncated or hidden
+    content). No contact or conversation is created or touched, so an uncertain identity
+    can never be merged into a person. Deduplicated like messages.
+    """
+
+    __tablename__ = "inbound_notices"
+    __table_args__ = (
+        tenant_key(),
+        UniqueConstraint("user_id", "platform", "external_message_id"),
+        tenant_fk("connection_id", "platform_connections"),
+        Index(
+            "ix_inbound_notices_user_id_occurred_at_id",
+            "user_id",
+            sql("occurred_at DESC"),
+            sql("id DESC"),
+        ),
+        CheckConstraint(
+            "NOT (kind = 'chat_message' AND identity = 'linked' AND NOT truncated"
+            " AND NOT content_hidden)",
+            name="not_a_pipeline_message",
+        ),
+        CheckConstraint("NOT content_hidden OR text = ''", name="hidden_has_no_text"),
+    )
+
+    connection_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    platform: Mapped[str] = mapped_column(String(32), nullable=False)
+    event_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    kind: Mapped[InboundEventKind] = mapped_column(pg_enum("inbound_event_kind"), nullable=False)
+    identity: Mapped[SenderIdentity] = mapped_column(pg_enum("sender_identity"), nullable=False)
+    sender_label: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    truncated: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    content_hidden: Mapped[bool] = mapped_column(Boolean, nullable=False)
+    external_message_id: Mapped[str] = mapped_column(String(EXTERNAL_ID_LEN), nullable=False)
+    external_conversation_id: Mapped[str | None] = mapped_column(
+        String(EXTERNAL_ID_LEN), nullable=True
+    )
+    source: Mapped[ConnectionTransport | None] = mapped_column(
+        pg_enum("connection_transport"), nullable=True
+    )
+    occurred_at: Mapped[datetime] = mapped_column(nullable=False)
+
+
+class AssistedDelivery(UserOwnedMixin, Base):
+    """``AssistedDelivery``: a draft-only delivery instruction (contract 1.3.0).
+
+    Created only by the dispatcher, for a conversation whose connection cannot send.
+    Nothing here is ever transmitted. Confirming records an ``assisted_draft`` message
+    in ``user_reported_sent``; at most one pending per conversation.
+    """
+
+    __tablename__ = "assisted_deliveries"
+    __table_args__ = (
+        tenant_key(),
+        ForeignKeyConstraint(
+            ["user_id", "conversation_id"],
+            ["conversations.user_id", "conversations.id"],
+            ondelete="CASCADE",
+        ),
+        tenant_fk("contact_id", "contacts"),
+        tenant_fk("connection_id", "platform_connections"),
+        tenant_fk("draft_id", "drafts"),
+        tenant_fk("message_id", "messages", ondelete="SET NULL"),
+        UniqueConstraint("user_id", "draft_id"),
+        Index(
+            "uq_assisted_deliveries_user_id_conversation_id_pending",
+            "user_id",
+            "conversation_id",
+            unique=True,
+            postgresql_where=sql("status = 'pending'"),
+        ),
+        Index(
+            "ix_assisted_deliveries_user_id_status_created_at_id",
+            "user_id",
+            "status",
+            sql("created_at DESC"),
+            sql("id DESC"),
+        ),
+        CheckConstraint("char_length(text) BETWEEN 1 AND 4000", name="text_len"),
+        CheckConstraint(
+            "(status = 'pending') = (decided_at IS NULL)", name="decided_iff_not_pending"
+        ),
+        CheckConstraint(
+            "(status = 'user_reported_sent') = (final_text IS NOT NULL)",
+            name="final_text_iff_reported",
+        ),
+        CheckConstraint(
+            "message_id IS NULL OR status = 'user_reported_sent'", name="message_only_reported"
+        ),
+        CheckConstraint(
+            "(status = 'canceled') = (cancel_reason IS NOT NULL)", name="cancel_reason_shape"
+        ),
+    )
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    contact_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    connection_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    draft_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    text: Mapped[str] = mapped_column(Text, nullable=False)
+    reasons: Mapped[list[ApprovalReason]] = mapped_column(
+        postgresql.ARRAY(pg_enum("approval_reason")),
+        nullable=False,
+        default=list,
+        server_default=_empty_array(),
+    )
+    status: Mapped[AssistedDeliveryStatus] = mapped_column(
+        pg_enum("assisted_delivery_status"),
+        nullable=False,
+        default=AssistedDeliveryStatus.PENDING,
+        server_default=AssistedDeliveryStatus.PENDING.value,
+    )
+    final_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    message_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    cancel_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class IdentityLink(UserOwnedMixin, Base):
+    """``IdentityLink``: the USER said two contacts are the same person (WING-032).
+
+    Unordered: stored with ``contact_a_id < contact_b_id``, one row per pair. Only the
+    ``createIdentityLink`` route writes it; nothing infers or auto-creates a link.
+    """
+
+    __tablename__ = "identity_links"
+    __table_args__ = (
+        tenant_key(),
+        tenant_fk("contact_a_id", "contacts"),
+        tenant_fk("contact_b_id", "contacts"),
+        UniqueConstraint("user_id", "contact_a_id", "contact_b_id"),
+        Index(None, "user_id", "contact_b_id"),
+        CheckConstraint("contact_a_id < contact_b_id", name="ordered_distinct_pair"),
+        CheckConstraint("origin = 'user'", name="user_made_only"),
+    )
+
+    contact_a_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    contact_b_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    origin: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="user", server_default=sql("'user'")
+    )
+
+
+class Profile(UserOwnedMixin, Base):
+    """``Profile`` (WING-019/031): a normalized dating profile, provided content only."""
+
+    __tablename__ = "profiles"
+    __table_args__ = (
+        tenant_key(),
+        UniqueConstraint("user_id", "provider", "external_profile_id"),
+        tenant_fk("connection_id", "platform_connections", ondelete="SET NULL"),
+        Index(None, "user_id", "created_at", "id"),
+        CheckConstraint("jsonb_typeof(prompts) = 'array'", name="prompts_array"),
+        CheckConstraint("jsonb_typeof(attributes) = 'object'", name="attributes_object"),
+        CheckConstraint(
+            "source <> 'device' OR connection_id IS NOT NULL", name="device_has_connection"
+        ),
+        CheckConstraint("provider <> 'mock' OR source = 'fixture'", name="mock_is_fixture"),
+    )
+
+    provider: Mapped[ProfileProvider] = mapped_column(pg_enum("profile_provider"), nullable=False)
+    external_profile_id: Mapped[str] = mapped_column(String(EXTERNAL_ID_LEN), nullable=False)
+    source: Mapped[ProfileSource] = mapped_column(pg_enum("profile_source"), nullable=False)
+    connection_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    display_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    bio: Mapped[str | None] = mapped_column(Text, nullable=True)
+    prompts: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=sql("'[]'::jsonb")
+    )
+    attributes: Mapped[dict[str, Any]] = mapped_column(
+        JSONB, nullable=False, default=dict, server_default=_empty_object()
+    )
+    source_observed_at: Mapped[datetime] = mapped_column(nullable=False)
+    imported_at: Mapped[datetime] = mapped_column(nullable=False)
+    # Set when the source says the profile changed or vanished (WING-031).
+    invalidated_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class ProfileEvaluation(UserOwnedMixin, Base):
+    """``Evaluation`` (WING-019): advisory; never authorizes a swipe."""
+
+    __tablename__ = "profile_evaluations"
+    __table_args__ = (
+        tenant_key(),
+        tenant_fk("profile_id", "profiles"),
+        Index(None, "user_id", "profile_id", "created_at", "id"),
+        CheckConstraint("score IS NULL OR (score >= 0 AND score <= 100)", name="score_range"),
+        CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence_range"),
+        CheckConstraint("jsonb_typeof(reasons) = 'array'", name="reasons_array"),
+    )
+
+    profile_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    reasons: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSONB, nullable=False, default=list, server_default=sql("'[]'::jsonb")
+    )
+    known_unknowns: Mapped[list[str]] = mapped_column(
+        TEXT_ARRAY, nullable=False, default=list, server_default=_empty_array()
+    )
+    intent_mode: Mapped[IntentMode] = mapped_column(pg_enum("intent_mode"), nullable=False)
+    dealbreakers_hit: Mapped[list[str]] = mapped_column(
+        TEXT_ARRAY, nullable=False, default=list, server_default=_empty_array()
+    )
+    confidence: Mapped[float] = mapped_column(Float, nullable=False)
+    evaluator_version: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class ProfileAction(UserOwnedMixin, Base):
+    """``ProfileAction``: the user's decision and, separately, its platform execution.
+
+    ``execution`` starts ``not_executable``; only the execute gate moves it to
+    ``queued``; only a device-reported outcome (WING-031) may set ``executed``,
+    ``failed`` or ``unknown``. At most one live (queued or executed) action per profile.
+    """
+
+    __tablename__ = "profile_actions"
+    __table_args__ = (
+        tenant_key(),
+        tenant_fk("profile_id", "profiles"),
+        tenant_fk("connection_id", "platform_connections", ondelete="SET NULL"),
+        UniqueConstraint("user_id", "idempotency_key"),
+        Index(None, "user_id", "profile_id", "created_at", "id"),
+        Index(
+            "uq_profile_actions_user_id_profile_id_live",
+            "user_id",
+            "profile_id",
+            unique=True,
+            postgresql_where=sql("execution IN ('queued', 'executed')"),
+        ),
+        CheckConstraint(
+            f"idempotency_key ~ '{IDEMPOTENCY_KEY_PATTERN}'", name="idempotency_key_format"
+        ),
+        CheckConstraint(
+            "decision <> 'skip' OR execution = 'not_executable'", name="skip_never_executes"
+        ),
+        CheckConstraint(
+            "(execution = 'executed') = (executed_at IS NOT NULL)", name="executed_shape"
+        ),
+        CheckConstraint(
+            "(execution = 'not_executable') = (execution_requested_at IS NULL)",
+            name="requested_shape",
+        ),
+        CheckConstraint(
+            "execution = 'not_executable' OR connection_id IS NOT NULL",
+            name="execution_has_connection",
+        ),
+    )
+
+    profile_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    connection_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    decision: Mapped[ProfileDecision] = mapped_column(pg_enum("profile_decision"), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    execution: Mapped[ProfileActionExecution] = mapped_column(
+        pg_enum("profile_action_execution"),
+        nullable=False,
+        default=ProfileActionExecution.NOT_EXECUTABLE,
+        server_default=ProfileActionExecution.NOT_EXECUTABLE.value,
+    )
+    execution_detail: Mapped[str | None] = mapped_column(String(200), nullable=True)
+    decided_at: Mapped[datetime] = mapped_column(nullable=False)
+    execution_requested_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    executed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
 USER_OWNED_MODELS: tuple[type[UserOwnedMixin], ...] = (
     StyleProfile,
     UserPreference,
@@ -1092,4 +1423,10 @@ USER_OWNED_MODELS: tuple[type[UserOwnedMixin], ...] = (
     Subscription,
     UsageEvent,
     IdempotencyKey,
+    InboundNotice,
+    AssistedDelivery,
+    IdentityLink,
+    Profile,
+    ProfileEvaluation,
+    ProfileAction,
 )

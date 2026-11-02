@@ -106,6 +106,8 @@ enum class DeliveryState {
     @SerialName("failed") FAILED,
     @SerialName("dead_lettered") DEAD_LETTERED,
     @SerialName("canceled") CANCELED,
+    /** (1.3.0) The user SAID they sent an assisted draft by hand. Never sent, never delivered. */
+    @SerialName("user_reported_sent") USER_REPORTED_SENT,
 }
 
 @Serializable
@@ -120,6 +122,8 @@ enum class MessageOrigin {
     @SerialName("user_manual") USER_MANUAL,
     @SerialName("approved_draft") APPROVED_DRAFT,
     @SerialName("autopilot") AUTOPILOT,
+    /** (1.3.0) An agent draft the user sent by hand in the platform app. */
+    @SerialName("assisted_draft") ASSISTED_DRAFT,
 }
 
 @Serializable
@@ -199,6 +203,19 @@ enum class AgentActionType {
     @SerialName("lease_expired") LEASE_EXPIRED,
     @SerialName("connection_paired") CONNECTION_PAIRED,
     @SerialName("connection_unpaired") CONNECTION_UNPAIRED,
+    // contract 1.3.0 (ADR 0008)
+    @SerialName("notice_received") NOTICE_RECEIVED,
+    @SerialName("assisted_delivery_queued") ASSISTED_DELIVERY_QUEUED,
+    @SerialName("assisted_delivery_confirmed") ASSISTED_DELIVERY_CONFIRMED,
+    @SerialName("assisted_delivery_dismissed") ASSISTED_DELIVERY_DISMISSED,
+    @SerialName("assisted_delivery_canceled") ASSISTED_DELIVERY_CANCELED,
+    @SerialName("experimental_consent_recorded") EXPERIMENTAL_CONSENT_RECORDED,
+    @SerialName("experimental_consent_revoked") EXPERIMENTAL_CONSENT_REVOKED,
+    @SerialName("identity_link_created") IDENTITY_LINK_CREATED,
+    @SerialName("identity_link_deleted") IDENTITY_LINK_DELETED,
+    @SerialName("profile_imported") PROFILE_IMPORTED,
+    @SerialName("profile_decision_recorded") PROFILE_DECISION_RECORDED,
+    @SerialName("profile_action_queued") PROFILE_ACTION_QUEUED,
 }
 
 @Serializable
@@ -206,6 +223,64 @@ enum class ConnectionStatus {
     @SerialName("connected") CONNECTED,
     @SerialName("disconnected") DISCONNECTED,
     @SerialName("error") ERROR,
+}
+
+/** (1.3.0) `ConnectionTransport`: how the paired device reaches the platform. */
+@Serializable
+enum class ConnectionTransport {
+    @SerialName("simulator") SIMULATOR,
+    @SerialName("sms_provider") SMS_PROVIDER,
+    @SerialName("notification") NOTIFICATION,
+    @SerialName("companion") COMPANION,
+    /** D-021: always experimental (approval-only, never swipes until operator-verified). */
+    @SerialName("unofficial_api") UNOFFICIAL_API,
+}
+
+/** (1.3.0) `InboundEventKind`. Only CHAT_MESSAGE can ever be replied to. */
+@Serializable
+enum class InboundEventKind {
+    @SerialName("chat_message") CHAT_MESSAGE,
+    @SerialName("match") MATCH,
+    @SerialName("like_comment") LIKE_COMMENT,
+    @SerialName("expiry") EXPIRY,
+    @SerialName("system") SYSTEM,
+    @SerialName("unknown") UNKNOWN,
+}
+
+/** (1.3.0) `SenderIdentity`. Only LINKED events become messages; nothing is merged by name. */
+@Serializable
+enum class SenderIdentity {
+    @SerialName("linked") LINKED,
+    @SerialName("unlinked") UNLINKED,
+    @SerialName("ambiguous") AMBIGUOUS,
+}
+
+/** (1.3.0) `AssistedDeliveryStatus`. USER_REPORTED_SENT is the user's word, not an observed send. */
+@Serializable
+enum class AssistedDeliveryStatus {
+    @SerialName("pending") PENDING,
+    @SerialName("user_reported_sent") USER_REPORTED_SENT,
+    @SerialName("dismissed") DISMISSED,
+    @SerialName("canceled") CANCELED,
+}
+
+/** (1.3.0) `ProfileDecision`: the user's choice, separate from execution. */
+@Serializable
+enum class ProfileDecision {
+    @SerialName("like") LIKE,
+    @SerialName("pass") PASS,
+    @SerialName("skip") SKIP,
+    @SerialName("superlike") SUPERLIKE,
+}
+
+/** (1.3.0) `ProfileActionExecution`. QUEUED is accepted, NOT executed. */
+@Serializable
+enum class ProfileActionExecution {
+    @SerialName("not_executable") NOT_EXECUTABLE,
+    @SerialName("queued") QUEUED,
+    @SerialName("executed") EXECUTED,
+    @SerialName("failed") FAILED,
+    @SerialName("unknown") UNKNOWN,
 }
 
 /** `connector_capabilities.v1.json#/$defs/verification`. */
@@ -232,6 +307,10 @@ enum class ErrorCode(val wire: String) {
     RATE_LIMITED("rate_limited"),
     UPSTREAM_UNAVAILABLE("upstream_unavailable"),
     INTERNAL_ERROR("internal_error"),
+    // contract 1.3.0 (ADR 0008)
+    EXPERIMENTAL_CONSENT_REQUIRED("experimental_consent_required"),
+    ASSISTED_DELIVERY_NOT_PENDING("assisted_delivery_not_pending"),
+    SWIPE_EXECUTION_DISABLED("swipe_execution_disabled"),
     ;
 
     companion object {
