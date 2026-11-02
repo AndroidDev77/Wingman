@@ -44,9 +44,19 @@ duplicate send.
 - [ ] Check the APK: `aapt2 dump badging <apk> | head -1` shows `versionCode`/`versionName`.
 - [ ] Push the image to your registry under the same tag (never `latest`).
 
-**Why a debug APK.** No identity provider exists (I-014), so the only working sign-in is the
+**Auth0 sign-in in the APK.** `build.sh` passes the committed beta tenant
+(`config/beta/auth0.gradle.properties`: tenant `dev-zumw4z1t7m8hefst.us.auth0.com`, client
+`XYOVrRYWqOQXj2JH5cEyrGTUg0ypq750`, `google-oauth2`) as `-Pwingman.oidc.*` flags, so the APK has
+**Continue in browser** (Google via Auth0). Its dry run prints them (`sign-in: Auth0 ...`) and
+`BUILD_INFO` records `auth0_issuer`/`auth0_client_id`. `-Pwingman.oidc.<key>=<value>` on the
+`build.sh` command line overrides one value; `--no-auth0` builds a dev-token-only APK. The backend
+must carry the matching `WINGMAN_AUTH_*` lines (`config/beta/auth0.env`, or
+`scripts/configure-auth0.sh --write --beta`). Google sign-in is **UNVERIFIED** until someone has
+signed in on a device or emulator (I-014; steps in [`../auth0.md`](../auth0.md#sign-in-on-an-emulator-with-the-beta-tenant)).
+
+**Why a debug APK.** Auth0 sign-in is not yet verified (I-014), so the fallback sign-in is the
 dev-token panel, which exists only in debug builds (`src/debug`; `docs/android_auth.md`). A release
-build would show "Sign-in is not available in this build". The debug build also carries the SMS
+build has no fallback. The debug build also carries the SMS
 test harness (`SmsDemoActivity`, no launcher icon) and allows cleartext only to loopback hosts.
 This is acceptable for a closed beta of known testers; it is a blocker for anything wider.
 
