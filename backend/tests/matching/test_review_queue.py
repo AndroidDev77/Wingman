@@ -162,6 +162,39 @@ async def test_ranking_order_exclusion_and_stale_flag(
     assert after == [ids["fit"], ids["unknown"], ids["stale"]]
 
 
+async def test_include_excluded_query_parameter(
+    session: AsyncSession,
+    make_v13_client,  # type: ignore[no-untyped-def]
+) -> None:
+    """Contract 1.3.1 (D-025): ``include_excluded`` lists dealbreaker hits last over HTTP;
+    the default leaves them out, and a cursor is bound to its listing."""
+    world = await swipe_world(session)
+    await set_prefs(session, world, "serious", ["smoking"])
+    client = make_v13_client(world)
+    ids = await seed(client, world)
+    default = [p["id"] for p in (await queue(client, world))["items"]]
+    explicit_false = [
+        p["id"] for p in (await queue(client, world, include_excluded="false"))["items"]
+    ]
+    assert ids["smoker"] not in default and explicit_false == default
+    full = (await queue(client, world, include_excluded="true"))["items"]
+    assert [p["id"] for p in full] == default + [ids["smoker"]]
+    last = full[-1]["latest_evaluation"]
+    assert last["dealbreakers_hit"] == ["smoking"] and last["score"] == 0
+    assert any(r["factor"] == "dealbreaker" for r in last["reasons"])
+    # Paging with include_excluded keeps the same order; its cursor is refused elsewhere.
+    first = await queue(client, world, include_excluded="true", limit=2)
+    assert first["next_cursor"] is not None
+    rest = await queue(client, world, include_excluded="true", cursor=first["next_cursor"])
+    assert [p["id"] for p in first["items"] + rest["items"]] == [p["id"] for p in full]
+    wrong = await client.get(
+        QUEUE, params={"cursor": first["next_cursor"]}, headers=headers(world.scope)
+    )
+    problem(wrong, 422, "validation_error")
+    # Nothing was decided or executed by listing.
+    assert (await session.scalars(select(ProfileAction))).all() == []
+
+
 async def test_stale_profile_is_flagged_and_never_executed(
     session: AsyncSession,
     make_v13_client,  # type: ignore[no-untyped-def]

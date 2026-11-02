@@ -1,0 +1,104 @@
+{
+  "items": [
+    {
+      "id": "0192f3a0-0000-7000-8000-000000000c01",
+      "provider": "hinge",
+      "external_profile_id": "hinge-profile-3141",
+      "display_name": "Riley",
+      "bio": "Trail runner, terrible at karaoke.",
+      "prompts": [
+        {
+          "prompt": "A shower thought I recently had",
+          "answer": "Do fish get thirsty?"
+        }
+      ],
+      "attributes": {
+        "looking_for": "Long-term relationship",
+        "smoking": "No"
+      },
+      "source_observed_at": "2026-11-02T08:30:00Z",
+      "provenance": {
+        "source": "manual",
+        "connection_id": null,
+        "imported_at": "2026-11-02T08:30:05Z"
+      },
+      "stale": false,
+      "latest_evaluation": {
+        "id": "0192f3a0-0000-7000-8000-000000000e01",
+        "profile_id": "0192f3a0-0000-7000-8000-000000000c01",
+        "score": 80.0,
+        "reasons": [
+          {
+            "factor": "dealbreaker",
+            "effect": "positive",
+            "detail": "Profile states smoking: No, which clears your dealbreaker 'smoking'.",
+            "evidence": ["attributes/smoking"]
+          },
+          {
+            "factor": "intent",
+            "effect": "positive",
+            "detail": "States 'Long-term relationship', which fits your intent (serious).",
+            "evidence": ["attributes/looking_for"]
+          }
+        ],
+        "known_unknowns": [],
+        "intent_mode": "serious",
+        "dealbreakers_hit": [],
+        "confidence": 0.6,
+        "evaluator_version": "wing019-1.0/rules",
+        "created_at": "2026-11-02T08:31:00Z"
+      },
+      "latest_action": null,
+      "created_at": "2026-11-02T08:30:05Z",
+      "updated_at": "2026-11-02T08:30:05Z"
+    },
+    {
+      "id": "0192f3a0-0000-7000-8000-000000000c02",
+      "provider": "hinge",
+      "external_profile_id": "hinge-profile-2718",
+      "display_name": "Sam",
+      "bio": "Coffee, crosswords, and long bike rides.",
+      "prompts": [],
+      "attributes": {
+        "looking_for": "Long-term relationship",
+        "smoking": "Yes"
+      },
+      "source_observed_at": "2026-11-02T08:40:00Z",
+      "provenance": {
+        "source": "manual",
+        "connection_id": null,
+        "imported_at": "2026-11-02T08:40:05Z"
+      },
+      "stale": false,
+      "latest_evaluation": {
+        "id": "0192f3a0-0000-7000-8000-000000000e02",
+        "profile_id": "0192f3a0-0000-7000-8000-000000000c02",
+        "score": 0.0,
+        "reasons": [
+          {
+            "factor": "dealbreaker",
+            "effect": "negative",
+            "detail": "Profile states smoking: Yes (your dealbreaker 'smoking').",
+            "evidence": ["attributes/smoking"]
+          },
+          {
+            "factor": "intent",
+            "effect": "positive",
+            "detail": "States 'Long-term relationship', which fits your intent (serious).",
+            "evidence": ["attributes/looking_for"]
+          }
+        ],
+        "known_unknowns": [],
+        "intent_mode": "serious",
+        "dealbreakers_hit": ["smoking"],
+        "confidence": 0.9,
+        "evaluator_version": "wing019-1.0/rules",
+        "created_at": "2026-11-02T08:41:00Z"
+      },
+      "latest_action": null,
+      "created_at": "2026-11-02T08:40:05Z",
+      "updated_at": "2026-11-02T08:40:05Z"
+    }
+  ],
+  "next_cursor": null
+}

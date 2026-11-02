@@ -557,12 +557,19 @@ async def list_profile_review_queue(
     cursor: Cursor = None,
     limit: Limit = DEFAULT_LIMIT,
     provider: ProfileProvider | None = None,
+    include_excluded: bool = False,
 ) -> dict[str, Any]:
-    """Ranked by WING-019 (``app.services.profiles``): current evaluation first (lazily
-    re-evaluated), fresh before stale, dealbreaker hits left out."""
+    """Ranked by WING-019 (``app.services.profiles``, contract 1.3.1): current evaluation
+    first (lazily re-evaluated), fresh before stale; dealbreaker hits are left out unless
+    ``include_excluded=true``, which lists them last."""
     matching = ProfileMatchingService(evaluator, now=services.dispatcher._now)  # noqa: SLF001
     page = await matching.review_queue(
-        session, scope, provider=provider, cursor=cursor, limit=limit
+        session,
+        scope,
+        provider=provider,
+        cursor=cursor,
+        limit=limit,
+        include_excluded=include_excluded,
     )
     return {
         "items": [profile_out(view) for view in page.items],
