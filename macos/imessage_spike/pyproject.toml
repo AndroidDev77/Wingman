@@ -1,0 +1,29 @@
+[project]
+name = "wingman-imessage-spike"
+version = "0.1.0"
+description = "WING-020 feasibility spike: pure-logic model of a macOS iMessage companion (no Mac APIs)."
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest==8.4.2",
+    "jsonschema[format-nongpl]==4.26.0",
+    "referencing==0.37.0",
+    "pyyaml==6.0.3",
+    "ruff==0.14.3",
+]
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]

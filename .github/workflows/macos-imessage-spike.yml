@@ -1,0 +1,50 @@
+# WING-020: Linux fixture tests for the macOS iMessage companion spike (macos/imessage_spike).
+# Pure logic only: no Mac, no Apple APIs, no network beyond installing pinned dev tools.
+# Third-party actions are pinned to full commit SHAs (same pins as ci.yml).
+name: macOS iMessage spike
+
+on:
+  pull_request:
+    paths:
+      - "macos/**"
+      - "contracts/**"
+      - ".github/workflows/macos-imessage-spike.yml"
+  push:
+    branches: [main]
+    paths:
+      - "macos/**"
+      - "contracts/**"
+      - ".github/workflows/macos-imessage-spike.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: imessage-spike-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  spike:
+    name: iMessage spike (ruff, pytest on fixtures)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: macos/imessage_spike
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          version: "0.11.32"
+          python-version: "3.12"
+          enable-cache: true
+          cache-dependency-glob: macos/imessage_spike/uv.lock
+      - name: Lint and format check
+        run: |
+          uv run --frozen ruff check .
+          uv run --frozen ruff format --check .
+      - name: Fixture tests
+        run: uv run --frozen pytest -v
