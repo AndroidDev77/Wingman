@@ -27,9 +27,15 @@
 # (the APK then has only the dev-token panel). Only this script reads that file: plain
 # ./gradlew, scripts/android-build.sh, CI and E2E builds never get these values.
 #
+# Refuses (exit 4) when scripts/release/check_feature_gates.py fails: no build may ship a feature
+# labeled autonomous without VERIFIED device evidence (WING-032, docs/integrations/release_gates.md).
+# The gate file's SHA-256 and the non-disabled features go into BUILD_INFO. The experimental
+# Hinge connector is never built here (no -Pwingman.experimental; D-023, D-026).
+#
 # Refuses a dirty work tree (the commit in BUILD_INFO must be what was built) unless
 # --allow-dirty. Run scripts/release/check.sh first; this script does not run the tests.
-# Env: WINGMAN_RELEASE_VERSION_FILE and WINGMAN_RELEASE_REPO (tests), WINGMAN_RELEASE_OUT (output dir),
+# Env: WINGMAN_RELEASE_VERSION_FILE, WINGMAN_RELEASE_REPO and WINGMAN_RELEASE_GATES_REPO (tests),
+#      WINGMAN_RELEASE_OUT (output dir),
 #      WINGMAN_RELEASE_AUTH0_PROPS (Auth0 properties file; default config/beta/auth0.gradle.properties).
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -46,13 +52,24 @@ while [[ $# -gt 0 ]]; do
     --api-base-url) api_url="${2:-}"; api_url_set=1; [[ $# -ge 2 ]] && shift ;;
     --no-auth0) auth0=0 ;;
     -Pwingman.oidc.*=*) oidc_overrides+=("${1#-P}") ;;
-    -h|--help) sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "build.sh: unknown argument: $1" >&2; exit 2 ;;
   esac
   shift
 done
 
 read -r version code < <("$here/version.sh" show)
+
+# WING-032: the release feature gates must hold before anything is planned or built. They are
+# read from this script's own source tree (WINGMAN_RELEASE_GATES_REPO overrides it, for tests).
+gates_repo="${WINGMAN_RELEASE_GATES_REPO:-$(cd "$here/../.." && pwd)}"
+if ! python3 "$here/check_feature_gates.py" --repo "$gates_repo" >/dev/null; then
+  echo "build.sh: release feature gates violated (scripts/release/check_feature_gates.py); nothing built" >&2
+  exit 4
+fi
+gates_file="$gates_repo/config/release/feature_gates.json"
+gates_sha="$(sha256sum "$gates_file" | cut -c1-64)"
+gates_on="$(python3 -c 'import json,sys; c=json.load(open(sys.argv[1])); print(",".join(f["id"]+"="+f["mode"] for f in c["features"] if f["mode"]!="disabled"))' "$gates_file")"
 
 if [[ $api_url_set -eq 1 ]]; then
   if [[ ! "$api_url" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]{1,5})?/([A-Za-z0-9._~/-]*)?$ ]]; then
@@ -135,6 +152,7 @@ echo "release:   $version (versionCode $code), commit $sha"
 echo "image:     $([[ $image -eq 1 ]] && echo "$tag" || echo skipped)"
 echo "apk:       $([[ $apk -eq 1 ]] && echo "$out/$apk_name" || echo skipped)"
 echo "api url:   ${api_url:-http://10.0.2.2:8000/ (build default)}"
+echo "gates:     $gates_on"
 if [[ $auth0 -eq 1 ]]; then
   echo "sign-in:   Auth0 ${oidc[issuer]} client ${oidc[clientId]}${oidc[connection]:+ via ${oidc[connection]}} (+ dev-token panel)"
 else
@@ -176,6 +194,8 @@ fi
   else
     echo "build_type=debug (dev-token sign-in only, --no-auth0)"
   fi
+  echo "feature_gates_sha256=$gates_sha"
+  echo "feature_gates=$gates_on"
   echo "built_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 } > "$out/BUILD_INFO"
 echo "RELEASE BUILD DONE: $out"

@@ -25,7 +25,27 @@ CHECKS = (
     "contracts/validate.sh",
     "scripts/migration-check.sh",
     "scripts/e2e/run.sh",
+    "scripts/e2e/platforms/run.sh",
 )
+# WING-032: check.sh and build.sh refuse to run without valid release feature gates.
+GATE_FILES = ("config/release/feature_gates.json", "docs/integrations/cross_platform_test_matrix.md")
+
+
+def copy_gates(repo: Path) -> None:
+    for rel in GATE_FILES:
+        (repo / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(REPO / rel, repo / rel)
+
+
+def make_gate_autonomous_without_evidence(repo: Path) -> None:
+    import json
+
+    path = repo / GATE_FILES[0]
+    cfg = json.loads(path.read_text())
+    gate = next(f for f in cfg["features"] if f["id"] == "sms.autopilot")
+    gate["mode"] = "autonomous"
+    gate["ui_label"] = "Autonomous: SMS autopilot"
+    path.write_text(json.dumps(cfg))
 G5_BLOCKED = "| G5 | One real connector verified on a physical device | ⛔ SMS is UNVERIFIED |\n"
 G5_MET = "| G5 | One real connector verified on a physical device | ✅ device run 2026-12-01 |\n"
 
@@ -111,8 +131,9 @@ class BuildScriptTest(unittest.TestCase):
         self.repo.mkdir()
         subprocess.run(["git", "init", "-q", str(self.repo)], check=True)  # noqa: S603,S607
         (self.repo / "README").write_text("x\n")
+        copy_gates(self.repo)
         git = ["git", "-C", str(self.repo), "-c", "user.name=t", "-c", "user.email=t@example.invalid"]
-        subprocess.run([*git, "add", "README"], check=True)  # noqa: S603
+        subprocess.run([*git, "add", "README", "config", "docs"], check=True)  # noqa: S603
         subprocess.run([*git, "commit", "-q", "-m", "init"], check=True)  # noqa: S603
         self.sha = subprocess.run(  # noqa: S603
             ["git", "-C", str(self.repo), "rev-parse", "--short=12", "HEAD"],  # noqa: S607
@@ -120,7 +141,11 @@ class BuildScriptTest(unittest.TestCase):
         ).stdout.strip()
         vf = self.tmp / "version.env"
         vf.write_text("WINGMAN_RELEASE_VERSION=0.3.1-beta.4\nWINGMAN_RELEASE_VERSION_CODE=17\n")
-        self.env = {"WINGMAN_RELEASE_REPO": str(self.repo), "WINGMAN_RELEASE_VERSION_FILE": str(vf)}
+        self.env = {
+            "WINGMAN_RELEASE_REPO": str(self.repo),
+            "WINGMAN_RELEASE_VERSION_FILE": str(vf),
+            "WINGMAN_RELEASE_GATES_REPO": str(self.repo),
+        }
 
     def tearDown(self) -> None:
         shutil.rmtree(self.tmp)
@@ -171,6 +196,19 @@ class BuildScriptTest(unittest.TestCase):
     def test_unknown_argument(self) -> None:
         self.assertEqual(self.build("--release").returncode, 2)
 
+    def test_gates_are_recorded_in_the_plan(self) -> None:
+        r = self.build("--dry-run")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("gates:     sms.approved_reply=assisted_only", r.stdout)
+        self.assertNotIn("=autonomous", r.stdout)
+
+    def test_refuses_to_build_with_an_unverified_autonomous_gate(self) -> None:
+        make_gate_autonomous_without_evidence(self.repo)
+        r = self.build("--dry-run", "--allow-dirty")
+        self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+        self.assertIn("sms.autopilot: claims enabled-autonomous without a VERIFIED evidence record", r.stderr)
+        self.assertNotIn("would run", r.stdout)
+
 
 class CheckScriptTest(unittest.TestCase):
     """check.sh against a fake repository whose four checks are recording stubs."""
@@ -181,6 +219,7 @@ class CheckScriptTest(unittest.TestCase):
         self.log = self.tmp / "ran.log"
         (self.repo / "docs").mkdir(parents=True)
         (self.repo / "docs" / "STATUS.md").write_text("| Gate | Description | Status |\n|---|---|---|\n" + G5_BLOCKED)
+        copy_gates(self.repo)
         for c in CHECKS:
             self.stub(c, 0)
         self.env = {"WINGMAN_RELEASE_REPO": str(self.repo)}
@@ -204,7 +243,7 @@ class CheckScriptTest(unittest.TestCase):
         r = self.check()
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(self.ran(), list(CHECKS))
-        self.assertIn("PRE-RELEASE CHECKS PASSED (4/4)", r.stdout)
+        self.assertIn("PRE-RELEASE CHECKS PASSED (5/5)", r.stdout)
         self.assertIn("LIMITED PRIVATE BETA only", r.stdout)
 
     def test_stops_at_first_failure(self) -> None:
@@ -216,7 +255,7 @@ class CheckScriptTest(unittest.TestCase):
                 r = self.check()
                 self.assertEqual(r.returncode, 1)
                 self.assertEqual(self.ran(), list(CHECKS[: i + 1]), "later checks must not run")
-                self.assertIn(f"PRE-RELEASE CHECK FAILED at [{i + 1}/4] {failing}", r.stderr)
+                self.assertIn(f"PRE-RELEASE CHECK FAILED at [{i + 1}/5] {failing}", r.stderr)
                 self.assertNotIn("PASSED", r.stdout)
 
     def test_missing_check_script_fails(self) -> None:
@@ -253,6 +292,19 @@ class CheckScriptTest(unittest.TestCase):
 
     def test_unknown_argument(self) -> None:
         self.assertEqual(self.check("--force").returncode, 2)
+
+    def test_unverified_autonomous_gate_refuses_the_release(self) -> None:
+        make_gate_autonomous_without_evidence(self.repo)
+        for args in ((), ("--dry-run",)):
+            with self.subTest(args=args):
+                r = self.check(*args)
+                self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+                self.assertIn("RELEASE REFUSED", r.stderr)
+                self.assertEqual(self.ran(), [], "nothing runs when the gates are violated")
+
+    def test_missing_gate_config_refuses_the_release(self) -> None:
+        (self.repo / GATE_FILES[0]).unlink()
+        self.assertEqual(self.check("--dry-run").returncode, 4)
 
     def test_real_repository_reports_g5_blocked(self) -> None:
         """The real dashboard: G5 is blocked today, so a paid launch is refused."""

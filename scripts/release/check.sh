@@ -8,6 +8,13 @@
 #   2. contracts/validate.sh          OpenAPI, JSON Schemas, examples
 #   3. scripts/migration-check.sh     alembic up/down/up on an empty database, no drift
 #   4. scripts/e2e/run.sh             E2E flows F1-F9, failure injection X1-X5, zero duplicate sends
+#   5. scripts/e2e/platforms/run.sh   WING-032 cross-platform mock E2E (SMS, Tinder/Bumble/Hinge
+#                                     notifications, Hinge experimental, iMessage companion,
+#                                     discovery), zero duplicate sends, gate-vs-backend cross-check
+#
+# Before any of them (also with --dry-run): scripts/release/check_feature_gates.py. It fails when
+# config/release/feature_gates.json marks a feature autonomous without a VERIFIED, PASSED ON
+# DEVICE evidence record for every capability it needs (WING-032, docs/integrations/release_gates.md).
 #
 # Not run here (needs KVM and an emulator): the CI job "E2E Android emulator"; and the
 # physical-device SMS checklist (I-003), which only a human can run. Check both in CI / in
@@ -18,7 +25,8 @@
 #         physical device. The private beta itself never needs --paid.
 # --dry-run  print the plan and the G5 state; run nothing.
 #
-# Exit: 0 all passed; 1 a check failed (later checks not run); 2 usage; 3 paid launch refused.
+# Exit: 0 all passed; 1 a check failed (later checks not run); 2 usage; 3 paid launch refused;
+#       4 feature gates violated (nothing else run).
 # Env: WINGMAN_RELEASE_REPO overrides the repository root (tests).
 set -uo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
@@ -29,7 +37,7 @@ for arg in "$@"; do
   case "$arg" in
     --dry-run) dry=1 ;;
     --paid) paid=1 ;;
-    -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,30p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "check.sh: unknown argument: $arg" >&2; exit 2 ;;
   esac
 done
@@ -39,7 +47,15 @@ checks=(
   "contracts/validate.sh"
   "scripts/migration-check.sh"
   "scripts/e2e/run.sh"
+  "scripts/e2e/platforms/run.sh"
 )
+
+# WING-032 release feature gates: nothing may be labeled autonomous without device evidence.
+echo "release feature gates (config/release/feature_gates.json):"
+if ! python3 "$here/check_feature_gates.py" --repo "$repo"; then
+  echo "RELEASE REFUSED: feature gates claim more than the evidence shows (docs/integrations/release_gates.md)." >&2
+  exit 4
+fi
 
 # G5 = "one real connector verified on a physical device". Read from the status dashboard:
 # the row is blocked while it carries the ⛔ marker (or the word "blocked").
