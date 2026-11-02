@@ -5,6 +5,26 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// D-023 / D-026 (WING-031): the experimental unofficial-API connector code is compiled ONLY when
+// `-Pwingman.experimental=true`. It lives in src/experimental (code, the opt-in activity's manifest
+// entry) and src/testExperimental (its JVM tests). Every other build compiles src/standard instead,
+// whose no-op `ExperimentalModules` references no experimental class, and the check below proves
+// that the compiled classes contain no `com.wingman.integrations.hinge` class outside `notifications`
+// (the notification-assisted fallback, which ships in every build).
+val wingmanExperimental = (project.findProperty("wingman.experimental") as String?)?.toBooleanStrictOrNull() ?: false
+
+/** The experimental build's manifest: src/main's plus src/experimental/AndroidManifest-entries.xml. */
+fun experimentalManifest(): File {
+    val main = file("src/main/AndroidManifest.xml").readText()
+    val entries = file("src/experimental/AndroidManifest-entries.xml").readText().trimEnd()
+    val marker = "</application>"
+    check(main.split(marker).size == 2) { "src/main/AndroidManifest.xml must contain exactly one $marker" }
+    val out = layout.buildDirectory.file("generated/wingman-experimental/AndroidManifest.xml").get().asFile
+    out.parentFile.mkdirs()
+    out.writeText(main.replace(marker, "$entries\n    $marker"))
+    return out
+}
+
 android {
     namespace = "com.wingman"
     compileSdk = 35
@@ -46,7 +66,7 @@ android {
         // WING-029 (D-021, D-023, D-026): the experimental Hinge connector is inert unless BOTH the
         // flag and the client identity are set. Default OFF (CI and every normal build). Never a Play
         // build: the guard at the end of this file fails any app-bundle task when the flag is on.
-        val experimental = (project.findProperty("wingman.experimental") as String?)?.toBooleanStrictOrNull() ?: false
+        val experimental = wingmanExperimental
         buildConfigField("boolean", "WINGMAN_EXPERIMENTAL", experimental.toString())
         // Client identity documented by f0rr0/hinge-rs@cffe397 (src/settings.rs, src/client/transport.rs,
         // src/client/sendbird.rs). The values live in ~/.gradle/gradle.properties of the person building
@@ -72,6 +92,16 @@ android {
     buildTypes {
         release {
             isMinifyEnabled = false
+        }
+    }
+    sourceSets {
+        getByName("main") {
+            // Exactly one of the two: the experimental connector, or the no-op standard stub.
+            java.srcDir(if (wingmanExperimental) "src/experimental/java" else "src/standard/java")
+            if (wingmanExperimental) manifest.srcFile(experimentalManifest())
+        }
+        getByName("test") {
+            if (wingmanExperimental) java.srcDir("src/testExperimental/java")
         }
     }
     testOptions {
@@ -144,4 +174,37 @@ gradle.taskGraph.whenReady {
                 "D-023: the experimental Hinge connector is sideload/internal only, never a Play build.",
         )
     }
+}
+
+// D-023 / D-026 (WING-031): a build without the experimental flag must contain no experimental
+// connector class. Scans the class files the debug and release Kotlin and Java compilations wrote
+// and fails on any `com/wingman/integrations/hinge/` class outside `notifications/`. It also fails
+// if it found no app classes at all, so a changed output layout cannot make it pass silently. Runs
+// before the unit tests of every non-experimental build (CI included).
+val checkNoExperimentalClasses = tasks.register("checkNoExperimentalClasses") {
+    group = "verification"
+    description = "Fails if a non-experimental build compiled any experimental (unofficial-API) class."
+    val compileTasks = listOf("compileDebugKotlin", "compileReleaseKotlin", "compileDebugJavaWithJavac", "compileReleaseJavaWithJavac")
+    dependsOn(compileTasks)
+    doLast {
+        if (wingmanExperimental) throw GradleException("checkNoExperimentalClasses is for builds WITHOUT -Pwingman.experimental=true")
+        val classFiles = compileTasks.flatMap { name ->
+            project.tasks.getByName(name).outputs.files.files.filter { it.isDirectory }.flatMap { root ->
+                root.walkTopDown().filter { it.isFile && it.name.endsWith(".class") }.map { it.relativeTo(root).invariantSeparatorsPath }.toList()
+            }
+        }
+        if ("com/wingman/MainActivity.class" !in classFiles || "com/wingman/experimental/ExperimentalModules.class" !in classFiles) {
+            throw GradleException("checkNoExperimentalClasses found no app classes to scan (${classFiles.size} class files); fix the scan")
+        }
+        val offenders = classFiles.filter {
+            it.startsWith("com/wingman/integrations/hinge/") && !it.startsWith("com/wingman/integrations/hinge/notifications/")
+        }.distinct().sorted()
+        if (offenders.isNotEmpty()) {
+            throw GradleException("D-023: the standard build compiled experimental classes: $offenders")
+        }
+        logger.lifecycle("checkNoExperimentalClasses: ${classFiles.size} class files scanned, 0 experimental connector classes")
+    }
+}
+if (!wingmanExperimental) {
+    tasks.matching { it.name == "testDebugUnitTest" }.configureEach { dependsOn(checkNoExperimentalClasses) }
 }

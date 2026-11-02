@@ -69,21 +69,13 @@ class ContactOverrideViewModel(api: WingmanApi, contactId: String) : ViewModel()
     }
 }
 
-/** Opens the experimental Hinge opt-in screen (warning first). Shown only when the connector exists. */
+/** A row an experimental module adds (experimental build only; the standard build has none). */
 @Composable
-private fun HingeExperimentalRow() {
+private fun ExperimentalRow(entry: com.wingman.experimental.ExperimentalEntry) {
     val context = androidx.compose.ui.platform.LocalContext.current
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Text(
-            "Unofficial interface; your Hinge account can be banned. Approval-only.",
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.weight(1f),
-        )
-        TextButton(onClick = {
-            context.startActivity(
-                android.content.Intent(context, com.wingman.integrations.hinge.android.HingeExperimentalActivity::class.java),
-            )
-        }) { Text("Open") }
+        Text(entry.description, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(1f))
+        TextButton(onClick = { entry.open(context) }) { Text(entry.actionLabel) }
     }
 }
 
@@ -118,10 +110,13 @@ fun SettingsScreen() {
             // WING-027/028 (I-033): dating apps through their notifications, assisted only.
             SectionTitle("Dating apps (notifications)")
             com.wingman.features.connections.NotificationConnectionSection()
+            // WING-031: per-connection auto-swipe, off and explained unless swipe is VERIFIED.
+            SectionTitle("Auto-swipe")
+            com.wingman.features.discovery.AutoSwipeSettingsSection()
             // WING-029 (D-021, D-023, D-026): only in the experimental build with the client identity.
-            if (com.wingman.integrations.hinge.android.HingeModule.connector() != null) {
-                SectionTitle("Hinge (experimental)")
-                HingeExperimentalRow()
+            for (entry in com.wingman.experimental.ExperimentalModules.settingsEntries()) {
+                SectionTitle(entry.section)
+                ExperimentalRow(entry)
             }
             HorizontalDivider()
             SectionTitle("Account")

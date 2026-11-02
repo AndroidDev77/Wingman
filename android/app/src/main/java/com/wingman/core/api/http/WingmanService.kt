@@ -9,6 +9,7 @@ import com.wingman.core.model.AssistedDeliveryConfirmRequest
 import com.wingman.core.model.AssistedDeliveryResult
 import com.wingman.core.model.AutomationActionRequest
 import com.wingman.core.model.Connection
+import com.wingman.core.model.ConnectionSettingsUpdate
 import com.wingman.core.model.ConnectionCreateRequest
 import com.wingman.core.model.ConnectionUnpairRequest
 import com.wingman.core.model.ConnectionUnpairResult
@@ -28,6 +29,10 @@ import com.wingman.core.model.OutboxClaimRequest
 import com.wingman.core.model.OutboxClaimResult
 import com.wingman.core.model.Page
 import com.wingman.core.model.Preferences
+import com.wingman.core.model.Profile
+import com.wingman.core.model.ProfileAction
+import com.wingman.core.model.ProfileDecisionRequest
+import com.wingman.core.model.ProfileImportRequest
 import com.wingman.core.model.PreferencesUpdate
 import com.wingman.core.model.RejectRequest
 import com.wingman.core.model.SendMessageRequest
@@ -251,4 +256,38 @@ internal interface WingmanService {
         @Query("limit") limit: Int?,
         @Query("connection_id") connectionId: String?,
     ): Response<Page<InboundNotice>>
+
+    @POST("v1/profiles")
+    suspend fun importProfile(
+        @Header("Idempotency-Key") key: String,
+        @Body body: ProfileImportRequest,
+    ): Response<Profile>
+
+    @GET("v1/profiles/review-queue")
+    suspend fun listProfileReviewQueue(
+        @Query("cursor") cursor: String?,
+        @Query("limit") limit: Int?,
+        @Query("provider") provider: String?,
+        @Query("include_excluded") includeExcluded: Boolean?,
+    ): Response<Page<Profile>>
+
+    @POST("v1/profiles/{profile_id}/decision")
+    suspend fun recordProfileDecision(
+        @Path("profile_id") profileId: String,
+        @Header("Idempotency-Key") key: String,
+        @Body body: ProfileDecisionRequest,
+    ): Response<ProfileAction>
+
+    @POST("v1/profile-actions/{profile_action_id}/execute")
+    suspend fun requestProfileActionExecution(
+        @Path("profile_action_id") profileActionId: String,
+        @Header("Idempotency-Key") key: String,
+        @Body body: ConnectionUnpairRequest,
+    ): Response<ProfileAction>
+
+    @PUT("v1/connections/{connection_id}/settings")
+    suspend fun putConnectionSettings(
+        @Path("connection_id") connectionId: String,
+        @Body body: ConnectionSettingsUpdate,
+    ): Response<Connection>
 }

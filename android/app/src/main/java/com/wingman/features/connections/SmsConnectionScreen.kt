@@ -22,8 +22,12 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.ExperimentalComposeUiApi
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.testTagsAsResourceId
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -82,6 +86,7 @@ fun SmsConnectionSection() {
     )
 }
 
+@OptIn(ExperimentalComposeUiApi::class) // testTagsAsResourceId (the E2E status handle)
 @Composable
 fun SmsConnectionContent(
     ui: SmsConnectionsUi,
@@ -97,7 +102,12 @@ fun SmsConnectionContent(
     Card(Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text("Phone SMS", style = MaterialTheme.typography.titleMedium)
-            Text("Status: ${v.statusLabel}", style = MaterialTheme.typography.bodyMedium)
+            Text(
+                "Status: ${v.statusLabel}",
+                style = MaterialTheme.typography.bodyMedium,
+                // A stable handle for the emulator E2E test (exposed as a resource id, not read aloud).
+                modifier = Modifier.semantics { testTagsAsResourceId = true }.testTag(SmsConnectionCopy.STATUS_TEST_TAG),
+            )
             v.displayName?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
             v.notice?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
 
