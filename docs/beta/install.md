@@ -10,7 +10,7 @@ Labels: **VERIFIED** (a run proved it), **UNVERIFIED** (built, not proven where 
 
 | You are | You need |
 |---|---|
-| **Tester, emulator** (no SMS on a real phone) | A computer with Android Studio (emulator) or the Android SDK `platform-tools` (`adb`), the APK from the operator, a dev token from the operator, and a backend: the operator's, or your own local one (§2) |
+| **Tester, emulator** (no SMS on a real phone) | A computer with Android Studio (emulator) or the Android SDK `platform-tools` (`adb`), the APK from the operator, a Google account the operator has allowed (or a dev token from the operator), and a backend: the operator's, or your own local one (§2) |
 | **Tester, physical phone with SMS** | A **spare or secondary** Android phone (Android 8.0 / API 26 or newer; Android 10+ preferred) with a SIM, USB debugging, `adb`, the APK, a dev token, the operator's HTTPS backend URL baked into the APK. Accept that Wingman becomes the default SMS app while you test and MMS stops working (§5). **This path is UNVERIFIED end to end**: you are among the first to run it |
 | **Operator** | This repository, Python 3.12, `uv`, Postgres 16 (or Docker), JDK 17 and the Android SDK 35 to build the APK |
 
@@ -24,8 +24,10 @@ scripts/release/build.sh --api-base-url https://<beta-host>/   # or no flag: emu
 # -> build/release/0.1.0-beta.1/wingman-0.1.0-beta.1-debug.apk, SHA256SUMS, BUILD_INFO
 ```
 
-The APK is a **debug** build (versionName `0.1.0-beta.1`, versionCode `2`), because only debug
-builds have the developer sign-in panel and Auth0 is not configured yet (I-014, [`../auth0.md`](../auth0.md)). It talks to the
+The APK is a **debug** build (versionName `0.1.0-beta.1`, versionCode `2`). It has **Auth0 sign-in
+with Google** for the beta tenant (`build.sh` passes `config/beta/auth0.gradle.properties` as
+`-Pwingman.oidc.*` flags; §3) and keeps the developer dev-token panel as a fallback, because Google
+sign-in has not yet been verified on a device (I-014, [`../auth0.md`](../auth0.md)). It talks to the
 real API (`-Pwingman.useMockApi=false`). The backend URL is fixed in the APK at build time:
 
 | Backend | Build with | Works on |
@@ -82,20 +84,89 @@ and `worker` as separate containers. With the default `mock` LLM provider the pl
 draft handler, so **every draft comes back `no_send`** there (observed while writing this guide);
 use `scripts/dev-run.sh` unless you configure a real provider.
 
-## 3. Sign in (dev token)
+## 3. Sign in
 
-There is no real sign-in yet. **Auth0 with Google sign-in** has been chosen (I-014), and the code is
-ready for it, but the tenant is not configured and no device sign-in has been run. Once the operator
-has the three Auth0 values, [`../auth0.md`](../auth0.md) and `scripts/configure-auth0.sh` set up
-the backend and the APK. Until then the beta uses the **dev-stub token**: a short-lived HS256 token
-signed with the backend's secret.
+Two ways in. **Google via Auth0** (§3.0) is the real one and is configured for the beta tenant,
+but it is **UNVERIFIED**: nobody has signed in with it on a device or emulator yet (I-014). The
+**dev-stub token** (§3.1, §3.2) still works in the beta's debug APK and is the fallback.
+
+### 3.0 Google sign-in (Auth0 beta tenant)
+
+The beta tenant's values are public identifiers (no secrets), committed in `config/beta/`:
+
+| | |
+|---|---|
+| Tenant | `dev-zumw4z1t7m8hefst.us.auth0.com` |
+| Issuer | `https://dev-zumw4z1t7m8hefst.us.auth0.com/` (trailing slash required) |
+| JWKS | `https://dev-zumw4z1t7m8hefst.us.auth0.com/.well-known/jwks.json` |
+| Native app Client ID | `XYOVrRYWqOQXj2JH5cEyrGTUg0ypq750` |
+| API audience | `https://api.wingman.app` |
+| Connection | `google-oauth2` |
+| Redirect | `com.wingman.auth:/oauth2redirect` |
+
+**Operator, backend.** Add the four Auth0 lines to `backend/.env` (or your deployment's env store),
+next to the §2.2 settings, then restart the backend:
+
+```bash
+scripts/configure-auth0.sh --write --beta     # writes these four lines into backend/.env
+```
+```
+WINGMAN_AUTH_ISSUER=https://dev-zumw4z1t7m8hefst.us.auth0.com/
+WINGMAN_AUTH_AUDIENCE=https://api.wingman.app
+WINGMAN_AUTH_JWKS_URL=https://dev-zumw4z1t7m8hefst.us.auth0.com/.well-known/jwks.json
+WINGMAN_AUTH_ALGORITHMS=RS256
+```
+
+The dev stub can stay enabled alongside (tokens are routed by issuer). Run the backend with
+`scripts/dev-run.sh` (§2.2).
+
+**Operator, APK.** `scripts/release/build.sh` (§1) already includes the Auth0 flags. To build and
+install straight onto a running emulator instead:
+
+```bash
+cd android && ./gradlew :app:installDebug -Pwingman.useMockApi=false \
+  -Pwingman.oidc.issuer=https://dev-zumw4z1t7m8hefst.us.auth0.com/ \
+  -Pwingman.oidc.clientId=XYOVrRYWqOQXj2JH5cEyrGTUg0ypq750 \
+  -Pwingman.oidc.redirectUri=com.wingman.auth:/oauth2redirect \
+  -Pwingman.oidc.audience=https://api.wingman.app \
+  -Pwingman.oidc.connection=google-oauth2
+```
+
+**Tester.** Your Google account must be allowed by the operator (a test user while the Google
+consent screen is in *Testing*). On an emulator use a Google APIs or Google Play image with
+internet access (it needs a browser).
+
+1. Open Wingman and tap **Continue in browser**.
+2. The browser opens Google's account chooser. Pick your account and accept the consent screen.
+3. The browser closes and Wingman opens; the first sign-in starts onboarding
+   ([`walkthrough.md`](walkthrough.md)).
+
+**Success:** you are in the app; the backend log shows `GET /v1/me` `200` with no `auth rejected`
+lines; after killing and relaunching the app you are still signed in. Report it to the operator,
+who records it under I-014 in `docs/DECISIONS.md`.
+
+**If it fails:**
+
+| Symptom | Fix |
+|---|---|
+| No **Continue in browser**, only *Sign-in is not available in this build* | The APK was built without the Auth0 flags (plain `./gradlew`, `scripts/android-build.sh`, or `build.sh --no-auth0`). Rebuild as above |
+| *Could not reach the sign-in service* | No internet on the device/emulator. In its browser, `https://dev-zumw4z1t7m8hefst.us.auth0.com/.well-known/openid-configuration` must show JSON |
+| *Callback URL mismatch* in the browser | Operator: add `com.wingman.auth:/oauth2redirect` to the Auth0 Native app's Allowed Callback URLs |
+| Google *Access blocked* | Operator: add your Google account as a test user on the Google consent screen |
+| Back at the sign-in screen right after the browser; backend log `auth rejected: unknown issuer` | Operator: `WINGMAN_AUTH_ISSUER` missing or without its trailing slash; fix `backend/.env` and restart |
+| Backend log `auth rejected: malformed token` | The APK lacks `-Pwingman.oidc.audience=https://api.wingman.app`; rebuild |
+
+More causes: [`../auth0.md`](../auth0.md#7-troubleshooting). Until a Google sign-in has worked, use
+the dev token below.
+
+The dev-stub token is a short-lived HS256 token signed with the backend's secret.
 
 - **Why it's beta-only.** Anyone holding the secret can mint a token for any user, and tokens are
   never refreshed. The backend refuses to start with the stub when `WINGMAN_ENV=prod`, and release
   APKs have no panel to paste a token into. It is acceptable only for a closed group of known
   testers, with the secret held by the operator.
 
-### 3.1 Get a token
+### 3.1 Get a dev token
 
 The operator mints one per tester (each tester a different `--sub`, which is your user identity):
 
@@ -109,8 +180,8 @@ new one (same `--sub`, same account).
 
 ### 3.2 Paste it into the app
 
-1. Open Wingman. The screen says sign-in is not available in this build (Auth0 not configured) and
-   shows **Developer sign-in (debug build only)**.
+1. Open Wingman. Below **Continue in browser** the screen shows **Developer sign-in (debug build
+   only)** (a `--no-auth0` build shows only that panel).
 2. Paste the token into **Dev token** (on an emulator: `adb shell input text "<token>"` with the
    field focused) and tap **Use dev token**.
 3. First sign-in opens onboarding ([`walkthrough.md`](walkthrough.md)).

@@ -7,7 +7,7 @@ Android-first AI dating assistant. It drafts personalized replies and, only on v
 >
 > | Works (tested in CI) | Does not work yet |
 > |---|---|
-> | Onboarding (intent, style, autonomy; Manual by default; the emulator test drives one intent), inbox, approve / edit / reject drafts, Activity timeline, pause and takeover, unpair, zero duplicate sends under failure injection. The Android app drives the real backend on a CI emulator | **SMS on a real phone is UNVERIFIED** (gate G5 not met, I-003): emulator only, every SMS reply needs approval, no SMS autopilot. Draft quality with a real LLM UNVERIFIED (I-009). Sign-in is a debug-only dev token (no IdP, I-014). No background sync (I-024). Tinder, Bumble, Hinge, iMessage and notification reply are **UNSUPPORTED** (not built) |
+> | Onboarding (intent, style, autonomy; Manual by default; the emulator test drives one intent), inbox, approve / edit / reject drafts, Activity timeline, pause and takeover, unpair, zero duplicate sends under failure injection. The Android app drives the real backend on a CI emulator | **SMS on a real phone is UNVERIFIED** (gate G5 not met, I-003): emulator only, every SMS reply needs approval, no SMS autopilot. Draft quality with a real LLM UNVERIFIED (I-009). Sign-in: Auth0 + Google configured for the beta tenant but UNVERIFIED on a device (I-014); the debug-only dev token is the fallback. No background sync (I-024). Tinder, Bumble, Hinge, iMessage and notification reply are **UNSUPPORTED** (not built) |
 >
 > **No paid launch without one reliable real message connector** ([go/no-go](docs/beta/release_checklist.md#0-go--no-go-summary)).
 > Every connector capability is labeled **VERIFIED**, **UNVERIFIED** or **UNSUPPORTED**
@@ -18,7 +18,7 @@ Android-first AI dating assistant. It drafts personalized replies and, only on v
 | Doc | |
 |---|---|
 | [`docs/beta/README.md`](docs/beta/README.md) | Beta hub and tester terms |
-| [`docs/beta/install.md`](docs/beta/install.md) | Install the APK, backend options, dev-token sign-in, SMS pairing, device matrix |
+| [`docs/beta/install.md`](docs/beta/install.md) | Install the APK, backend options, sign-in (Google via Auth0, UNVERIFIED; dev-token fallback), SMS pairing, device matrix |
 | [`docs/beta/known_limitations.md`](docs/beta/known_limitations.md) | Supported-platform table and known gaps |
 | [`docs/beta/walkthrough.md`](docs/beta/walkthrough.md) | Screens and sample conversations |
 | [`docs/beta/release_checklist.md`](docs/beta/release_checklist.md) | Operator checklist and go/no-go |

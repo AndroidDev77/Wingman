@@ -24,8 +24,9 @@ android {
         val useMock = (project.findProperty("wingman.useMockApi") as String?)?.toBooleanStrictOrNull() ?: true
         buildConfigField("boolean", "USE_MOCK_API", useMock.toString())
 
-        // I-011 OIDC sign-in (AppAuth, authorization code + PKCE). The IdP is Auth0 + Google (I-014),
-        // but the tenant values are not set yet, so these default to empty and real sign-in is disabled. Set them with
+        // I-011 OIDC sign-in (AppAuth, authorization code + PKCE). The IdP is Auth0 + Google (I-014).
+        // These default to empty (real sign-in disabled) so dev builds and CI keep the dev-token path; the beta
+        // tenant's committed values are passed only by scripts/release/build.sh (docs/auth0.md). Set them with
         // -Pwingman.oidc.issuer=... etc. or in ~/.gradle/gradle.properties (docs/android_auth.md).
         fun prop(name: String, default: String = "") = (project.findProperty(name) as String?)?.trim() ?: default
         fun quoted(v: String) = "\"" + v.replace("\\", "\\\\").replace("\"", "\\\"") + "\""

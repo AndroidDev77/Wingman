@@ -4,12 +4,122 @@ The owner chose **Auth0** as the identity provider, with **Google** as the socia
 (I-014). This page is the exact setup: the Auth0 tenant, API, Native application and Google
 connection, then the backend env values and the Android Gradle properties, then troubleshooting.
 
-**Status:** the code is Auth0-ready but **UNVERIFIED** against a real tenant. The backend verifier
+**Status:** the owner's beta tenant is configured in the repo (`config/beta/`, below) but sign-in is
+**UNVERIFIED**: nobody has signed in with Google on a device or emulator yet. The backend verifier
 is tested with realistic Auth0-shaped access tokens and a mocked JWKS
 (`backend/tests/auth/test_auth0_tokens.py`), and the Android authorization request is unit-tested
-(`android/app/src/test/.../core/auth/Auth0RequestTest.kt`). Nobody has signed in on a device yet.
-I-014 stays open until the real values are configured and a device sign-in is recorded (see
-[Done when](#done-when)).
+(`android/app/src/test/.../core/auth/Auth0RequestTest.kt`). Nothing has fetched the tenant's JWKS
+from this repo's tooling either; the first real sign-in is the verification. I-014 stays open until
+that sign-in is recorded (see [Done when](#done-when)).
+
+## Wingman beta tenant (committed values)
+
+The beta uses one Auth0 tenant. Its values are **public identifiers, not secrets** (the Native app
+is a public client with PKCE and has no client secret; the Google client secret lives only in
+Auth0), so they are committed:
+
+| Value | Beta value |
+|---|---|
+| Tenant domain | `dev-zumw4z1t7m8hefst.us.auth0.com` |
+| Issuer (`WINGMAN_AUTH_ISSUER`, `wingman.oidc.issuer`) | `https://dev-zumw4z1t7m8hefst.us.auth0.com/` (trailing slash required) |
+| JWKS (`WINGMAN_AUTH_JWKS_URL`) | `https://dev-zumw4z1t7m8hefst.us.auth0.com/.well-known/jwks.json` |
+| Native app Client ID (`wingman.oidc.clientId`) | `XYOVrRYWqOQXj2JH5cEyrGTUg0ypq750` |
+| API audience (`WINGMAN_AUTH_AUDIENCE`, `wingman.oidc.audience`) | `https://api.wingman.app` |
+| Connection (`wingman.oidc.connection`) | `google-oauth2` |
+| Redirect / callback / logout URL (`wingman.oidc.redirectUri`) | `com.wingman.auth:/oauth2redirect` |
+
+Where they live and who reads them:
+
+| File | Read by | Not read by |
+|---|---|---|
+| `config/beta/auth0.env` (backend `WINGMAN_AUTH_*` lines) | you: copy into `backend/.env`, or `scripts/configure-auth0.sh --write --beta` | the backend itself (it reads only `.env` and the environment) |
+| `config/beta/auth0.gradle.properties` (`wingman.oidc.*`) | `scripts/release/build.sh` (passes each line as `-P`), `scripts/configure-auth0.sh --beta` | plain `./gradlew`, `scripts/android-build.sh`, CI and E2E: those keep the dev-token path and mock builds |
+
+`scripts/release/build.sh` builds the beta APK with these values by default. A
+`-Pwingman.oidc.<key>=<value>` given to `build.sh` replaces that one value; `--no-auth0` leaves them
+all out (dev-token panel only). `backend/tests/test_beta_auth0_config.py` checks that both files
+parse, that the issuer ends with `/`, that the JWKS URL is the issuer plus
+`.well-known/jwks.json`, that the issuer and audience agree between the two files, and that the
+release dry run carries the `-P` flags while a `--no-auth0` dry run and the CI/dev scripts do not.
+
+**To change the tenant** (a new tenant, or a production tenant later): edit both files in
+`config/beta/` together, keep the trailing slash on the issuer, run
+`cd backend && uv run pytest tests/test_beta_auth0_config.py`, and update the table above. The
+rest of this page is how to create a tenant from scratch.
+
+### Sign in on an emulator with the beta tenant
+
+Prerequisites in the Auth0 dashboard (sections 2 to 4 below): API `https://api.wingman.app` with
+RS256 and **Allow Offline Access** on; Native app `XYOVrRYWqOQXj2JH5cEyrGTUg0ypq750` with
+`com.wingman.auth:/oauth2redirect` in Allowed Callback URLs and Allowed Logout URLs, Authorization
+Code and Refresh Token grants; `google-oauth2` enabled for that app; your Google account allowed
+(a test user if the Google consent screen is in *Testing*). Emulator: an image with Google APIs or
+Google Play (it needs a browser, Chrome) and internet access.
+
+1. **Backend env.** Put the four Auth0 lines in `backend/.env` (git-ignored). Either run
+   `scripts/configure-auth0.sh --write --beta`, or paste them by hand:
+   ```
+   WINGMAN_ENV=dev
+   WINGMAN_DATABASE_URL=postgresql+asyncpg://wingman:wingman@localhost:5432/wingman
+   WINGMAN_AUTH_ISSUER=https://dev-zumw4z1t7m8hefst.us.auth0.com/
+   WINGMAN_AUTH_AUDIENCE=https://api.wingman.app
+   WINGMAN_AUTH_JWKS_URL=https://dev-zumw4z1t7m8hefst.us.auth0.com/.well-known/jwks.json
+   WINGMAN_AUTH_ALGORITHMS=RS256
+   ```
+   (`--write` adds only the four `WINGMAN_AUTH_*` lines; add `WINGMAN_ENV` and
+   `WINGMAN_DATABASE_URL` yourself or export them.) The dev stub may stay enabled alongside: tokens
+   are routed by issuer.
+2. **Run the backend** (migrated Postgres 16, as in [`beta/install.md`](beta/install.md) §2.2):
+   ```bash
+   docker compose up -d postgres
+   (cd backend && uv sync && uv run alembic upgrade head)
+   scripts/dev-run.sh                         # http://127.0.0.1:8000 (the emulator sees 10.0.2.2:8000)
+   ```
+3. **Build and install the app** on the running emulator, with the Auth0 values as `-P` flags:
+   ```bash
+   cd android && ./gradlew :app:installDebug -Pwingman.useMockApi=false \
+     -Pwingman.oidc.issuer=https://dev-zumw4z1t7m8hefst.us.auth0.com/ \
+     -Pwingman.oidc.clientId=XYOVrRYWqOQXj2JH5cEyrGTUg0ypq750 \
+     -Pwingman.oidc.redirectUri=com.wingman.auth:/oauth2redirect \
+     -Pwingman.oidc.audience=https://api.wingman.app \
+     -Pwingman.oidc.connection=google-oauth2
+   ```
+   Or build the beta APK (same flags, from `config/beta/auth0.gradle.properties`) and install it:
+   ```bash
+   scripts/release/build.sh --skip-image
+   adb install -r build/release/0.1.0-beta.1/wingman-0.1.0-beta.1-debug.apk
+   ```
+   (`scripts/configure-auth0.sh --beta` prints the same Gradle command.)
+4. **Sign in.** Open Wingman. The sign-in screen shows **Continue in browser** (and, in this debug
+   build, the developer dev-token panel below it; ignore that). Tap **Continue in browser**: the
+   browser opens Google's account chooser directly (the `google-oauth2` connection skips Auth0's
+   login picker). Pick your Google account and accept the consent screen.
+
+**What success looks like:**
+
+- The browser closes by itself and Wingman opens; on a new account, onboarding starts.
+- The backend log shows `GET /v1/me` with `200` (no `auth rejected` lines).
+- The database has one user for the tenant:
+  `psql postgresql://wingman:wingman@localhost:5432/wingman -c "select auth_issuer, auth_subject from users where auth_issuer like 'https://dev-zumw4z1t7m8hefst%'"`
+  shows `https://dev-zumw4z1t7m8hefst.us.auth0.com/` and `google-oauth2|<digits>`.
+- Kill and relaunch the app: still signed in. Record the result in `docs/DECISIONS.md` (I-014) and
+  run the device checklist in [`android_auth.md`](android_auth.md).
+
+**Troubleshooting (emulator, beta tenant)** (more causes in [section 7](#7-troubleshooting)):
+
+| Symptom | Fix |
+|---|---|
+| The screen says *Sign-in is not available in this build* and has no **Continue in browser** | The APK was built without the `wingman.oidc.*` flags (plain `./gradlew` or `scripts/android-build.sh`, or `build.sh --no-auth0`). Rebuild with step 3 |
+| *Could not reach the sign-in service* | The emulator has no internet, or the issuer is mistyped. Open `https://dev-zumw4z1t7m8hefst.us.auth0.com/.well-known/openid-configuration` in the emulator's browser; it must show JSON |
+| No browser opens | The emulator image has no browser: use a Google APIs or Google Play image |
+| Browser shows *Callback URL mismatch* | Add `com.wingman.auth:/oauth2redirect` to the Native app's Allowed Callback URLs (exact, no trailing slash) |
+| Google says *Access blocked* / app not verified | Add your Google account as a test user on the Google consent screen, or publish it |
+| Back in the app, then the sign-in screen again; backend log `auth rejected: unknown issuer` | `backend/.env` lacks the issuer or its trailing slash, or the backend was started before the lines were added. Fix and restart `scripts/dev-run.sh` |
+| `auth rejected: malformed token` | The APK was built without `-Pwingman.oidc.audience=https://api.wingman.app` (Auth0 issued an opaque token). Rebuild with step 3 |
+| App shows a network error after sign-in | The backend is not on `http://10.0.2.2:8000/` from the emulator: is `scripts/dev-run.sh` running? |
+| `503 upstream_unavailable` | The backend machine cannot fetch the JWKS URL; check its outbound network |
+
+## Setting up a tenant from scratch
 
 You need three **non-secret** values from the Auth0 dashboard:
 
@@ -24,6 +134,9 @@ Then one command prints (and with `--write` stores) everything:
 ```bash
 scripts/configure-auth0.sh --write wingman.us.auth0.com <client-id> https://api.wingman.app google-oauth2
 ```
+
+For the committed beta tenant, `scripts/configure-auth0.sh --write --beta` does the same from
+`config/beta/auth0.gradle.properties` (`--from <file>` reads another file of the same format).
 
 ## 1. Auth0 tenant
 
@@ -183,11 +296,13 @@ AppAuth finds the endpoints through `https://<tenant-domain>/.well-known/openid-
 
 I-014 is resolved only after all of these are recorded (in `docs/DECISIONS.md` and the beta docs):
 
-1. The three real values are configured (`scripts/configure-auth0.sh --write ...`) and the backend
-   starts with them (`--check` passes from a machine with network).
-2. A debug or release APK built with the printed Gradle command signs in with Google on a device
-   or emulator, `GET /v1/me` returns `200`, relaunch keeps the session, and a refresh near expiry
-   works.
+1. ~~The three real values are configured~~ Done: the beta tenant is committed in `config/beta/`
+   (tenant `dev-zumw4z1t7m8hefst.us.auth0.com`). The backend starting with them and
+   `scripts/configure-auth0.sh --check --beta` passing from a machine with network are part of
+   step 2.
+2. An APK built with these values (`scripts/release/build.sh`, or the Gradle command above) signs
+   in with Google on a device or emulator, `GET /v1/me` returns `200`, relaunch keeps the session,
+   and a refresh near expiry works.
 3. The device checklist in [`android_auth.md`](android_auth.md) is run and its results labeled.
 
 ## References (Auth0 documentation)

@@ -6,12 +6,14 @@ stored and refreshed, and how to sign in on a debug build today.
 
 **Identity provider: Auth0 with Google sign-in** (chosen for I-014). The tenant, API and Native app
 setup, the Gradle values and troubleshooting are in [`auth0.md`](auth0.md);
-`scripts/configure-auth0.sh` prints the exact Gradle command once the three Auth0 values exist.
+the beta tenant's values are committed in `config/beta/auth0.gradle.properties`, which
+`scripts/release/build.sh` passes as `-P` flags (plain `./gradlew` and CI do not), and
+`scripts/configure-auth0.sh --beta` prints the exact Gradle command.
 
 **Status:** the pure-Kotlin core (session, refresh, OkHttp wiring, dev-token rules) is JVM-tested.
 The Android pieces (Keystore cipher, AppAuth, the Compose sign-in screen) are compiled by CI but
-have not run on a device, and OIDC has never run against the real Auth0 tenant (its values are not
-configured yet, I-014). Treat them as **UNVERIFIED**.
+have not run on a device, and OIDC has never run against the real Auth0 tenant (configured in
+`config/beta/`, but no sign-in yet, I-014). Treat them as **UNVERIFIED**.
 
 ## Code map
 
@@ -119,8 +121,10 @@ For Auth0 (I-014), follow [`auth0.md`](auth0.md):
 1. Create the API (RS256, Allow Offline Access) and the Native app (callback and logout URL
    `com.wingman.auth:/oauth2redirect`, Authorization Code + Refresh Token grants), and enable the
    Google connection.
-2. Run `scripts/configure-auth0.sh <tenant-domain> <client-id> <api-identifier> google-oauth2` and
-   use the Gradle command it prints (or put the values in `~/.gradle/gradle.properties`).
+2. Run `scripts/configure-auth0.sh --beta` (the committed beta tenant) or
+   `scripts/configure-auth0.sh <tenant-domain> <client-id> <api-identifier> google-oauth2` and
+   use the Gradle command it prints (or put the values in `~/.gradle/gradle.properties`). The
+   exact emulator steps for the beta tenant are in [`auth0.md`](auth0.md#sign-in-on-an-emulator-with-the-beta-tenant).
 3. Run the device checklist below and record the results.
 
 ## Manifest

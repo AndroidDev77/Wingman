@@ -3,11 +3,16 @@
 #
 #   scripts/configure-auth0.sh [--write] [--dry-run] [--check] [--env-file PATH]
 #                              <tenant-domain> <client-id> <api-identifier> [connection]
+#   scripts/configure-auth0.sh [--write] [--dry-run] [--check] [--env-file PATH] --beta
+#   scripts/configure-auth0.sh [--write] [--dry-run] [--check] [--env-file PATH] --from FILE
 #
 #   tenant-domain   bare Auth0 domain, e.g. wingman.us.auth0.com (no https://, no slash)
 #   client-id       the Native application's Client ID (public; there is no client secret)
 #   api-identifier  the API's Identifier, e.g. https://api.wingman.app (the token audience)
 #   connection      optional Auth0 connection to skip the login picker, e.g. google-oauth2
+#   --from FILE     read the values from a wingman.oidc.* properties file instead (issuer gives the
+#                   tenant domain; clientId, audience, optional connection); no positional values
+#   --beta          same as --from config/beta/auth0.gradle.properties (the committed beta tenant)
 #
 # Prints (always):
 #   * the backend lines  WINGMAN_AUTH_ISSUER=https://<tenant>/  (trailing slash: Auth0's iss),
@@ -30,10 +35,10 @@ set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 repo="$(cd "$here/.." && pwd)"
 
-usage() { sed -n '2,29p' "$0" | sed 's/^# \{0,1\}//'; }
+usage() { sed -n '2,34p' "$0" | sed 's/^# \{0,1\}//'; }
 die() { echo "configure-auth0.sh: $*" >&2; exit 2; }
 
-write=0 dry=0 check=0 env_file=""
+write=0 dry=0 check=0 env_file="" from=""
 args=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -43,6 +48,10 @@ while [[ $# -gt 0 ]]; do
     --env-file)
       [[ $# -ge 2 ]] || die "--env-file needs a path"
       env_file="$2"; shift ;;
+    --from)
+      [[ $# -ge 2 ]] || die "--from needs a path"
+      from="$2"; shift ;;
+    --beta) from="$repo/config/beta/auth0.gradle.properties" ;;
     -h|--help) usage; exit 0 ;;
     --) shift; args+=("$@"); break ;;
     -*) die "unknown option: $1 (see --help)" ;;
@@ -50,6 +59,29 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+if [[ -n "$from" ]]; then
+  [[ ${#args[@]} -eq 0 ]] || die "--from/--beta take no positional values"
+  [[ -f "$from" ]] || die "no such file: $from"
+  # Data, not code: only wingman.oidc.<key>=<value> lines, comments and blank lines.
+  f_issuer="" f_client="" f_audience="" f_connection=""
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    line="${line%$'\r'}"
+    [[ -z "${line//[[:space:]]/}" || "$line" =~ ^[[:space:]]*# ]] && continue
+    case "$line" in
+      wingman.oidc.issuer=*) f_issuer="${line#*=}" ;;
+      wingman.oidc.clientId=*) f_client="${line#*=}" ;;
+      wingman.oidc.audience=*) f_audience="${line#*=}" ;;
+      wingman.oidc.connection=*) f_connection="${line#*=}" ;;
+      wingman.oidc.redirectUri=*|wingman.oidc.scopes=*) ;;
+      *) die "$from: unexpected line (want wingman.oidc.<key>=<value>): $line" ;;
+    esac
+  done <"$from"
+  [[ "$f_issuer" =~ ^https://([^/]+)/$ ]] \
+    || die "$from: wingman.oidc.issuer must be https://<tenant-domain>/ with the trailing slash"
+  args=("${BASH_REMATCH[1]}" "$f_client" "$f_audience")
+  [[ -n "$f_connection" ]] && args+=("$f_connection")
+fi
 
 if [[ ${#args[@]} -lt 3 || ${#args[@]} -gt 4 ]]; then
   usage >&2
@@ -106,7 +138,7 @@ echo "== Android build =="
 printf 'cd android && ./gradlew :app:assembleDebug'
 printf ' %s' "${gradle_props[@]}"
 printf '\n'
-echo "# Same values in ~/.gradle/gradle.properties (also picked up by scripts/release/build.sh):"
+echo "# Same values in ~/.gradle/gradle.properties (scripts/release/build.sh passes config/beta/auth0.gradle.properties as -P, which wins):"
 for p in "${gradle_props[@]}"; do
   [[ "$p" == -Pwingman.useMockApi=* ]] && continue
   echo "${p#-P}"

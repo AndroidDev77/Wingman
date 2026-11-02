@@ -1,7 +1,8 @@
 # Authentication and user isolation (WING-004)
 
-**Identity provider: Auth0 with Google sign-in** (chosen for I-014; tenant values not configured
-yet). Setup, the exact `WINGMAN_AUTH_*` values and troubleshooting: [`auth0.md`](auth0.md).
+**Identity provider: Auth0 with Google sign-in** (chosen for I-014; the beta tenant
+`dev-zumw4z1t7m8hefst.us.auth0.com` is committed in `config/beta/`, sign-in not yet verified on a
+device). Setup, the exact `WINGMAN_AUTH_*` values and troubleshooting: [`auth0.md`](auth0.md).
 
 Wingman stores no passwords. Clients sign in with an OIDC identity provider (IdP) and
 call the API with `Authorization: Bearer <access token>`. The backend verifies the JWT,
