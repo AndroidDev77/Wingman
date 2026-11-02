@@ -4,10 +4,14 @@ The Android app calls the backend with `Authorization: Bearer <access token>`, a
 [`auth.md`](auth.md). This page covers the client side: where tokens come from, how they are
 stored and refreshed, and how to sign in on a debug build today.
 
+**Identity provider: Auth0 with Google sign-in** (chosen for I-014). The tenant, API and Native app
+setup, the Gradle values and troubleshooting are in [`auth0.md`](auth0.md);
+`scripts/configure-auth0.sh` prints the exact Gradle command once the three Auth0 values exist.
+
 **Status:** the pure-Kotlin core (session, refresh, OkHttp wiring, dev-token rules) is JVM-tested.
 The Android pieces (Keystore cipher, AppAuth, the Compose sign-in screen) are compiled by CI but
-have not run on a device, and OIDC has never run against a real identity provider, because none
-is chosen yet (I-014). Treat them as **UNVERIFIED**.
+have not run on a device, and OIDC has never run against the real Auth0 tenant (its values are not
+configured yet, I-014). Treat them as **UNVERIFIED**.
 
 ## Code map
 
@@ -89,7 +93,7 @@ The dev path cannot reach a release build:
   `DEV_SECRET` appears in app sources, and `testDebugUnitTest` depends on `compileReleaseKotlin`,
   so CI also compiles the release variant.
 
-## Release builds: OIDC (once an IdP is chosen)
+## OIDC sign-in (Auth0)
 
 Real sign-in uses AppAuth (`net.openid:appauth`): authorization code + PKCE (S256), `state` and
 `nonce`, in the system browser (Custom Tabs). There is no WebView and no password field. Until it
@@ -104,15 +108,20 @@ the repo if they are environment-specific):
 | `wingman.oidc.clientId` | `wingman-android` | Public client registered at the IdP (no client secret) |
 | `wingman.oidc.redirectUri` | `com.wingman.auth:/oauth2redirect` | Redirect URI registered at the IdP. Its scheme becomes the `appAuthRedirectScheme` manifest placeholder |
 | `wingman.oidc.scopes` | `openid profile email offline_access` (default) | Must include `openid`; `offline_access` (or the IdP's equivalent) to get a refresh token |
-| `wingman.oidc.audience` | `https://api.wingman.example` | Optional `audience` parameter, for IdPs that need it to issue a token whose `aud` is the backend's `WINGMAN_AUTH_AUDIENCE` |
+| `wingman.oidc.audience` | `https://api.wingman.app` | `audience` authorization parameter. **Required for Auth0** (the API Identifier, equal to the backend's `WINGMAN_AUTH_AUDIENCE`); without it Auth0 issues an opaque access token |
+| `wingman.oidc.connection` | `google-oauth2` | Optional. Sent as the `connection` authorization parameter so Auth0 goes straight to Google instead of its login picker. Unset: no `connection` parameter |
 
-Once an IdP is chosen (I-014):
-1. Register a native/public client with PKCE required, the redirect URI above and refresh tokens.
-2. Make sure the access token is a JWT signed with `RS256` or `ES256` whose `iss` and `aud` match
-   the backend's `WINGMAN_AUTH_ISSUER` and `WINGMAN_AUTH_AUDIENCE` (some IdPs issue opaque access
-   tokens unless an audience/API is requested).
-3. Set the Gradle properties for the release build (CI secrets or a release properties file).
-4. Run the device checklist below and record the results.
+`OidcConfig.additionalAuthorizationParameters()` builds the extra parameters (`audience`, and
+`connection` when set); `Auth0RequestTest` checks they are present when configured and absent when
+not, and that the redirect scheme matches the manifest placeholder logic.
+
+For Auth0 (I-014), follow [`auth0.md`](auth0.md):
+1. Create the API (RS256, Allow Offline Access) and the Native app (callback and logout URL
+   `com.wingman.auth:/oauth2redirect`, Authorization Code + Refresh Token grants), and enable the
+   Google connection.
+2. Run `scripts/configure-auth0.sh <tenant-domain> <client-id> <api-identifier> google-oauth2` and
+   use the Gradle command it prints (or put the values in `~/.gradle/gradle.properties`).
+3. Run the device checklist below and record the results.
 
 ## Manifest
 
@@ -126,6 +135,6 @@ placeholder from the redirect URI (an inert `com.wingman.auth` when unconfigured
 - Kill and relaunch: still signed in (Keystore decrypts the stored session).
 - Sign out: the sign-in screen appears, and relaunch stays signed out.
 - Expired dev token: the next call returns the app to the sign-in screen.
-- OIDC (needs an IdP): browser opens, redirect returns, code exchange, refresh near expiry,
+- OIDC (Auth0 + Google, [`auth0.md`](auth0.md)): browser opens, redirect returns, code exchange, refresh near expiry,
   revoked refresh token signs out.
 - Release APK: no developer sign-in panel.

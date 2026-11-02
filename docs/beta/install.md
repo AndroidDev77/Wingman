@@ -25,7 +25,7 @@ scripts/release/build.sh --api-base-url https://<beta-host>/   # or no flag: emu
 ```
 
 The APK is a **debug** build (versionName `0.1.0-beta.1`, versionCode `2`), because only debug
-builds have the developer sign-in panel and no identity provider exists yet (I-014). It talks to the
+builds have the developer sign-in panel and Auth0 is not configured yet (I-014, [`../auth0.md`](../auth0.md)). It talks to the
 real API (`-Pwingman.useMockApi=false`). The backend URL is fixed in the APK at build time:
 
 | Backend | Build with | Works on |
@@ -84,8 +84,11 @@ use `scripts/dev-run.sh` unless you configure a real provider.
 
 ## 3. Sign in (dev token)
 
-There is no real sign-in yet: no identity provider has been chosen (I-014). The beta uses the
-**dev-stub token**: a short-lived HS256 token signed with the backend's secret.
+There is no real sign-in yet. **Auth0 with Google sign-in** has been chosen (I-014), and the code is
+ready for it, but the tenant is not configured and no device sign-in has been run. Once the operator
+has the three Auth0 values, [`../auth0.md`](../auth0.md) and `scripts/configure-auth0.sh` set up
+the backend and the APK. Until then the beta uses the **dev-stub token**: a short-lived HS256 token
+signed with the backend's secret.
 
 - **Why it's beta-only.** Anyone holding the secret can mint a token for any user, and tokens are
   never refreshed. The backend refuses to start with the stub when `WINGMAN_ENV=prod`, and release
@@ -106,7 +109,7 @@ new one (same `--sub`, same account).
 
 ### 3.2 Paste it into the app
 
-1. Open Wingman. The screen says sign-in is not available in this build (no identity provider) and
+1. Open Wingman. The screen says sign-in is not available in this build (Auth0 not configured) and
    shows **Developer sign-in (debug build only)**.
 2. Paste the token into **Dev token** (on an emulator: `adb shell input text "<token>"` with the
    field focused) and tap **Use dev token**.
