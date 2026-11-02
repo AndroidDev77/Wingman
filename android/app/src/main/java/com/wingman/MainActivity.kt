@@ -7,6 +7,7 @@ import com.wingman.core.auth.android.AndroidAuth
 import com.wingman.core.di.AppConfig
 import com.wingman.core.di.AppContainer
 import com.wingman.core.di.AppContainerProvider
+import com.wingman.integrations.hinge.android.HingeModule
 import com.wingman.integrations.notifications.android.NotificationSyncRuntime
 import com.wingman.integrations.sms.android.SmsConnectorRuntime
 import com.wingman.navigation.WingmanApp
@@ -35,6 +36,12 @@ class MainActivity : ComponentActivity() {
         // disconnected stops sync and asks the user to pair again. Runs off the main thread.
         SmsConnectorRuntime.connectBackend(container.api)
         SmsConnectorRuntime.startInBackground(this)
+        // WING-029 (D-021, D-023, D-026): BEFORE anything builds the notification core (the sync host
+        // below builds it lazily; Settings and the listener service may too). Always makes sure the
+        // Hinge notification plugin sits next to Tinder and Bumble (it is also in PlatformPlugins, for
+        // a cold process the listener starts). Builds the experimental unofficial-API connector only
+        // when the build sets -Pwingman.experimental=true and the client identity; otherwise inert.
+        HingeModule.init(applicationContext, container)
         // WING-027/028 (I-033): the Tinder/Bumble notification connections upload recorded events
         // and claim through the same client. Nothing is read until the user turns a platform on in
         // Settings, which pairs it first (transport: notification).

@@ -69,6 +69,24 @@ class ContactOverrideViewModel(api: WingmanApi, contactId: String) : ViewModel()
     }
 }
 
+/** Opens the experimental Hinge opt-in screen (warning first). Shown only when the connector exists. */
+@Composable
+private fun HingeExperimentalRow() {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            "Unofficial interface; your Hinge account can be banned. Approval-only.",
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.weight(1f),
+        )
+        TextButton(onClick = {
+            context.startActivity(
+                android.content.Intent(context, com.wingman.integrations.hinge.android.HingeExperimentalActivity::class.java),
+            )
+        }) { Text("Open") }
+    }
+}
+
 @Composable
 fun SettingsScreen() {
     val container = LocalAppContainer.current
@@ -100,6 +118,11 @@ fun SettingsScreen() {
             // WING-027/028 (I-033): dating apps through their notifications, assisted only.
             SectionTitle("Dating apps (notifications)")
             com.wingman.features.connections.NotificationConnectionSection()
+            // WING-029 (D-021, D-023, D-026): only in the experimental build with the client identity.
+            if (com.wingman.integrations.hinge.android.HingeModule.connector() != null) {
+                SectionTitle("Hinge (experimental)")
+                HingeExperimentalRow()
+            }
             HorizontalDivider()
             SectionTitle("Account")
             SignOutButton()
