@@ -48,7 +48,7 @@ Read `EXECUTION_PLAN.md` for concurrency waves and MVP cutline.
 
 Order: prerequisites WING-017, WING-019, WING-020, WING-021 and contract v1.3 first; then WING-027/028/029 (after 017 + 021), WING-030 (after 020), WING-031 (after 019); WING-032 last. A tested mock is not evidence of a working commercial-app integration; every capability carries VERIFIED / UNVERIFIED / UNSUPPORTED / BLOCKED.
 
-**Status (2026-11-01):** WING-017 (PR #46), WING-020 (PR #44), WING-021 (PR #45) and contract v1.3.0 (PR #47, ADR 0008) are merged; WING-019 is still pending. Per D-023, WING-027 (Tinder) and WING-028 (Bumble) are **notification-assisted only** (their API paths are BLOCKED); **WING-029 (Hinge) is next**, pending owner decisions I-030 and I-031. WING-030 is a conditional GO (D-024). `BLOCKED` is a test-result word in handoffs, not a capability label: in the contract a blocked capability is UNVERIFIED or UNSUPPORTED with the blocker in `notes` (ADR 0008 §8). Live status: [`docs/STATUS.md`](docs/STATUS.md).
+**Status (2026-11-02):** WING-017, 019, 020, 021, 027, 028, 029, 030 (PR #54) and 031 (PR #55) and contracts v1.3.0/v1.3.1 are merged; **WING-032 is next**. Per D-023, Tinder and Bumble are notification-assisted only; Hinge's unofficial-API connector is experimental and compiled only into the flag-on build (D-026, D-027). WING-031 is a review workflow: no platform has a working swipe and nothing sets `executed` (D-027). WING-030's companion is UNVERIFIED on a real Mac (D-028, I-034, I-035). `BLOCKED` is a test-result word in handoffs, not a capability label (ADR 0008 §8). Live status: [`docs/STATUS.md`](docs/STATUS.md).
 
 | Ticket | Task | Depends on | Phase |
 |---|---|---|---|
