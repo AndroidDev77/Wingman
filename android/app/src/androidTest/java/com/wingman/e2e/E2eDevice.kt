@@ -132,6 +132,16 @@ class E2eDevice(private val timeoutMs: Long = UI_TIMEOUT_MS) {
     fun scrollTo(sel: BySelector, what: String, maxSwipes: Int = 25): UiObject2 {
         device.waitForIdle()
         device.findObject(sel)?.let { return it }
+        // The screen may still be loading (only the bottom bar is drawn): wait, condition-based,
+        // until the target or a scrollable container is there before searching.
+        val ready = By.scrollable(true)
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline && !device.hasObject(ready)) {
+            device.findObject(sel)?.let { return it }
+            dismissSystemAnrDialog()
+            device.wait(Until.hasObject(ready), 1_000)
+        }
+        device.findObject(sel)?.let { return it }
         for (direction in listOf(Direction.DOWN, Direction.UP)) {
             for (i in 0 until maxSwipes) {
                 val scrollable = device.findObjects(By.scrollable(true)).maxByOrNull { bounds(it).height() } ?: break
@@ -156,7 +166,8 @@ class E2eDevice(private val timeoutMs: Long = UI_TIMEOUT_MS) {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             dismissSystemAnrDialog()
-            scrollTo(anchor, "anchor of $what")
+            // The anchor's section may still be loading; keep waiting until the deadline.
+            runCatching { scrollTo(anchor, "anchor of $what") }
             if (device.wait(Until.hasObject(expected), 2_000)) device.findObject(expected)?.let { return it }
         }
         dumpHierarchy("never showed $what")
