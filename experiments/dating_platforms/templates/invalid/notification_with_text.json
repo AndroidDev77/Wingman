@@ -1,0 +1,22 @@
+{
+  "schema_version": "dating_notification_observation.v1",
+  "run_id": "TEMPLATE-negative",
+  "observed_at": "2026-11-01T00:00:00Z",
+  "platform": "tinder",
+  "package": "com.tinder",
+  "app_version": "0.0.0-template",
+  "android_sdk_int": 34,
+  "event_kind": "chat_message",
+  "notification": {
+    "channel_id": null,
+    "template": null,
+    "title_length": 4,
+    "text_length": 11,
+    "text": "placeholder",
+    "extras_keys": [],
+    "actions": [],
+    "has_content_intent": true
+  },
+  "redaction": { "no_message_text": true, "no_names": true, "no_raw_ids": true },
+  "notes": "NEGATIVE TEMPLATE: a raw text field is rejected by the schema."
+}

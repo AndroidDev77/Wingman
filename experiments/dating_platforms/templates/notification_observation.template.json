@@ -1,0 +1,32 @@
+{
+  "schema_version": "dating_notification_observation.v1",
+  "run_id": "TEMPLATE-replace-me",
+  "observed_at": "2026-11-01T00:00:00Z",
+  "platform": "hinge",
+  "package": "co.hinge.app",
+  "app_version": "0.0.0-template",
+  "android_sdk_int": 34,
+  "device_model": null,
+  "event_kind": "chat_message",
+  "preview_setting": "unknown",
+  "notification": {
+    "channel_id": null,
+    "category": null,
+    "template": null,
+    "messaging_style_message_count": null,
+    "title_length": 0,
+    "text_length": 0,
+    "text_is_generic": null,
+    "extras_keys": [],
+    "is_group_summary": null,
+    "has_shortcut_id": null,
+    "is_update_of_previous": null,
+    "sender_id_hash": null,
+    "actions": [],
+    "has_content_intent": false,
+    "content_intent_opens": "not_tested"
+  },
+  "reply_test": null,
+  "redaction": { "no_message_text": true, "no_names": true, "no_raw_ids": true },
+  "notes": "TEMPLATE ONLY. Not an observation. Copy, fill from the WING-017 inspector, never add text or names."
+}
