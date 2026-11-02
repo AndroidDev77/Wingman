@@ -1,0 +1,208 @@
+[
+  {
+    "connection_id" : "0192f3a0-0000-7000-8000-0000000000c1",
+    "event_id" : "435691a1-49a0-50d8-b577-08f390890632",
+    "external_message_id" : "imessage:FIXTURE-0001-0000-0000-0000-000000000000",
+    "external_thread_id" : "imessage:chat:iMessage;-;+15550100001",
+    "observed_at" : "2026-10-30T18:01:30Z",
+    "occurred_at" : "2026-10-30T18:01:00Z",
+    "payload" : {
+      "identity" : "linked",
+      "kind" : "chat_message",
+      "sender" : {
+        "display_name" : null,
+        "external_contact_id" : "imessage:+15550100001"
+      },
+      "source" : "companion",
+      "text" : "Free tonight? 🍜"
+    },
+    "platform" : "imessage",
+    "schema_version" : "connector_event.v1",
+    "type" : "message.received",
+    "user_id" : "0192f3a0-0000-7000-8000-000000000001"
+  },
+  {
+    "connection_id" : "0192f3a0-0000-7000-8000-0000000000c1",
+    "event_id" : "f66b24b8-1102-56d0-9d74-430fab853909",
+    "external_message_id" : "imessage:FIXTURE-0002-0000-0000-0000-000000000000",
+    "external_thread_id" : "imessage:chat:SMS;-;+15550100004",
+    "observed_at" : "2026-10-30T18:01:30Z",
+    "occurred_at" : "2026-10-30T18:01:00Z",
+    "payload" : {
+      "identity" : "linked",
+      "kind" : "chat_message",
+      "sender" : {
+        "display_name" : null,
+        "external_contact_id" : "imessage:+15550100004"
+      },
+      "source" : "companion",
+      "text" : "Running 10 min late"
+    },
+    "platform" : "imessage",
+    "schema_version" : "connector_event.v1",
+    "type" : "message.received",
+    "user_id" : "0192f3a0-0000-7000-8000-000000000001"
+  },
+  {
+    "connection_id" : "0192f3a0-0000-7000-8000-0000000000c1",
+    "event_id" : "9c1e17f2-680e-534b-b244-1c2aa5eba008",
+    "external_message_id" : "imessage:FIXTURE-0003-0000-0000-0000-000000000000",
+    "external_thread_id" : "imessage:chat:iMessage;+;chat123456789012345",
+    "observed_at" : "2026-10-30T18:01:30Z",
+    "occurred_at" : "2026-10-30T18:01:00Z",
+    "payload" : {
+      "identity" : "ambiguous",
+      "kind" : "chat_message",
+      "sender" : {
+        "display_name" : null,
+        "external_contact_id" : "imessage:+15550100003"
+      },
+      "source" : "companion",
+      "text" : "Who's in for Saturday?"
+    },
+    "platform" : "imessage",
+    "schema_version" : "connector_event.v1",
+    "type" : "message.received",
+    "user_id" : "0192f3a0-0000-7000-8000-000000000001"
+  },
+  {
+    "connection_id" : "0192f3a0-0000-7000-8000-0000000000c1",
+    "event_id" : "b793b374-aaec-555a-990c-fe891b40d4ad",
+    "external_message_id" : "imessage:FIXTURE-0004-0000-0000-0000-000000000000",
+    "external_thread_id" : "imessage:chat:iMessage;-;bob@example.com",
+    "observed_at" : "2026-10-30T18:01:30Z",
+    "occurred_at" : "2026-10-30T18:01:00Z",
+    "payload" : {
+      "attachment_count" : 1,
+      "identity" : "linked",
+      "kind" : "chat_message",
+      "sender" : {
+        "display_name" : null,
+        "external_contact_id" : "imessage:bob@example.com"
+      },
+      "source" : "companion",
+      "text" : ""
+    },
+    "platform" : "imessage",
+    "schema_version" : "connector_event.v1",
+    "type" : "message.received",
+    "user_id" : "0192f3a0-0000-7000-8000-000000000001"
+  },
+  {
+    "connection_id" : "0192f3a0-0000-7000-8000-0000000000c1",
+    "event_id" : "af376c80-a912-5a9e-ad38-adb6c9b9a248",
+    "external_message_id" : "imessage:FIXTURE-0005-0000-0000-0000-000000000000",
+    "external_thread_id" : "imessage:chat:iMessage;-;+15550100001",
+    "observed_at" : "2026-10-30T18:01:30Z",
+    "occurred_at" : "2026-10-30T18:01:00Z",
+    "payload" : {
+      "identity" : "linked",
+      "kind" : "chat_message",
+      "sender" : {
+        "display_name" : null,
+        "external_contact_id" : "imessage:+15550100001"
+      },
+      "source" : "companion",
+      "text" : "Coffee after?"
+    },
+    "platform" : "imessage",
+    "schema_version" : "connector_event.v1",
+    "type" : "message.received",
+    "user_id" : "0192f3a0-0000-7000-8000-000000000001"
+  },
+  {
+    "connection_id" : "0192f3a0-0000-7000-8000-0000000000c1",
+    "event_id" : "038cb572-071b-58fa-b350-d4c82dd4a1f1",
+    "external_message_id" : "imessage:FIXTURE-0006-0000-0000-0000-000000000000",
+    "external_thread_id" : "imessage:chat:iMessage;-;+15550100001",
+    "observed_at" : "2026-10-30T18:01:30Z",
+    "occurred_at" : "2026-10-30T18:01:30Z",
+    "payload" : {
+      "idempotency_key" : "send:0192f3a0-0000-7000-8000-00000000aa01:1",
+      "outbound_message_id" : "0192f3a0-0000-7000-8000-00000000aa01"
+    },
+    "platform" : "imessage",
+    "schema_version" : "connector_event.v1",
+    "type" : "message.send_acknowledged",
+    "user_id" : "0192f3a0-0000-7000-8000-000000000001"
+  },
+  {
+    "connection_id" : "0192f3a0-0000-7000-8000-0000000000c1",
+    "event_id" : "57f1ed26-85ce-51c8-8f10-1a4193879feb",
+    "external_message_id" : "imessage:FIXTURE-0006-0000-0000-0000-000000000000",
+    "external_thread_id" : "imessage:chat:iMessage;-;+15550100001",
+    "observed_at" : "2026-10-30T18:01:30Z",
+    "occurred_at" : "2026-10-30T18:01:30Z",
+    "payload" : {
+      "outbound_message_id" : "0192f3a0-0000-7000-8000-00000000aa01"
+    },
+    "platform" : "imessage",
+    "schema_version" : "connector_event.v1",
+    "type" : "message.delivery_receipt",
+    "user_id" : "0192f3a0-0000-7000-8000-000000000001"
+  },
+  {
+    "connection_id" : "0192f3a0-0000-7000-8000-0000000000c1",
+    "event_id" : "f86e6eec-a8a1-598d-89ea-ab62401ed9ef",
+    "external_message_id" : null,
+    "external_thread_id" : "imessage:chat:iMessage;-;+15550100001",
+    "observed_at" : "2026-10-30T18:01:30Z",
+    "occurred_at" : "2026-10-30T18:01:30Z",
+    "payload" : {
+      "failure" : {
+        "code" : "permission_denied",
+        "detail" : "apple event error -1743",
+        "retryable" : false
+      },
+      "idempotency_key" : "send:0192f3a0-0000-7000-8000-00000000aa02:1",
+      "outbound_message_id" : "0192f3a0-0000-7000-8000-00000000aa02"
+    },
+    "platform" : "imessage",
+    "schema_version" : "connector_event.v1",
+    "type" : "message.send_failed",
+    "user_id" : "0192f3a0-0000-7000-8000-000000000001"
+  },
+  {
+    "connection_id" : "0192f3a0-0000-7000-8000-0000000000c1",
+    "event_id" : "41152e43-72da-56b8-bbd4-71331be84d2a",
+    "external_message_id" : null,
+    "external_thread_id" : null,
+    "observed_at" : "2026-10-30T18:01:30Z",
+    "occurred_at" : "2026-10-30T18:01:30Z",
+    "payload" : {
+      "capabilities" : {
+        "assessed_at" : "2026-10-30T18:01:30Z",
+        "capabilities" : {
+          "calendar_write" : {
+            "status" : "UNSUPPORTED"
+          },
+          "draft" : {
+            "notes" : "Messages has no scriptable compose field; GUI scripting is out of scope.",
+            "status" : "UNSUPPORTED"
+          },
+          "profile_read" : {
+            "status" : "UNSUPPORTED"
+          },
+          "read" : {
+            "notes" : "Reads ~/Library/Messages/chat.db read-only; needs Full Disk Access. Not tested on a Mac (WING-030).",
+            "status" : "UNVERIFIED"
+          },
+          "send" : {
+            "notes" : "Automation permission for Messages denied.",
+            "status" : "UNSUPPORTED"
+          },
+          "swipe" : {
+            "status" : "UNSUPPORTED"
+          }
+        },
+        "connector_version" : "0.1.0",
+        "platform" : "imessage",
+        "schema_version" : "connector_capabilities.v1"
+      }
+    },
+    "platform" : "imessage",
+    "schema_version" : "connector_event.v1",
+    "type" : "connection.capabilities_changed",
+    "user_id" : "0192f3a0-0000-7000-8000-000000000001"
+  }
+]
