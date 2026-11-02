@@ -42,6 +42,31 @@ android {
         // Unconfigured builds use an inert app-specific placeholder.
         manifestPlaceholders["appAuthRedirectScheme"] =
             oidcRedirect.substringBefore(':', missingDelimiterValue = "").ifEmpty { "com.wingman.auth" }
+
+        // WING-029 (D-021, D-023, D-026): the experimental Hinge connector is inert unless BOTH the
+        // flag and the client identity are set. Default OFF (CI and every normal build). Never a Play
+        // build: the guard at the end of this file fails any app-bundle task when the flag is on.
+        val experimental = (project.findProperty("wingman.experimental") as String?)?.toBooleanStrictOrNull() ?: false
+        buildConfigField("boolean", "WINGMAN_EXPERIMENTAL", experimental.toString())
+        // Client identity documented by f0rr0/hinge-rs@cffe397 (src/settings.rs, src/client/transport.rs,
+        // src/client/sendbird.rs). The values live in ~/.gradle/gradle.properties of the person building
+        // the experimental APK, never in this repo (docs/integrations/hinge.md section 3a). Empty in
+        // every non-experimental build, whatever properties are set.
+        fun hinge(name: String) = quoted(if (experimental) prop("wingman.hinge.$name") else "")
+        buildConfigField("String", "HINGE_BASE_URL", hinge("baseUrl"))
+        buildConfigField("String", "HINGE_SENDBIRD_API_URL", hinge("sendbirdApiUrl"))
+        buildConfigField("String", "HINGE_SENDBIRD_WS_URL", hinge("sendbirdWsUrl"))
+        buildConfigField("String", "HINGE_SENDBIRD_WS_ORIGIN", hinge("sendbirdWsOrigin"))
+        buildConfigField("String", "HINGE_SENDBIRD_APP_ID", hinge("sendbirdAppId"))
+        buildConfigField("String", "HINGE_SENDBIRD_SDK_VERSION", hinge("sendbirdSdkVersion"))
+        buildConfigField("String", "HINGE_APP_VERSION", hinge("appVersion"))
+        buildConfigField("String", "HINGE_BUILD_NUMBER", hinge("buildNumber"))
+        buildConfigField("String", "HINGE_OS_VERSION", hinge("osVersion"))
+        buildConfigField("String", "HINGE_DEVICE_PLATFORM", hinge("devicePlatform"))
+        buildConfigField("String", "HINGE_DEVICE_MODEL_CODE", hinge("deviceModelCode"))
+        buildConfigField("String", "HINGE_DEVICE_REGION", hinge("deviceRegion"))
+        buildConfigField("String", "HINGE_ACCEPT_LANGUAGE", hinge("acceptLanguage"))
+        buildConfigField("String", "HINGE_USER_AGENT", hinge("userAgent"))
     }
 
     buildTypes {
@@ -102,4 +127,21 @@ dependencies {
 // build that fails to compile (or still references the debug panel) fails the Android job.
 tasks.matching { it.name == "testDebugUnitTest" }.configureEach {
     dependsOn("compileReleaseKotlin")
+}
+
+// D-023 / D-026: an experimental build must never become a Play bundle. Fails the build when
+// `-Pwingman.experimental=true` is combined with an Android App Bundle task (`bundle<BuildType>`,
+// `package<BuildType>Bundle`, `sign<BuildType>Bundle`). Matched by exact name: AGP's internal
+// `bundle<BuildType>ClassesTo*Jar` tasks (used by unit tests) are not app bundles and stay allowed.
+gradle.taskGraph.whenReady {
+    val experimentalBuild = (project.findProperty("wingman.experimental") as String?)?.toBooleanStrictOrNull() ?: false
+    val buildTypes = android.buildTypes.names.map { it.replaceFirstChar(Char::uppercaseChar) } + listOf("Debug", "Release")
+    val appBundleTasks = buildTypes.flatMap { listOf("bundle$it", "package${it}Bundle", "sign${it}Bundle") }.toSet()
+    val requested = allTasks.map { it.name }.filter { it in appBundleTasks }
+    if (experimentalBuild && requested.isNotEmpty()) {
+        throw GradleException(
+            "wingman.experimental=true cannot build an app bundle ($requested). " +
+                "D-023: the experimental Hinge connector is sideload/internal only, never a Play build.",
+        )
+    }
 }

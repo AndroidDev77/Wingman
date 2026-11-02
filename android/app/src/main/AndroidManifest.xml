@@ -89,8 +89,8 @@
             android:exported="false" />
 
         <!-- WING-017: notification listener. Bound by the system only after the user grants
-             notification access. Ignores every package outside the plugin allowlist (empty
-             until WING-027..029 register plugins). Device behaviour UNVERIFIED (I-003). -->
+             notification access. Ignores every package outside the plugin allowlist (the Tinder,
+             Bumble and Hinge plugins, WING-027..029). Device behaviour UNVERIFIED (I-003). -->
         <service
             android:name=".integrations.notifications.android.WingmanNotificationListenerService"
             android:exported="true"
@@ -108,5 +108,14 @@
             android:name=".integrations.notifications.android.NotificationAccessActivity"
             android:exported="true"
             android:label="Notification access" />
+
+        <!-- WING-029 (D-021, D-023, D-026): opt-in screen of the experimental Hinge connector. Not
+             exported: reached only from Settings, where the row is shown only when
+             HingeModule.connector() != null (experimental build with the client identity). In
+             every other build it shows one line ("not part of this build") and does nothing. -->
+        <activity
+            android:name=".integrations.hinge.android.HingeExperimentalActivity"
+            android:exported="false"
+            android:label="Hinge (experimental)" />
     </application>
 </manifest>

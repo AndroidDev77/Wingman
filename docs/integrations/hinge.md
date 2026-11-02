@@ -111,98 +111,100 @@ full run with sentinel tokens shows none of them in any Wingman call (dynamic te
 
 ## 3. Experimental build (integrator)
 
-The connector is **compiled into the app but inert** unless the build sets
-`wingman.experimental=true` and provides the client identity. With the flag off,
-`HingeBuildFlags.fromBuildConfig()` returns OFF, `HingeModule.init` builds nothing, no worker is
-scheduled, and the gate refuses every call (tested). The notification plugin is registered
-either way, because the notification-assisted path ships regardless (D-021 item 7).
+**Wired by the integrator (D-026).** The connector is compiled into the app but **inert** unless
+the build sets `wingman.experimental=true` **and** provides every client-identity property. With
+the flag off (the default, CI, and every other build), `BuildConfig.WINGMAN_EXPERIMENTAL` is
+`false`, every `HINGE_*` field is empty, `HingeBuildFlags.fromBuildConfig()` returns OFF,
+`HingeModule.init` builds no connector and schedules no worker, the Settings row is hidden, and the
+gate refuses every call (tested). The Hinge notification plugin is registered either way, because
+the notification-assisted path ships regardless (D-021 item 7).
 
-### 3a. Gradle snippet (`android/app/build.gradle.kts`, inside `defaultConfig`, after the OIDC fields; it reuses `prop()` and `quoted()` defined there)
+### 3a. What is in `android/app/build.gradle.kts`
+
+Inside `defaultConfig`, after the OIDC fields (it reuses `prop()` and `quoted()`):
 
 ```kotlin
-// WING-029 (D-021, D-023): the experimental Hinge connector is inert unless BOTH the flag and the
-// client identity are set. Default OFF. Never set it for a Play build (the check below fails it).
 val experimental = (project.findProperty("wingman.experimental") as String?)?.toBooleanStrictOrNull() ?: false
 buildConfigField("boolean", "WINGMAN_EXPERIMENTAL", experimental.toString())
-// Client identity documented by f0rr0/hinge-rs@cffe397 (src/settings.rs, src/client/transport.rs,
-// src/client/sendbird.rs). Values live in ~/.gradle/gradle.properties of the person building the
-// experimental APK, never in this repo. Empty in every non-experimental build.
 fun hinge(name: String) = quoted(if (experimental) prop("wingman.hinge.$name") else "")
 buildConfigField("String", "HINGE_BASE_URL", hinge("baseUrl"))
-buildConfigField("String", "HINGE_SENDBIRD_API_URL", hinge("sendbirdApiUrl"))
-buildConfigField("String", "HINGE_SENDBIRD_WS_URL", hinge("sendbirdWsUrl"))
-buildConfigField("String", "HINGE_SENDBIRD_WS_ORIGIN", hinge("sendbirdWsOrigin"))
-buildConfigField("String", "HINGE_SENDBIRD_APP_ID", hinge("sendbirdAppId"))
-buildConfigField("String", "HINGE_SENDBIRD_SDK_VERSION", hinge("sendbirdSdkVersion"))
-buildConfigField("String", "HINGE_APP_VERSION", hinge("appVersion"))
-buildConfigField("String", "HINGE_BUILD_NUMBER", hinge("buildNumber"))
-buildConfigField("String", "HINGE_OS_VERSION", hinge("osVersion"))
-buildConfigField("String", "HINGE_DEVICE_PLATFORM", hinge("devicePlatform"))
-buildConfigField("String", "HINGE_DEVICE_MODEL_CODE", hinge("deviceModelCode"))
-buildConfigField("String", "HINGE_DEVICE_REGION", hinge("deviceRegion"))
-buildConfigField("String", "HINGE_ACCEPT_LANGUAGE", hinge("acceptLanguage"))
+// ... one field per property in the table below, HINGE_USER_AGENT last
 ```
 
-and, at the end of the file:
+and, at the end of the file, a guard that fails the build when the flag is combined with an
+Android App Bundle task (`bundle<BuildType>`, `package<BuildType>Bundle`,
+`sign<BuildType>Bundle`; D-023: never a Play build). It matches those names exactly: AGP's
+internal `bundle<BuildType>ClassesTo*Jar` tasks, which unit tests depend on, are not app bundles
+(a `startsWith("bundle")` check would have failed `testDebugUnitTest` with the flag on).
+
+### 3b. Building the experimental APK (owner, locally)
+
+1. Put the client identity in `~/.gradle/gradle.properties` (your home directory, **never** the
+   repo's `android/gradle.properties`), copied from `f0rr0/hinge-rs` at `cffe397`:
+
+   | Property | `BuildConfig` field | Where in the reference |
+   |---|---|---|
+   | `wingman.hinge.baseUrl` | `HINGE_BASE_URL` | `Settings::default()` in `src/settings.rs` |
+   | `wingman.hinge.sendbirdApiUrl` | `HINGE_SENDBIRD_API_URL` | derived in `src/settings.rs`: `https://api-<lower-cased app id>.sendbird.com` |
+   | `wingman.hinge.sendbirdWsUrl` | `HINGE_SENDBIRD_WS_URL` | derived in `src/settings.rs`: `wss://ws-<lower-cased app id>.sendbird.com` |
+   | `wingman.hinge.sendbirdWsOrigin` | `HINGE_SENDBIRD_WS_ORIGIN` | `SENDBIRD_WS_ORIGIN` in `src/client/sendbird.rs` (optional; empty = no `Origin` header) |
+   | `wingman.hinge.sendbirdAppId` | `HINGE_SENDBIRD_APP_ID` | `src/settings.rs` |
+   | `wingman.hinge.sendbirdSdkVersion` | `HINGE_SENDBIRD_SDK_VERSION` | `src/settings.rs` |
+   | `wingman.hinge.appVersion` | `HINGE_APP_VERSION` | `src/settings.rs` |
+   | `wingman.hinge.buildNumber` | `HINGE_BUILD_NUMBER` | `src/settings.rs` |
+   | `wingman.hinge.osVersion` | `HINGE_OS_VERSION` | `src/settings.rs` |
+   | `wingman.hinge.devicePlatform` | `HINGE_DEVICE_PLATFORM` | `x-device-platform` in `src/client/transport.rs` |
+   | `wingman.hinge.deviceModelCode` | `HINGE_DEVICE_MODEL_CODE` | `x-device-model-code` in `src/client/transport.rs` |
+   | `wingman.hinge.deviceRegion` | `HINGE_DEVICE_REGION` | your own region (the reference's `IN` is a placeholder) |
+   | `wingman.hinge.acceptLanguage` | `HINGE_ACCEPT_LANGUAGE` | your own language (the reference's `en-GB` is a placeholder) |
+   | `wingman.hinge.userAgent` | `HINGE_USER_AGENT` | the complete `user-agent` built in `src/client/transport.rs` (`Hinge/<build number> CFNetwork/<v> Darwin/<v>`), with your build number filled in |
+
+   Every value except `sendbirdWsOrigin` is required; if any is missing the build still succeeds
+   but the connector stays inert (no Settings row). Never guess a value: when Hinge answers 426,
+   re-check the reference. Every reference identifies itself as the **iOS** app; no reference
+   documents Android values (matrix §4).
+
+2. Build and install the debug APK with the flag (plus the usual backend and sign-in properties,
+   `docs/android_auth.md`):
+
+   ```bash
+   cd android
+   ./gradlew :app:assembleDebug -Pwingman.experimental=true -Pwingman.useMockApi=false
+   adb install -r app/build/outputs/apk/debug/app-debug.apk
+   ```
+
+   `bundleDebug`/`bundleRelease` with the flag fail on purpose. Do not distribute this APK beyond
+   the people the owner decides on (I-031).
+
+3. Settings now shows **Hinge (experimental)** under "Dating apps (notifications)"; **Open** starts
+   the opt-in screen (§4). Without the flag or with an incomplete identity the row is not shown.
+
+**Open (D-026):** the non-experimental APK still *contains* the inert connector classes. D-023
+says a Play build contains no unofficial-API code at all, so before any Play submission
+(`docs/beta/release_checklist.md` has Play as NO-GO today) `integrations/hinge` except
+`notifications/` must move to a separate source set or flavor that only the experimental build
+compiles. The package layout already separates the two.
+
+### 3c. Wiring (`MainActivity.onCreate`)
 
 ```kotlin
-// D-023: an experimental build must never become a Play bundle.
-gradle.taskGraph.whenReady {
-    val experimental = (project.findProperty("wingman.experimental") as String?)?.toBooleanStrictOrNull() ?: false
-    if (experimental && allTasks.any { it.name.startsWith("bundle") }) {
-        throw GradleException("wingman.experimental=true cannot build an app bundle (D-023: sideload/internal only)")
-    }
-}
+HingeModule.init(applicationContext, container) // after SmsConnectorRuntime, before NotificationSyncRuntime / setContent
 ```
 
-Build the experimental APK with `./gradlew :app:assembleDebug -Pwingman.experimental=true`
-(plus the `wingman.hinge.*` properties). CI and every other build stay OFF.
+It runs before anything builds the notification core. The Hinge notification plugin is also in
+`PlatformPlugins.all()` next to Tinder and Bumble, so a cold process started by the listener
+service has it too; `HingeModule.installNotificationPlugin` then finds it registered and does
+nothing. The connector itself is built only in the experimental build with a complete identity.
 
-**Where each value comes from** (copy them from the reference at `cffe397`; re-check the
-reference when Hinge answers 426, never guess): `baseUrl`, `sendbirdAppId`, `sendbirdSdkVersion`,
-`appVersion`, `buildNumber`, `osVersion` are the `Settings::default()` values in `src/settings.rs`
-(the Sendbird API and WS hosts are derived there from the lower-cased app id as
-`https://api-<id>.sendbird.com` and `wss://ws-<id>.sendbird.com`). `devicePlatform` and
-`deviceModelCode` are the `x-device-platform` and `x-device-model-code` values in
-`src/client/transport.rs`; `sendbirdWsOrigin` is `SENDBIRD_WS_ORIGIN` in
-`src/client/sendbird.rs`. `deviceRegion` and `acceptLanguage` should match the owner (the
-reference's defaults `IN` / `en-GB` are placeholders). Note that every reference identifies
-itself as the **iOS** app; no reference documents Android values (matrix §4).
+### 3d. Manifest
 
-**Follow-up (recommended):** move `integrations/hinge` except `notifications/` into an
-`experimental` product-flavor source set once flavors exist, so the non-experimental APK does
-not even contain the code (D-023 says the Play build contains no unofficial-API code; today it
-contains it inert). The package layout already separates the two.
-
-### 3b. Wiring (one line, `MainActivity.onCreate`, after the container is built)
-
-```kotlin
-HingeModule.init(applicationContext, container) // com.wingman.integrations.hinge.android.HingeModule
-```
-
-It registers the Hinge notification plugin with `NotificationConnectorRuntime.installPlugins`,
-merged with any plugins already registered (so the Tinder/Bumble module's registration is kept,
-in either order), and does nothing else unless the experimental flag and identity are present.
-It must run before the notification core is first built (WING-017 rule).
-
-### 3c. Manifest snippet (integrator-owned manifest)
-
-```xml
-<!-- WING-029: opt-in screen of the experimental Hinge connector. Not exported: reached from
-     Settings > Connections, shown only when HingeModule.connector() != null. -->
-<activity
-    android:name=".integrations.hinge.android.HingeExperimentalActivity"
-    android:exported="false"
-    android:label="Hinge (experimental)" />
-<!-- Optional (Android 13+): lets the connector post "Hinge connector stopped". Without it the
-     reason is shown in-app only. -->
-<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-```
-
-No SMS, notification-listener, accessibility or foreground-service permission is needed by the
+`HingeExperimentalActivity` is declared with `android:exported="false"` (reached only from the
+Settings row). `POST_NOTIFICATIONS` is **not** requested: the stop reason is shown in-app, and a
+system notification is posted only if the permission is already granted. No SMS,
+notification-listener, accessibility or foreground-service permission is needed by the
 experimental connector. `co.hinge.app` is already in `<queries>` (WING-017).
 
-### 3d. Dependencies
+### 3e. Dependencies
 
 None added. OkHttp (REST and WebSocket), WorkManager and kotlinx.serialization are already in
 `android/app/build.gradle.kts`; MockWebServer was already a test dependency.
