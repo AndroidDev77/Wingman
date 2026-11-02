@@ -18,7 +18,7 @@ Android-first AI dating assistant. It drafts personalized replies and, only on v
 | Doc | |
 |---|---|
 | [`docs/beta/README.md`](docs/beta/README.md) | Beta hub and tester terms |
-| [`docs/beta/install.md`](docs/beta/install.md) | Install the APK, backend options, dev-token sign-in, SMS pairing, device matrix |
+| [`docs/beta/install.md`](docs/beta/install.md) | Install the APK, backend options, sign-in (Google via Auth0, UNVERIFIED; dev-token fallback), SMS pairing, device matrix |
 | [`docs/beta/known_limitations.md`](docs/beta/known_limitations.md) | Supported-platform table and known gaps |
 | [`docs/beta/walkthrough.md`](docs/beta/walkthrough.md) | Screens and sample conversations |
 | [`docs/beta/release_checklist.md`](docs/beta/release_checklist.md) | Operator checklist and go/no-go |
