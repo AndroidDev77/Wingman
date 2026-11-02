@@ -8,6 +8,7 @@ import androidx.test.uiautomator.Direction
 import androidx.test.uiautomator.UiDevice
 import androidx.test.uiautomator.UiObject2
 import androidx.test.uiautomator.Until
+import java.util.regex.Pattern
 
 /*
  * WING-025: UiAutomator helpers that drive the REAL app exactly as a user does, through the
@@ -27,6 +28,7 @@ const val SCROLL_SPEED = 1_500
 
 class E2eDevice(private val timeoutMs: Long = UI_TIMEOUT_MS) {
     val device: UiDevice = UiDevice.getInstance(InstrumentationRegistry.getInstrumentation())
+    private val appPackage: String = InstrumentationRegistry.getInstrumentation().targetContext.packageName
 
     fun has(sel: BySelector): Boolean = device.hasObject(sel)
 
@@ -145,10 +147,13 @@ class E2eDevice(private val timeoutMs: Long = UI_TIMEOUT_MS) {
         for (direction in listOf(Direction.DOWN, Direction.UP)) {
             for (i in 0 until maxSwipes) {
                 val scrollable = device.findObjects(By.scrollable(true)).maxByOrNull { bounds(it).height() } ?: break
-                val more = scrollable.scroll(direction, 0.5f, SCROLL_SPEED)
+                val before = screenFingerprint()
+                // UiObject2.scroll's return value relies on scroll accessibility events, which
+                // Compose does not report reliably, so the end is detected by an unchanged screen.
+                runCatching { scrollable.scroll(direction, 0.5f, SCROLL_SPEED) }
                 device.waitForIdle()
                 device.findObject(sel)?.let { return it }
-                if (!more) break // reached the end in this direction
+                if (screenFingerprint() == before) break // reached the end in this direction
             }
         }
         return device.findObject(sel) ?: run {
@@ -156,6 +161,11 @@ class E2eDevice(private val timeoutMs: Long = UI_TIMEOUT_MS) {
             throw AssertionError("could not scroll to $what")
         }
     }
+
+    /** The visible texts and their positions: unchanged after a swipe means nothing scrolled. */
+    private fun screenFingerprint(): String = runCatching {
+        device.findObjects(By.pkg(appPackage).text(Pattern.compile(".+"))).joinToString("|") { "${it.text}@${bounds(it).top}" }
+    }.getOrDefault("")
 
     /**
      * Waits (condition-based, up to [timeoutMs]) until [expected] is shown, keeping the always-present
