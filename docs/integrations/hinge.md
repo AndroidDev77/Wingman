@@ -13,10 +13,15 @@ experimental API per WING-021; never in a Play build). Design source:
 Protocol reference: `f0rr0/hinge-rs` at `cffe397` (MIT OR Apache-2.0), reimplemented in Kotlin;
 see `android/app/src/experimental/java/com/wingman/integrations/hinge/THIRD_PARTY_NOTICES.md`.
 
-> **Open owner decisions that gate shipping (not code):** I-030 (Hinge terms §2d item 11 restrict
-> automatically generated content; this affects AI drafts on every Hinge path, the notification
-> fallback included) and I-031 (who may install the sideloaded experimental build, its signing,
-> and the final consent text and version; the code uses `d021-v1`).
+> **Hinge terms (I-030, closed by D-031 on 2026-11-03):** Hinge's terms §2d item 11 restrict
+> automatically generated content. The owner accepts this as a risk for the experimental,
+> pre-product stage, so AI drafts are allowed on both Hinge paths: notification-assisted (you send
+> in Hinge) and the experimental connector (approval on every reply). Everything else is unchanged:
+> off by default, ban-risk opt-in, tokens on the device, no autopilot, no swipes, never a Play
+> build, every capability UNVERIFIED until the owner's live tests.
+>
+> **Open owner decision that gates shipping (not code):** I-031 (who may install the sideloaded
+> experimental build, its signing, and the final consent text and version; the code uses `d021-v1`).
 
 Contents:
 1. [What was built](#1-what-was-built)
@@ -364,7 +369,7 @@ for the app version tested (ADR 0007, D-022). Autopilot stays a separate, explic
 | Capability | Experimental API path | Notification fallback | Why |
 |---|---|---|---|
 | read | **UNVERIFIED** | **UNVERIFIED** | Implemented and JVM-tested; never run against Hinge (L2 to L4) / no device run of the notification shapes |
-| draft | **UNSUPPORTED** (Wingman drafts in its own UI; nothing is written into Hinge's compose field) | **UNSUPPORTED** (assisted copy/open-app only) | By design; I-030 may restrict AI drafts on Hinge altogether |
+| draft | **UNSUPPORTED** (Wingman drafts in its own UI; nothing is written into Hinge's compose field) | **UNSUPPORTED** (assisted copy/open-app only) | By design; AI drafts in Wingman's UI allowed on both paths (D-031, Hinge terms risk accepted) |
 | send | **UNVERIFIED**, approval-only | **UNVERIFIED** (RemoteInput only if present; ends as `lease_expired`) | Never run (L6 to L8) |
 | profile_read | **UNSUPPORTED** in v1 | **UNSUPPORTED** | Profile routes not allowlisted |
 | swipe | **UNSUPPORTED** (handoff: BLOCKED by policy, D-021) | **UNSUPPORTED** | No automated swiping, likes or first messages |

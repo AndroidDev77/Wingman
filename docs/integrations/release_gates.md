@@ -22,10 +22,10 @@ autonomous today, because nothing has been verified on a real device (see
 | `sms.autopilot` | disabled | approval, never a send | I-003, I-024, D-019 |
 | `tinder.notification_assisted_reply` | assisted_only | assisted delivery, never a send | N1-N13/T1-T8 not run; I-032 |
 | `bumble.notification_assisted_reply` | assisted_only | assisted delivery | as Tinder; B1-B2 |
-| `hinge.notification_assisted_reply` | assisted_only | assisted delivery | **I-030** (owner decision before any Hinge draft is shown) |
+| `hinge.notification_assisted_reply` | assisted_only | assisted delivery | N1-N13 not run (I-030 closed by D-031: drafts allowed, UNVERIFIED, experimental) |
 | `notification.direct_reply` | disabled | no instruction ever exists (send UNSUPPORTED) | N9/N13 not run; I-033 |
 | `dating.autopilot` | disabled | assisted delivery | Wingman cannot send in dating apps |
-| `hinge.experimental_api` | experimental (experimental build only) | approval, autopilot refused | L0-L10 not run; I-030, I-031 |
+| `hinge.experimental_api` | experimental (experimental build only) | approval, autopilot refused | L0-L10 not run; I-031; never a Play build (drafts allowed per D-031, approval-only) |
 | `imessage.companion_reply` | experimental (unsigned companion) | approval | I-035, I-034 |
 | `imessage.autopilot` | disabled | approval | I-035 |
 | `discovery.review` | assisted_only | execute `422 swipe_execution_disabled` | no `profile_read` anywhere |
@@ -70,14 +70,18 @@ two from drifting. No backend or app file reads the gate file (no production cod
 
 ## 5. Rollout notes
 
-- **Private beta (v0.1.0-beta.x):** SMS with approval on every reply; Tinder and Bumble
-  notification-assisted drafts behind the per-app reading opt-in, labeled UNVERIFIED; discovery
-  review only. No autopilot anywhere except the dev `mock` simulator.
+- **Private beta (v0.1.0-beta.x):** SMS with approval on every reply; Tinder, Bumble and Hinge
+  notification-assisted drafts behind the per-app reading opt-in, labeled UNVERIFIED (Hinge also
+  labeled experimental: the owner accepted its terms risk, D-031); discovery review only. No autopilot anywhere except the dev `mock` simulator.
 - **Not in the beta build:** the Hinge experimental connector (experimental build only, owner
   live test first), the iMessage companion (until signed and run on a Mac), direct reply from
   notifications, swipe execution, calendar.
-- **Hinge drafts on any path:** hold until I-030 is decided, even though the gate is
-  `assisted_only` (the backend path is ready; the decision is legal/product).
+- **Hinge drafts on any path:** **GO** since 2026-11-03 (D-031, closes I-030). The owner accepts
+  Hinge's terms on automatically generated content as a risk for this experimental, pre-product
+  stage. Notification path: assisted only (you send in Hinge), UNVERIFIED. Experimental connector:
+  approval on every reply, still NO-GO for any release (I-031, sideloaded build only, never Play).
+  No autopilot, no swipes, off by default; every Hinge capability UNVERIFIED until the owner's
+  live tests.
 - **Paid launch:** still refused by `check.sh --paid` while G5 is ⛔.
 
 ## 6. Proposed edits to `docs/beta/known_limitations.md` (owned by WING-026; for the integrator)
@@ -89,7 +93,7 @@ that are now built and UNVERIFIED. Proposed replacement rows:
 |---|---|---|---|---|
 | Tinder (notifications) | UNVERIFIED | UNSUPPORTED (assisted only: you send by hand) | **Assisted only**, opt-in per app | WING-027; mock E2E P2 (`cross_platform_test_matrix.md`); never run on a phone |
 | Bumble (notifications) | UNVERIFIED | UNSUPPORTED (assisted only) | **Assisted only**, opt-in per app | WING-028; as Tinder |
-| Hinge (notifications) | UNVERIFIED | UNSUPPORTED (assisted only) | Built; drafts held pending I-030 | WING-029 |
+| Hinge (notifications) | UNVERIFIED | UNSUPPORTED (assisted only) | **Assisted only, experimental**, opt-in per app (D-031) | WING-029; as Tinder; Hinge terms risk accepted by the owner |
 | Hinge (experimental API) | UNVERIFIED | UNVERIFIED, approval only | **Experimental**, not in the beta build | WING-029; owner live test L0-L10 not run |
 | iMessage (Mac companion) | UNVERIFIED | UNVERIFIED, approval only | **Experimental**, not distributed (unsigned) | WING-030; I-034, I-035 |
 | Android notification direct reply | n/a | Not available | Disabled | No RemoteInput reply verified |

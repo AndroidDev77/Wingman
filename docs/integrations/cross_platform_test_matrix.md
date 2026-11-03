@@ -69,10 +69,10 @@ Enforced by `config/release/feature_gates.json` (`docs/integrations/release_gate
 | SMS reply after approval | **GO (limited beta, labeled UNVERIFIED)** | assisted only | Backend path proven with mock (P1, C3-C5); real phone never run (I-003) |
 | SMS autopilot | **NO-GO** | disabled | Needs `send` VERIFIED on a phone (G5) and periodic sync (I-024), D-019 |
 | Tinder / Bumble notification-assisted drafts | **GO as assisted-only, behind the reading opt-in, labeled UNVERIFIED** | assisted only | Backend never sends and never drafts for non-chat or unlinked events (P2); real notification shapes unknown until N1-N13 |
-| Hinge notification-assisted drafts | **NO-GO until the owner decides I-030** | assisted only (gate) | Hinge's terms restrict AI-generated content (I-030); technically identical to Tinder/Bumble |
+| Hinge notification-assisted drafts | **GO as assisted-only, experimental, behind the reading opt-in, labeled UNVERIFIED** (D-031) | assisted only | Owner accepted the Hinge terms risk (I-030 closed by D-031, experimental pre-product stage); technically identical to Tinder/Bumble (P2); real notification shapes unknown until N1-N13 |
 | Direct reply from notifications (RemoteInput) | **NO-GO** | disabled | No reply action observed for any app (N9/N13 not run); outcome would be unknown (I-033) |
 | Autopilot on Tinder / Bumble / Hinge | **NO-GO** | disabled | Wingman cannot send there |
-| Hinge experimental API (approval-only) | **NO-GO for any release; owner-only sideload for the live test** | experimental | L0-L10 not run, `verify-experimental` not recorded, I-030, I-031, ban risk (D-021) |
+| Hinge experimental API (approval-only) | **NO-GO for any release; owner-only sideload for the live test** | experimental | L0-L10 not run, `verify-experimental` not recorded, I-031, ban risk (D-021); never a Play build (D-023). AI drafts themselves allowed, approval on every reply (D-031) |
 | iMessage companion replies after approval | **NO-GO until the first real-Mac run** | experimental | Unsigned, M1-M14/A1-A17 not run (I-035), Full Disk Access risk (I-034) |
 | iMessage autopilot | **NO-GO** | disabled | send UNVERIFIED |
 | Discovery review (rank and decide in Wingman) | **GO as assisted-only** | assisted only | Records decisions only; nothing happens in any app (P5) |
@@ -84,7 +84,7 @@ Enforced by `config/release/feature_gates.json` (`docs/integrations/release_gate
 1. **Owner: run the SMS device checklist** (`android_sms.md` §7 D3, D4-D7, B3, then P1-P8) on a
    spare phone with a SIM, record it as `R-SMS-<date>` (§7), then the operator `verify` CLI.
    This alone unblocks G5, the paid-launch gate and any SMS autopilot discussion (I-003).
-2. **Owner: decide I-030** (Hinge terms vs AI drafts) before any Hinge draft is shown, on either path.
+2. ~~**Owner: decide I-030** (Hinge terms vs AI drafts).~~ **Done 2026-11-03 (D-031):** risk accepted for the experimental, pre-product stage; Hinge drafts approval-only / assisted-only, UNVERIFIED.
 3. **Owner: run N1-N13 + T1-T8 for Tinder and Bumble** on a phone with test accounts and record
    the real notification shapes; fix the plugin rules from them (synthetic today).
 4. **Owner: Apple Developer ID, notarization and the companion's Auth0 Native app** (I-035), then
@@ -112,8 +112,8 @@ CLI with evidence can verify, and it has never been used for a real platform.
 | Notification listener core | WING-017 PR #46 | `android/.../integrations/notifications/` | (shared) | — | — | replies only from a claimed instruction; `submitted` never `sent` | — | — | none | I-003, I-033 |
 | Tinder notifications | WING-027 PR #50 | `TinderNotificationPlugin.kt` (`com.tinder`, cert not pinned) | `tinder` / `notification` | UNVERIFIED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | none (shapes synthetic) | I-003, I-032 |
 | Bumble notifications | WING-028 PR #50 | `BumbleNotificationPlugin.kt` (`com.bumble.app`) | `bumble` / `notification` | UNVERIFIED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | none | I-003, I-032 |
-| Hinge notifications | WING-029 PR #51 | `integrations/hinge/notifications/` (`co.hinge.app`) | `hinge` / `notification` | UNVERIFIED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | none | I-003, I-030 |
-| Hinge experimental API | WING-029 PR #51, #55 (flag-gated, `src/experimental`) | `HingeConsent.kt` `HingeCapabilities.document()` | `hinge` / `unofficial_api` (consent required) | UNVERIFIED | UNSUPPORTED | UNVERIFIED (approval-only until `verify-experimental`) | UNSUPPORTED (not allowlisted) | UNSUPPORTED (policy) | none (L0-L10 not run) | I-030, I-031, D-021 |
+| Hinge notifications | WING-029 PR #51 | `integrations/hinge/notifications/` (`co.hinge.app`) | `hinge` / `notification` | UNVERIFIED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | UNSUPPORTED | none | I-003 (I-030 closed by D-031) |
+| Hinge experimental API | WING-029 PR #51, #55 (flag-gated, `src/experimental`) | `HingeConsent.kt` `HingeCapabilities.document()` | `hinge` / `unofficial_api` (consent required) | UNVERIFIED | UNSUPPORTED | UNVERIFIED (approval-only until `verify-experimental`) | UNSUPPORTED (not allowlisted) | UNSUPPORTED (policy) | none (L0-L10 not run) | I-031, D-021 (I-030 closed by D-031) |
 | iMessage companion | WING-030 PR #54 | `macos/wingman-companion` (`Capabilities.swift`) | `imessage` / `companion` | UNVERIFIED (UNSUPPORTED without Full Disk Access) | UNSUPPORTED | UNVERIFIED (UNSUPPORTED if Automation denied or draft-only) | UNSUPPORTED | UNSUPPORTED | none (no Mac run) | I-034, I-035 |
 | Discovery and swipe | WING-019 PR #49, WING-031 PR #55 | `backend/app/discovery/`, `features/discovery/` | any dating connection | — | — | — | profiles pasted by hand only | **no executor** (`queued` terminal, nothing sets `executed`) | none | D-027 |
 | Mock simulator | WING-006 | `backend/app/connectors/mock.py` | `mock` / `simulator` (refused in prod) | VERIFIED (simulator only) | UNSUPPORTED | VERIFIED (simulator only) | — | UNSUPPORTED | n/a, not a platform | — |
@@ -138,8 +138,8 @@ whose row does not say so.
 | Android SMS | none (needs Android 10+ phone with SIM) | NOT RUN | NOT RUN | NOT RUN | NOT RUN (disabled) | NOT RUN | n/a | n/a | every reply approved | BLOCKED: no physical phone available to agents (I-003); emulator run does not count | R-SMS (§5.1), `android_sms.md` §7 | — |
 | Tinder (notification) | none (needs phone + 2 test accounts) | NOT RUN | NOT RUN | NOT RUN | n/a (send UNSUPPORTED) | n/a (user sends by hand) | n/a | n/a | assisted only | BLOCKED: owner device and test accounts (I-003) | R-TINDER (§5.2) | — |
 | Bumble (notification) | none | NOT RUN | NOT RUN | NOT RUN | n/a | n/a | n/a | n/a | assisted only | BLOCKED: owner device and test accounts (I-003) | R-BUMBLE (§5.2) | — |
-| Hinge (notification) | none | NOT RUN | NOT RUN | NOT RUN | n/a | n/a | n/a | n/a | assisted only | BLOCKED: owner device, test accounts, and I-030 | R-HINGE-N (§5.2) | — |
-| Hinge (experimental) | none (needs experimental APK + owner's own account) | NOT RUN | NOT RUN | NOT RUN | NOT RUN (approval-only) | NOT RUN | n/a (not allowlisted) | n/a (policy) | every reply approved | BLOCKED: owner live test L0-L10, I-030, I-031 | R-HINGE-X (§5.3) | — |
+| Hinge (notification) | none | NOT RUN | NOT RUN | NOT RUN | n/a | n/a | n/a | n/a | assisted only | BLOCKED: owner device and test accounts (I-030 closed by D-031) | R-HINGE-N (§5.2) | — |
+| Hinge (experimental) | none (needs experimental APK + owner's own account) | NOT RUN | NOT RUN | NOT RUN | NOT RUN (approval-only) | NOT RUN | n/a (not allowlisted) | n/a (policy) | every reply approved | BLOCKED: owner live test L0-L10, I-031 (I-030 closed by D-031) | R-HINGE-X (§5.3) | — |
 | iMessage (Mac companion) | none (needs macOS 14+, signed app) | NOT RUN | NOT RUN | NOT RUN | NOT RUN (disabled) | NOT RUN | n/a | n/a | every reply approved; groups notice only | BLOCKED: Developer ID / notarization / Auth0 Native app (I-035), I-034 | R-IMESSAGE (§5.4) | — |
 | Profile / swipe | any | n/a | n/a | n/a | n/a | n/a | NOT RUN (no profile_read anywhere) | NOT RUN (no swipe path exists) | decisions recorded only | BLOCKED: nothing to run (D-027, D-023) | R-SWIPE (§5.5) | — |
 
@@ -239,7 +239,7 @@ PASS of S2 makes `read` eligible, S3-S5 `send` (operator `verify` CLI with
 | T5 | T7/N11: revoke notification access | reading stops, capability downgrade uploaded | system settings | backend evidence: `capabilities.read = UNSUPPORTED` | next message not recorded |
 | T6 | T8/N12: privacy | no text or names in logs | none | `redaction_check.py` on the logcat | clean |
 
-Bumble adds `bumble.md` B1-B2; Hinge (notification) runs only after I-030 is decided.
+Bumble adds `bumble.md` B1-B2; Hinge (notification) runs the same checks (I-030 closed by D-031: drafts allowed, assisted only).
 
 ### 5.3 R-HINGE-X: experimental Hinge API (owner only)
 
