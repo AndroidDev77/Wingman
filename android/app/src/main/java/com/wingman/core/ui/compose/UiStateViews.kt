@@ -5,7 +5,11 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
+import androidx.compose.material3.Icon
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -34,9 +38,7 @@ fun <T> UiStateContent(
 ) {
     when (state) {
         UiState.Loading -> CenteredBox(modifier) { CircularProgressIndicator() }
-        UiState.Empty -> CenteredBox(modifier) {
-            Text(emptyMessage, style = MaterialTheme.typography.bodyLarge, textAlign = TextAlign.Center)
-        }
+        UiState.Empty -> CenteredBox(modifier) { EmptyState(emptyMessage) }
         is UiState.Error -> ErrorView(state.error, onRetry, modifier)
         is UiState.Content -> content(state.data)
     }
@@ -46,6 +48,12 @@ fun <T> UiStateContent(
 fun ErrorView(error: UiError, onRetry: () -> Unit, modifier: Modifier = Modifier) {
     CenteredBox(modifier) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Icon(
+                Icons.Filled.Warning,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.error,
+                modifier = Modifier.size(40.dp),
+            )
             Text(
                 error.message,
                 style = MaterialTheme.typography.bodyLarge,
@@ -69,6 +77,18 @@ private fun ErrorPreview() = WingmanTheme {
         UiState.Error(UiError("Can't reach Wingman. Check your connection and try again.", null, retryable = true, isNetwork = true)),
         onRetry = {},
     ) {}
+}
+
+@Preview(name = "Empty")
+@Composable
+private fun EmptyPreview() = WingmanTheme {
+    androidx.compose.material3.Surface { UiStateContent<Unit>(UiState.Empty, onRetry = {}, emptyMessage = "No drafts are waiting for your approval.") {} }
+}
+
+@Preview(name = "Empty dark")
+@Composable
+private fun EmptyDarkPreview() = WingmanTheme(darkTheme = true) {
+    androidx.compose.material3.Surface { UiStateContent<Unit>(UiState.Empty, onRetry = {}, emptyMessage = "No messages yet.") {} }
 }
 
 @Preview(name = "Error (not retryable)")
