@@ -6,19 +6,27 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -26,6 +34,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
@@ -36,11 +46,14 @@ import com.wingman.core.api.mock.MockFixtures
 import com.wingman.core.model.AutomationMode
 import com.wingman.core.ui.LoadableState
 import com.wingman.core.ui.UiState
+import com.wingman.core.ui.compose.ContactAvatar
 import com.wingman.core.ui.compose.LocalAppContainer
+import com.wingman.core.ui.compose.SectionCard
 import com.wingman.core.ui.compose.UiStateContent
 import com.wingman.core.ui.compose.wingmanViewModel
 import com.wingman.features.auth.SignOutButton
 import com.wingman.navigation.ScreenContent
+import com.wingman.ui.theme.Spacing
 import com.wingman.ui.theme.WingmanTheme
 
 /*
@@ -103,24 +116,22 @@ fun SettingsScreen() {
         // I-011 (integrator): sign out of the encrypted session. Renders nothing in mock-API
         // builds, which have no session.
         footer = {
-            HorizontalDivider()
             // I-020: pair / unpair this phone's SMS as a Wingman connection.
             SectionTitle("Connections")
-            com.wingman.features.connections.SmsConnectionSection()
+            SectionCard { com.wingman.features.connections.SmsConnectionSection() }
             // WING-027/028 (I-033): dating apps through their notifications, assisted only.
             SectionTitle("Dating apps (notifications)")
-            com.wingman.features.connections.NotificationConnectionSection()
+            SectionCard { com.wingman.features.connections.NotificationConnectionSection() }
             // WING-031: per-connection auto-swipe, off and explained unless swipe is VERIFIED.
             SectionTitle("Auto-swipe")
-            com.wingman.features.discovery.AutoSwipeSettingsSection()
+            SectionCard { com.wingman.features.discovery.AutoSwipeSettingsSection() }
             // WING-029 (D-021, D-023, D-026): only in the experimental build with the client identity.
             for (entry in com.wingman.experimental.ExperimentalModules.settingsEntries()) {
                 SectionTitle(entry.section)
-                ExperimentalRow(entry)
+                SectionCard { ExperimentalRow(entry) }
             }
-            HorizontalDivider()
             SectionTitle("Account")
-            SignOutButton()
+            SectionCard { SignOutButton() }
         },
     )
 }
@@ -138,10 +149,17 @@ fun SettingsContent(
 ) {
     UiStateContent(state, onRetry = onRetry) { c ->
         Column(
-            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp),
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = Spacing.screen, vertical = Spacing.lg),
+            verticalArrangement = Arrangement.spacedBy(Spacing.md),
         ) {
-            Text("Settings", style = MaterialTheme.typography.headlineSmall)
+            Column(verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
+                Text("Settings", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.semantics { heading() })
+                Text(
+                    "Your goal, texting style and automation apply to everyone unless you set a per-contact override.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             c.conflict?.let { conflict ->
                 ConflictBanner(
                     conflict.message,
@@ -160,19 +178,16 @@ fun SettingsContent(
                 onSelect = { mode -> editor?.edit { it.copy(intentMode = mode) } },
                 onCustomDescription = { text -> editor?.edit { it.copy(customDescription = text) } },
             )
-            HorizontalDivider()
 
             SectionTitle("Your texting style")
-            StyleEditor(c.form.style, c.errors) { style -> editor?.editStyle { style } }
-            HorizontalDivider()
+            SectionCard { StyleEditor(c.form.style, c.errors) { style -> editor?.editStyle { style } } }
 
             SectionTitle("Automation")
             AutomationModeSelector(c.form.automation.mode, onRequest = { mode -> editor?.requestAutomationMode(mode ?: AutomationMode.MANUAL) })
             ChannelSummary(c.channels)
-            AutomationLimitsEditor(c.form.automation, c.errors) { a -> editor?.editAutomation { a } }
+            SectionCard { AutomationLimitsEditor(c.form.automation, c.errors) { a -> editor?.editAutomation { a } } }
 
             SaveBar(c, onSave = { editor?.save() })
-            HorizontalDivider()
 
             SectionTitle("Per-contact overrides")
             Text(
@@ -180,7 +195,7 @@ fun SettingsContent(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            ContactList(contacts, onRetryContacts, onOpenContact)
+            SectionCard { ContactList(contacts, onRetryContacts, onOpenContact) }
             footer()
         }
         c.pendingAutomation?.let { pending ->
@@ -191,8 +206,13 @@ fun SettingsContent(
 
 @Composable
 private fun SaveBar(c: EditorContent, onSave: () -> Unit) {
+    Text(
+        "Save applies your goal, style and automation settings above.",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-        Button(onClick = onSave, enabled = !c.isSaving && c.conflict == null) { Text("Save") }
+        Button(onClick = onSave, enabled = !c.isSaving && c.conflict == null, modifier = Modifier.heightIn(min = Spacing.touchTarget)) { Text("Save") }
         when (val s = c.saveStatus) {
             SaveStatus.Saving -> CircularProgressIndicator(Modifier.padding(4.dp))
             is SaveStatus.Saved -> Text("Saved", style = MaterialTheme.typography.bodySmall)
@@ -207,8 +227,12 @@ private fun SaveBar(c: EditorContent, onSave: () -> Unit) {
 
 @Composable
 fun ChannelSummary(channels: ChannelInfo) {
-    Card {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Card(
+        Modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh),
+    ) {
+        Column(Modifier.padding(Spacing.lg), verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("Channels", style = MaterialTheme.typography.labelLarge)
             when {
                 !channels.known -> Text("Channel status couldn't be loaded. No channel is treated as able to send automatically.", style = MaterialTheme.typography.bodySmall)
@@ -229,13 +253,21 @@ private fun ContactList(contacts: UiState<List<ContactChoice>>, onRetry: () -> U
             if (contacts.error.retryable) TextButton(onClick = onRetry) { Text("Retry") }
         }
         is UiState.Content -> Column {
-            contacts.data.forEach { contact ->
-                Text(
-                    contact.name,
-                    style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.fillMaxWidth().clickable { onOpen(contact.id) }.padding(vertical = 12.dp),
-                )
-                HorizontalDivider()
+            contacts.data.forEachIndexed { i, contact ->
+                if (i > 0) HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = Spacing.touchTarget)
+                        .clickable(onClickLabel = "Edit overrides for ${contact.name}") { onOpen(contact.id) }
+                        .padding(vertical = Spacing.sm),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.md),
+                ) {
+                    ContactAvatar(contact.name, size = 32.dp)
+                    Text(contact.name, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                    Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
     }
@@ -251,6 +283,7 @@ fun ContactOverrideScreen(contactId: String, contactName: String, onBack: () -> 
     ContactOverrideContent(state, contactName, onBack, onRetry = vm.editor::load, editor = vm.editor)
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ContactOverrideContent(
     state: UiState<OverrideContent>,
@@ -260,10 +293,12 @@ fun ContactOverrideContent(
     editor: ContactOverrideEditor?,
 ) {
     Column(Modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
-            TextButton(onClick = onBack) { Text("Back") }
-            Text(contactName, style = MaterialTheme.typography.titleLarge)
-        }
+        TopAppBar(
+            title = { Text(contactName, maxLines = 1) },
+            navigationIcon = {
+                IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back") }
+            },
+        )
         UiStateContent(state, onRetry = onRetry) { c ->
             Column(
                 Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
@@ -273,8 +308,7 @@ fun ContactOverrideContent(
                     ConflictBanner(it, "Keep my edits", { editor?.dismissConflict() }, "Discard my edits", { editor?.discardEdits() })
                 }
                 SectionTitle("In effect for $contactName")
-                EffectiveTable(c.effectiveRows)
-                HorizontalDivider()
+                SectionCard { EffectiveTable(c.effectiveRows) }
 
                 SectionTitle("Override")
                 Text(
@@ -316,10 +350,7 @@ fun ContactOverrideContent(
 
 @Composable
 private fun OverrideSwitch(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-        Switch(checked = checked, onCheckedChange = onChange)
-    }
+    LabeledSwitch(label, checked, onChange)
 }
 
 @Composable
@@ -350,13 +381,25 @@ private val previewContent = EditorContent(
     channels = ChannelInfo.of(MockFixtures.connections),
 )
 
-@Preview(name = "Settings")
+@Preview(name = "Settings", heightDp = 1600)
 @Composable
 private fun SettingsPreview() = WingmanTheme {
     Surface {
         SettingsContent(
             UiState.Content(previewContent),
             UiState.Content(listOf(ContactChoice(MockFixtures.CONTACT_SAM, "Sam"))),
+            {}, {}, editor = null, onOpenContact = {},
+        )
+    }
+}
+
+@Preview(name = "Settings dark", heightDp = 1600)
+@Composable
+private fun SettingsDarkPreview() = WingmanTheme(darkTheme = true) {
+    Surface {
+        SettingsContent(
+            UiState.Content(previewContent),
+            UiState.Content(listOf(ContactChoice(MockFixtures.CONTACT_SAM, "Sam"), ContactChoice("p2", "Jordan"))),
             {}, {}, editor = null, onOpenContact = {},
         )
     }
