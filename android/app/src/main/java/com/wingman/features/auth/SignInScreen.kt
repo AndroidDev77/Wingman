@@ -72,6 +72,8 @@ fun SignInScreen(session: AuthSession, reason: SignOutReason) {
     val scope = rememberCoroutineScope()
     val oidc = remember { AndroidAuth.oidc(context) }
     var busy by remember { mutableStateOf(false) }
+    // Only the browser flow shows a spinner on its button; a dev-token sign-in also sets [busy].
+    var browserPending by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var devError by remember { mutableStateOf<String?>(null) }
 
@@ -85,6 +87,7 @@ fun SignInScreen(session: AuthSession, reason: SignOutReason) {
             }
             if (tokens != null) session.signIn(tokens) else error = message
             busy = false
+            browserPending = false
         }
     }
 
@@ -93,10 +96,12 @@ fun SignInScreen(session: AuthSession, reason: SignOutReason) {
             reasonMessage = AuthGate.message(reason),
             oidcAvailable = oidc != null,
             busy = busy,
+            browserPending = browserPending,
             error = error,
             onContinue = {
                 val client = oidc ?: return@SignInLayout
                 busy = true
+                browserPending = true
                 error = null
                 scope.launch {
                     try {
@@ -106,6 +111,7 @@ fun SignInScreen(session: AuthSession, reason: SignOutReason) {
                     } catch (e: Exception) {
                         error = "Could not reach the sign-in service. Check your connection and try again."
                         busy = false
+                        browserPending = false
                     }
                 }
             },
@@ -134,6 +140,7 @@ fun SignInLayout(
     busy: Boolean,
     error: String?,
     onContinue: () -> Unit,
+    browserPending: Boolean = busy,
     devPanel: (@Composable () -> Unit)?,
 ) {
     Column(
@@ -169,7 +176,7 @@ fun SignInLayout(
                     enabled = !busy,
                     modifier = Modifier.fillMaxWidth().heightIn(min = Spacing.touchTarget),
                 ) {
-                    if (busy) {
+                    if (browserPending) {
                         CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = LocalContentColor.current)
                         Spacer(Modifier.width(Spacing.sm))
                     }

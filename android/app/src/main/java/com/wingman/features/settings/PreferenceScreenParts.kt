@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
@@ -33,6 +32,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.tooling.preview.Preview
@@ -197,14 +197,16 @@ private fun ModeRow(title: String, description: String, selected: Boolean, onCli
 @Composable
 fun ChoiceCard(title: String, description: String, selected: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
     val colors = MaterialTheme.colorScheme
+    // The selectable Surface overload clips the ripple to the card's rounded shape.
     Surface(
+        selected = selected,
+        onClick = onClick,
+        enabled = enabled,
         shape = MaterialTheme.shapes.medium,
         color = if (selected) colors.primaryContainer else colors.surfaceContainerLow,
         contentColor = if (selected) colors.onPrimaryContainer else colors.onSurface,
         border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) colors.primary else colors.outlineVariant),
-        modifier = Modifier
-            .fillMaxWidth()
-            .selectable(selected = selected, enabled = enabled, role = Role.RadioButton, onClick = onClick),
+        modifier = Modifier.fillMaxWidth().semantics { role = Role.RadioButton },
     ) {
         Row(Modifier.padding(horizontal = 12.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
             RadioButton(selected = selected, onClick = null, enabled = enabled)
