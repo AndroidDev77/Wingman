@@ -179,6 +179,8 @@ class E2eDevice(private val timeoutMs: Long = UI_TIMEOUT_MS) {
             // The anchor's section may still be loading; keep waiting until the deadline.
             runCatching { scrollTo(anchor, "anchor of $what") }
             if (device.wait(Until.hasObject(expected), 2_000)) device.findObject(expected)?.let { return it }
+            // The anchor can sit at the bottom edge with [expected] just below the fold: scroll a little.
+            runCatching { scrollTo(expected, what, maxSwipes = 2) }.getOrNull()?.let { return it }
         }
         dumpHierarchy("never showed $what")
         throw AssertionError("UI never showed $what within ${timeoutMs}ms")
