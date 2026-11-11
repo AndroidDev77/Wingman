@@ -1,23 +1,38 @@
 package com.wingman.features.discovery
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.selection.toggleable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Favorite
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -29,6 +44,10 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -37,10 +56,20 @@ import com.wingman.BuildConfig
 import com.wingman.core.api.IdempotencyKeyRegistry
 import com.wingman.core.api.WingmanApi
 import com.wingman.core.model.ProfileDecision
+import com.wingman.core.model.ProfileProvider
 import com.wingman.core.model.ReasonEffect
+import com.wingman.core.ui.compose.BannerTone
+import com.wingman.core.ui.compose.ContactAvatar
+import com.wingman.core.ui.compose.EmptyState
+import com.wingman.core.ui.compose.InfoBanner
 import com.wingman.core.ui.compose.LocalAppContainer
+import com.wingman.core.ui.compose.ScreenHeader
+import com.wingman.core.ui.compose.SectionCard
+import com.wingman.core.ui.compose.StatusPill
 import com.wingman.core.ui.compose.wingmanViewModel
 import com.wingman.navigation.ScreenContent
+import com.wingman.ui.theme.Spacing
+import com.wingman.ui.theme.WingmanTheme
 
 /*
  * WING-031 Compose layer of the Discovery review workflow. Compiled by CI's Android job; never run
@@ -89,6 +118,7 @@ private fun importForm(vm: DiscoveryViewModel, form: ManualImportForm, attempt: 
         }
     }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun DiscoveryContent(
     ui: DiscoveryUi,
@@ -101,82 +131,142 @@ fun DiscoveryContent(
     onDecide: (String, ProfileDecision) -> Unit,
     onExecute: (String) -> Unit,
 ) {
-    LazyColumn(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        item {
-            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(DiscoveryCopy.TITLE, style = MaterialTheme.typography.headlineSmall, modifier = Modifier.weight(1f))
-                    TextButton(onClick = onRefresh) { Text("Refresh") }
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(bottom = Spacing.lg),
+        verticalArrangement = Arrangement.spacedBy(Spacing.md),
+    ) {
+        item(key = "header") {
+            ScreenHeader(DiscoveryCopy.TITLE, subtitle = DiscoveryCopy.EXPLANATION) {
+                TextButton(onClick = onRefresh) {
+                    Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(Spacing.xs))
+                    Text("Refresh")
                 }
-                Text(DiscoveryCopy.EXPLANATION, style = MaterialTheme.typography.bodySmall)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onToggleImport) { Text(if (importOpen) "Close" else "Add a profile") }
+            }
+        }
+        item(key = "controls") {
+            Column(Modifier.padding(horizontal = Spacing.screen), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+                    verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+                ) {
+                    FilledTonalButton(onClick = onToggleImport) {
+                        Icon(if (importOpen) Icons.Filled.Close else Icons.Filled.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(Spacing.xs))
+                        Text(if (importOpen) "Close" else "Add a profile")
+                    }
                     onFixtures?.let { TextButton(onClick = it, enabled = !ui.importing) { Text("Add demo profiles (debug)") } }
                 }
                 if (importOpen) ManualImportSection(ui.importing, onImport)
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Switch(checked = ui.showExcluded, onCheckedChange = onShowExcluded)
-                    Text(DiscoveryCopy.SHOW_EXCLUDED, style = MaterialTheme.typography.bodyMedium)
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .toggleable(value = ui.showExcluded, role = Role.Switch, onValueChange = onShowExcluded)
+                        .padding(vertical = Spacing.xs),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(DiscoveryCopy.SHOW_EXCLUDED, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Switch(checked = ui.showExcluded, onCheckedChange = null)
                 }
-                ui.message?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary) }
-                ui.error?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
-                if (ui.loading) CircularProgressIndicator(Modifier.padding(8.dp))
-                if (!ui.loading && ui.cards.isEmpty() && ui.error == null) Text(DiscoveryCopy.EMPTY, style = MaterialTheme.typography.bodyMedium)
+                ui.message?.let { InfoBanner(it) }
+                ui.error?.let { InfoBanner(it, tone = BannerTone.ERROR) }
+                if (ui.loading) {
+                    Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) { CircularProgressIndicator(Modifier.padding(Spacing.sm)) }
+                }
+                if (!ui.loading && ui.cards.isEmpty() && ui.error == null) EmptyState(DiscoveryCopy.EMPTY, icon = Icons.Filled.Favorite)
             }
         }
-        items(ui.cards, key = { it.id }) { card -> ProfileCardView(card, onDecide, onExecute) }
+        items(ui.cards, key = { it.id }) { card ->
+            Box(Modifier.padding(horizontal = Spacing.screen)) { ProfileCardView(card, onDecide, onExecute) }
+        }
     }
 }
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ProfileCardView(card: ProfileCard, onDecide: (String, ProfileDecision) -> Unit, onExecute: (String) -> Unit) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("${card.name} · ${card.platformLabel}", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                Text(card.scoreLabel, style = MaterialTheme.typography.labelLarge)
+    val status = WingmanTheme.status
+    SectionCard {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
+            ContactAvatar(card.name)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
+                Text(card.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                StatusPill(card.platformLabel)
             }
-            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                card.confidenceLabel?.let { Text(it, style = MaterialTheme.typography.labelMedium) }
-                if (card.stale) Text(DiscoveryCopy.STALE_BADGE, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
-                if (card.excluded) Text(DiscoveryCopy.EXCLUDED_BADGE, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.error)
+            Surface(
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.tertiaryContainer,
+                contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+            ) {
+                Text(card.scoreLabel, style = MaterialTheme.typography.labelLarge, modifier = Modifier.padding(horizontal = Spacing.md, vertical = Spacing.xs))
             }
-            if (card.stale) Text(DiscoveryCopy.STALE_NOTE, style = MaterialTheme.typography.bodySmall)
-            if (card.excluded) Text("Dealbreaker: " + card.dealbreakers.joinToString(", "), style = MaterialTheme.typography.bodySmall)
-            card.bio?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-            card.prompts.forEach { (q, a) -> Text("$q: $a", style = MaterialTheme.typography.bodySmall) }
-            if (card.attributes.isNotEmpty()) {
-                Text(card.attributes.joinToString(" · ") { (k, v) -> "$k: $v" }, style = MaterialTheme.typography.bodySmall)
+        }
+        FlowRow(horizontalArrangement = Arrangement.spacedBy(Spacing.sm), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+            card.confidenceLabel?.let { StatusPill(it) }
+            if (card.stale) StatusPill(DiscoveryCopy.STALE_BADGE, containerColor = status.warningContainer, contentColor = status.onWarningContainer)
+            if (card.excluded) {
+                StatusPill(
+                    DiscoveryCopy.EXCLUDED_BADGE,
+                    containerColor = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                )
             }
-            if (card.reasons.isNotEmpty()) {
-                HorizontalDivider()
-                Text("Why this score", style = MaterialTheme.typography.labelLarge)
-                card.reasons.forEach { r ->
-                    val sign = when (r.effect) {
-                        ReasonEffect.POSITIVE -> "+"
-                        ReasonEffect.NEGATIVE -> "−"
-                        ReasonEffect.NEUTRAL -> "·"
-                    }
-                    val cites = if (r.cites.isEmpty()) "" else " (from: ${r.cites.joinToString(", ")})"
-                    Text("$sign ${r.text}$cites", style = MaterialTheme.typography.bodySmall)
+        }
+        if (card.stale) Text(DiscoveryCopy.STALE_NOTE, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        if (card.excluded) Text("Dealbreaker: " + card.dealbreakers.joinToString(", "), style = MaterialTheme.typography.bodySmall)
+        card.bio?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+        card.prompts.forEach { (q, a) ->
+            Column {
+                Text(q, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(a, style = MaterialTheme.typography.bodyMedium)
+            }
+        }
+        if (card.attributes.isNotEmpty()) {
+            Text(
+                card.attributes.joinToString(" · ") { (k, v) -> "$k: $v" },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (card.reasons.isNotEmpty()) {
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+            Text("Why this score", style = MaterialTheme.typography.labelLarge)
+            card.reasons.forEach { r ->
+                val (sign, color) = when (r.effect) {
+                    ReasonEffect.POSITIVE -> "+" to status.success
+                    ReasonEffect.NEGATIVE -> "−" to MaterialTheme.colorScheme.error
+                    ReasonEffect.NEUTRAL -> "·" to MaterialTheme.colorScheme.onSurfaceVariant
+                }
+                val cites = if (r.cites.isEmpty()) "" else " (from: ${r.cites.joinToString(", ")})"
+                Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm)) {
+                    Text(sign, style = MaterialTheme.typography.bodyMedium, color = color, fontWeight = FontWeight.Bold)
+                    Text("${r.text}$cites", style = MaterialTheme.typography.bodySmall)
                 }
             }
-            if (card.unknowns.isNotEmpty()) {
-                Text("Not stated: " + card.unknowns.joinToString(", "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            card.statusLabel?.let { Text(it, style = MaterialTheme.typography.labelLarge) }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = { onDecide(card.id, ProfileDecision.LIKE) }, enabled = !card.busy) { Text("Like") }
-                OutlinedButton(onClick = { onDecide(card.id, ProfileDecision.PASS) }, enabled = !card.busy) { Text("Pass") }
-                TextButton(onClick = { onDecide(card.id, ProfileDecision.SKIP) }, enabled = !card.busy) { Text("Skip") }
-                if (card.busy) CircularProgressIndicator(Modifier.padding(4.dp))
-            }
-            HorizontalDivider()
-            // The separate platform control: disabled, with the reason, unless the server's state allows it.
-            OutlinedButton(onClick = { onExecute(card.id) }, enabled = card.execute.enabled && !card.busy) { Text(card.execute.label) }
-            Text(card.execute.explanation, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
+        if (card.unknowns.isNotEmpty()) {
+            Text("Not stated: " + card.unknowns.joinToString(", "), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        card.statusLabel?.let { Text(it, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary) }
+        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm), verticalAlignment = Alignment.CenterVertically) {
+            Button(onClick = { onDecide(card.id, ProfileDecision.LIKE) }, enabled = !card.busy, modifier = Modifier.heightIn(min = Spacing.touchTarget)) {
+                Icon(Icons.Filled.Favorite, contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(Spacing.xs))
+                Text("Like")
+            }
+            OutlinedButton(onClick = { onDecide(card.id, ProfileDecision.PASS) }, enabled = !card.busy, modifier = Modifier.heightIn(min = Spacing.touchTarget)) {
+                Text("Pass")
+            }
+            TextButton(onClick = { onDecide(card.id, ProfileDecision.SKIP) }, enabled = !card.busy, modifier = Modifier.heightIn(min = Spacing.touchTarget)) {
+                Text("Skip")
+            }
+            if (card.busy) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        // The separate platform control: disabled, with the reason, unless the server's state allows it.
+        OutlinedButton(onClick = { onExecute(card.id) }, enabled = card.execute.enabled && !card.busy) { Text(card.execute.label) }
+        Text(card.execute.explanation, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
@@ -212,3 +302,49 @@ private fun ManualImportSection(importing: Boolean, onImport: (ManualImportForm,
         }
     }
 }
+
+/* ------------------------------------------------------------------ previews */
+
+private val previewCards = listOf(
+    ProfileCard(
+        id = "pr1", provider = ProfileProvider.HINGE, platformLabel = "Hinge", name = "Riley",
+        bio = "Climber, bad at karaoke, good at finding taco trucks.",
+        prompts = listOf("A perfect Sunday" to "Farmers market, then a long hike."),
+        attributes = listOf("Looking for" to "Long-term"),
+        scoreLabel = "Fit 82/100", confidenceLabel = "Medium confidence",
+        reasons = listOf(
+            ReasonRow("Also wants something long-term", ReasonEffect.POSITIVE, listOf("Looking for")),
+            ReasonRow("Different weekend rhythm", ReasonEffect.NEGATIVE, emptyList()),
+        ),
+        unknowns = listOf("Kids"), stale = false, excluded = false, dealbreakers = emptyList(),
+        decision = null, statusLabel = null, busy = false,
+        execute = ExecuteControl("Like on Hinge", enabled = false, explanation = "Not executable on Hinge: Wingman can't swipe there."),
+    ),
+    ProfileCard(
+        id = "pr2", provider = ProfileProvider.TINDER, platformLabel = "Tinder", name = "Casey",
+        bio = null, prompts = emptyList(), attributes = emptyList(),
+        scoreLabel = "Not scored", confidenceLabel = null, reasons = emptyList(), unknowns = emptyList(),
+        stale = true, excluded = true, dealbreakers = listOf("Smokes"),
+        decision = ProfileDecision.PASS, statusLabel = "Decision recorded (Pass)", busy = false,
+        execute = ExecuteControl("Pass on Tinder", enabled = false, explanation = "Not executable on Tinder."),
+    ),
+)
+
+@Composable
+private fun DiscoveryPreviewFrame(ui: DiscoveryUi, dark: Boolean) = WingmanTheme(darkTheme = dark) {
+    Surface {
+        DiscoveryContent(ui, importOpen = false, onToggleImport = {}, onImport = { _, _ -> null }, onFixtures = {}, onShowExcluded = {}, onRefresh = {}, onDecide = { _, _ -> }, onExecute = {})
+    }
+}
+
+@Preview(name = "Discovery", heightDp = 1200)
+@Composable
+private fun DiscoveryPreview() = DiscoveryPreviewFrame(DiscoveryUi(loading = false, cards = previewCards, showExcluded = true), dark = false)
+
+@Preview(name = "Discovery dark", heightDp = 1200)
+@Composable
+private fun DiscoveryDarkPreview() = DiscoveryPreviewFrame(DiscoveryUi(loading = false, cards = previewCards, showExcluded = true), dark = true)
+
+@Preview(name = "Discovery empty")
+@Composable
+private fun DiscoveryEmptyPreview() = DiscoveryPreviewFrame(DiscoveryUi(loading = false), dark = false)
