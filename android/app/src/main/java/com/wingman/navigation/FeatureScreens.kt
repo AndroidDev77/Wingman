@@ -30,3 +30,4 @@ fun featureScreens(): ScreenRegistry<ScreenContent> = ScreenRegistry<ScreenConte
     .register(Destination.Approvals, com.wingman.features.approvals.ApprovalsScreenEntry) // WING-015
     .register(Destination.Assisted, com.wingman.features.assisted.AssistedScreenEntry) // WING-027/028
     .register(Destination.Discovery, com.wingman.features.discovery.DiscoveryScreenEntry) // WING-031
+    .register(Destination.Dashboard, com.wingman.features.home.HomeScreenEntry) // UI polish (PR #62)

@@ -2,11 +2,11 @@ package com.wingman.navigation
 
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Email
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
@@ -209,7 +209,7 @@ private fun Destination.icon(): ImageVector = when (this) {
     Destination.Settings -> Icons.Filled.Settings
     Destination.Conversation -> Icons.Filled.Email
     Destination.Onboarding -> Icons.Filled.Home
-    Destination.Assisted -> Icons.Filled.Send
+    Destination.Assisted -> Icons.AutoMirrored.Filled.Send
 }
 
 @Preview(name = "App shell (mock API)", showSystemUi = true)
