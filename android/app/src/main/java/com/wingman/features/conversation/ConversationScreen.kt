@@ -1,31 +1,33 @@
 package com.wingman.features.conversation
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Button
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -54,9 +56,9 @@ import com.wingman.core.ui.compose.ContactAvatar
 import com.wingman.core.ui.compose.EmptyState
 import com.wingman.core.ui.compose.ErrorView
 import com.wingman.core.ui.compose.InfoBanner
+import com.wingman.core.ui.compose.LocalAppContainer
 import com.wingman.core.ui.compose.SectionCard
 import com.wingman.core.ui.compose.StatusPill
-import com.wingman.core.ui.compose.LocalAppContainer
 import com.wingman.core.ui.compose.UiStateContent
 import com.wingman.core.ui.compose.wingmanViewModel
 import com.wingman.navigation.Routes
@@ -156,6 +158,8 @@ fun ConversationContent(
                 IconButton(onClick = onRefresh) { Icon(Icons.Filled.Refresh, contentDescription = "Refresh") }
             },
             colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surfaceContainer),
+            // The app shell's Scaffold already pads for the status bar.
+            windowInsets = WindowInsets(0, 0, 0, 0),
         )
         UiStateContent(state, onRetry = onRetry, emptyMessage = "No messages yet.") { content ->
             Column(Modifier.fillMaxSize()) {
@@ -229,7 +233,9 @@ private fun DayDivider(label: String) {
 @Composable
 fun MessageBubble(row: MessageRow) {
     val outbound = row.outbound
-    val container = if (outbound) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerHigh
+    val container = if (outbound) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceContainerLowest
+    // Inbound bubbles get an outline so they read as "theirs" against the warm background.
+    val border = if (outbound) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
     val onContainer = if (outbound) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
     val corner = 18.dp
     val tail = 4.dp
@@ -245,7 +251,7 @@ fun MessageBubble(row: MessageRow) {
             .padding(start = if (outbound) 48.dp else 0.dp, end = if (outbound) 0.dp else 48.dp),
         contentAlignment = if (outbound) Alignment.CenterEnd else Alignment.CenterStart,
     ) {
-        Surface(shape = shape, color = container, contentColor = onContainer, modifier = Modifier.widthIn(max = 320.dp)) {
+        Surface(shape = shape, color = container, contentColor = onContainer, border = border, modifier = Modifier.widthIn(max = 320.dp)) {
             Column(
                 Modifier.padding(horizontal = Spacing.md, vertical = Spacing.sm),
                 verticalArrangement = Arrangement.spacedBy(Spacing.xs),
