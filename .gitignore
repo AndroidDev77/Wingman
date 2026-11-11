@@ -26,3 +26,6 @@ captures/
 
 # Worktrees used by parallel agents
 .worktrees/
+
+# Local Postgres cluster from scripts/local/start-mac.sh
+.local-pg/
