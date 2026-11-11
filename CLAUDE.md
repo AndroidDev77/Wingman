@@ -26,6 +26,12 @@ Android-first AI dating assistant. It drafts replies; it sends only through veri
 
 Android app: `cd android && ./gradlew :app:installDebug` runs on built-in mock data; add `-Pwingman.useMockApi=false` to use the local backend at `10.0.2.2:8000` (emulator) and sign in with "Developer sign-in (debug build only)". The experimental Hinge connector compiles only with `-Pwingman.experimental=true` (never a Play build, D-023/D-026).
 
+## Local testing gotchas
+- To give your own user an inbound message, `POST /v1/connections/{id}/events` with a `connector_event.v1` envelope (`type: mock.inbound_message_injected` on a `mock` connection, `Idempotency-Key` = `event_id`); see `inbound_event()` in `tests/e2e/harness.py`. `POST /dev/connectors/mock/inbound` is a standalone simulator with a fixed demo user and connection: it never reaches your conversations or approvals.
+- The app shows onboarding only while server preferences are at version 0. Once preferences are saved (in the app or with `PUT /v1/preferences`), it goes straight to Home.
+- The app has no sign-out button. To switch dev users on the emulator, run `adb shell pm clear com.wingman` and sign in with a new token.
+- The emulator E2E tests (`android/app/src/androidTest/.../e2e/`) find buttons by their visible text and scroll to them. Renaming a label or moving a section in a screen can break the `E2E Android emulator` CI job.
+
 ## Rules that bite
 - One Alembic migration (`0001`) until the first production deploy: amend it, don't add `0002` (D-010).
 - Contract changes are additive and versioned (current v1.3.1); update examples and negative examples, run `contracts/validate.sh`.
