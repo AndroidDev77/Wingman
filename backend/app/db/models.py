@@ -625,6 +625,13 @@ class Draft(UserOwnedMixin, Base):
     grounding_message_ids: Mapped[list[uuid.UUID]] = mapped_column(
         UUID_ARRAY, nullable=False, default=list, server_default=_empty_array()
     )
+    # Contract 1.3.2 (D-032): the conversation's linked profile and the field pointers
+    # (``prompts/0``, ``attributes/job``) the draft cited. No FK: deleting the profile
+    # leaves the stored draft as it was generated.
+    grounding_profile_id: Mapped[uuid.UUID | None] = mapped_column(nullable=True)
+    grounding_profile_fields: Mapped[list[str]] = mapped_column(
+        TEXT_ARRAY, nullable=False, default=list, server_default=_empty_array()
+    )
     # DraftReason code from the generator (``model_decision``, ``model_unavailable``, ...).
     reason: Mapped[str] = mapped_column(String(64), nullable=False)
     # The inbound message that triggered an agent-initiated draft (null otherwise).
@@ -1317,6 +1324,30 @@ class Profile(UserOwnedMixin, Base):
     imported_at: Mapped[datetime] = mapped_column(nullable=False)
     # Set when the source says the profile changed or vanished (WING-031).
     invalidated_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class ConversationProfileLink(UserOwnedMixin, Base):
+    """Contract 1.3.2 (D-032): the profile attached to a conversation, used as grounded
+    context by the reply generator. At most one per conversation.
+
+    ``origin`` is ``user`` (the user picked the match) or ``device_match`` (the device
+    reported the same stable platform ID for the profile and the conversation; the
+    service checks that equality). Nothing links by display name.
+    """
+
+    __tablename__ = "conversation_profile_links"
+    __table_args__ = (
+        tenant_key(),
+        tenant_fk("conversation_id", "conversations"),
+        tenant_fk("profile_id", "profiles"),
+        UniqueConstraint("user_id", "conversation_id"),
+        Index(None, "user_id", "profile_id"),
+        CheckConstraint("origin IN ('user', 'device_match')", name="origin_known"),
+    )
+
+    conversation_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    profile_id: Mapped[uuid.UUID] = mapped_column(nullable=False)
+    origin: Mapped[str] = mapped_column(String(16), nullable=False)
 
 
 class ProfileEvaluation(UserOwnedMixin, Base):

@@ -11,7 +11,7 @@ from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import or_, update
+from sqlalchemy import delete, or_, update
 from sqlalchemy.dialects.postgresql import distinct_on, insert
 
 from app.db.base import utc_now
@@ -29,6 +29,7 @@ from app.db.enums import (
 )
 from app.db.models import (
     AssistedDelivery,
+    ConversationProfileLink,
     IdentityLink,
     InboundNotice,
     Profile,
@@ -299,8 +300,69 @@ class IdentityLinkRepository(ScopedRepository[IdentityLink]):
         )
 
 
+class ConversationProfileLinkRepository(ScopedRepository[ConversationProfileLink]):
+    """Contract 1.3.2 (D-032): at most one linked profile per conversation."""
+
+    model = ConversationProfileLink
+
+    async def for_conversation(self, conversation_id: uuid.UUID) -> ConversationProfileLink | None:
+        row: ConversationProfileLink | None = await self.session.scalar(
+            self._select().where(ConversationProfileLink.conversation_id == conversation_id)
+        )
+        return row
+
+    async def put(
+        self, conversation_id: uuid.UUID, profile_id: uuid.UUID, origin: str
+    ) -> tuple[ConversationProfileLink, bool]:
+        """Set the conversation's link. Returns ``(link, changed)``; ``changed`` is false
+        when the same profile was already linked with the same origin."""
+        existing = await self.for_conversation(conversation_id)
+        if existing is None:
+            return (
+                await self._add(
+                    conversation_id=conversation_id, profile_id=profile_id, origin=origin
+                ),
+                True,
+            )
+        if existing.profile_id == profile_id and existing.origin == origin:
+            return existing, False
+        updated = await self._update(
+            existing.id, profile_id=profile_id, origin=origin, updated_at=utc_now()
+        )
+        return updated, True
+
+    async def remove(self, conversation_id: uuid.UUID) -> ConversationProfileLink | None:
+        row = await self.for_conversation(conversation_id)
+        if row is None:
+            return None
+        await self.session.delete(row)
+        await self.session.flush()
+        return row
+
+    async def conversation_ids_for_profile(self, profile_id: uuid.UUID) -> list[uuid.UUID]:
+        rows = await self.session.scalars(
+            self._select()
+            .with_only_columns(ConversationProfileLink.conversation_id)
+            .where(ConversationProfileLink.profile_id == profile_id)
+            .order_by(ConversationProfileLink.conversation_id)
+        )
+        return list(rows)
+
+
 class ProfileRepository(ScopedRepository[Profile]):
     model = Profile
+
+    async def delete(self, profile_id: uuid.UUID) -> Profile | None:
+        """Delete one of the caller's profiles. Its evaluations, actions and
+        conversation links go with it (FK cascade). ``None`` outside the scope."""
+        row = await self.get(profile_id)
+        if row is None:
+            return None
+        await self.session.execute(
+            delete(Profile).where(Profile.user_id == self.scope.user_id, Profile.id == profile_id)
+        )
+        self.session.expunge(row)
+        return row
 
     async def upsert(
         self,
@@ -354,6 +416,15 @@ class ProfileRepository(ScopedRepository[Profile]):
         updated = await self._update(existing.id, updated_at=imported_at, **content)
         return updated, False
 
+    def _linked(self) -> Any:
+        """Profiles attached to a conversation (1.3.2): a match's profile, not a
+        discovery candidate, so the review queue leaves them out."""
+        return (
+            ConversationProfileLinkRepository(self.session, self.scope)
+            ._select()
+            .with_only_columns(ConversationProfileLink.profile_id)
+        )
+
     def _undecided(self, provider: ProfileProvider | None) -> Any:
         decided = (
             ProfileActionRepository(self.session, self.scope)
@@ -361,7 +432,7 @@ class ProfileRepository(ScopedRepository[Profile]):
             .with_only_columns(ProfileAction.profile_id)
             .where(ProfileAction.decision != ProfileDecision.SKIP)
         )
-        stmt = self._select().where(Profile.id.not_in(decided))
+        stmt = self._select().where(Profile.id.not_in(decided), Profile.id.not_in(self._linked()))
         if provider is not None:
             stmt = stmt.where(Profile.provider == provider)
         return stmt
@@ -393,7 +464,7 @@ class ProfileRepository(ScopedRepository[Profile]):
             .with_only_columns(ProfileAction.profile_id)
             .where(ProfileAction.decision != ProfileDecision.SKIP)
         )
-        stmt = self._select().where(Profile.id.not_in(decided))
+        stmt = self._select().where(Profile.id.not_in(decided), Profile.id.not_in(self._linked()))
         listing = "profiles:queue"
         if provider is not None:
             stmt = stmt.where(Profile.provider == provider)

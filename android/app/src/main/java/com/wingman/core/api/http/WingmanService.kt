@@ -19,6 +19,8 @@ import com.wingman.core.model.ContactPreferenceOverrideUpdate
 import com.wingman.core.model.ContactPreferences
 import com.wingman.core.model.Conversation
 import com.wingman.core.model.ConversationDetail
+import com.wingman.core.model.ConversationProfileLink
+import com.wingman.core.model.ConversationProfileLinkRequest
 import com.wingman.core.model.Draft
 import com.wingman.core.model.DraftCreateRequest
 import com.wingman.core.model.GlobalAutomationState
@@ -290,4 +292,16 @@ internal interface WingmanService {
         @Path("connection_id") connectionId: String,
         @Body body: ConnectionSettingsUpdate,
     ): Response<Connection>
+
+    @DELETE("v1/profiles/{profile_id}")
+    suspend fun deleteProfile(@Path("profile_id") profileId: String): Response<Unit>
+
+    @PUT("v1/conversations/{conversation_id}/profile-link")
+    suspend fun putConversationProfileLink(
+        @Path("conversation_id") conversationId: String,
+        @Body body: ConversationProfileLinkRequest,
+    ): Response<ConversationProfileLink>
+
+    @DELETE("v1/conversations/{conversation_id}/profile-link")
+    suspend fun deleteConversationProfileLink(@Path("conversation_id") conversationId: String): Response<Unit>
 }

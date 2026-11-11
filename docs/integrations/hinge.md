@@ -23,6 +23,11 @@ see `android/app/src/experimental/java/com/wingman/integrations/hinge/THIRD_PART
 > **Open owner decision that gates shipping (not code):** I-031 (who may install the sideloaded
 > experimental build, its signing, and the final consent text and version; the code uses `d021-v1`).
 
+> **D-032 (experimental branch):** a separate, read-only **screen reader** captures a match's
+> profile text from the Hinge screen so drafts can refer to it. It lives next to this connector in
+> `src/experimental`, needs **none** of the `wingman.hinge.*` properties of §3b, and is documented
+> in [`screen_reader.md`](screen_reader.md). This connector is unchanged by it.
+
 Contents:
 1. [What was built](#1-what-was-built)
 2. [Architecture](#2-architecture)
@@ -125,7 +130,8 @@ any future Play build) does not contain it at all:
 |---|---|---|
 | `src/main/java/.../integrations/hinge/notifications/` | always | the Hinge **notification** plugin (the fallback, D-021 item 7) |
 | `src/experimental/java/.../integrations/hinge/**` | flag on only | the connector, `HingeModule`, `HingeExperimentalActivity`, `THIRD_PARTY_NOTICES.md` |
-| `src/experimental/java/.../experimental/ExperimentalModules.kt` | flag on only | wires `HingeModule.init` and the Settings row |
+| `src/experimental/java/.../experimental/ExperimentalModules.kt` | flag on only | wires `HingeModule.init` and the Settings row, and (D-032) `ScreenReaderModule` |
+| `src/experimental/java/.../integrations/screenreader/**`, `src/experimental/res/` | flag on only | D-032 read-only screen reader, its accessibility-service configuration and strings ([`screen_reader.md`](screen_reader.md)) |
 | `src/standard/java/.../experimental/ExperimentalModules.kt` | flag off only | no-op stub with the same members; names no experimental class |
 | `src/experimental/AndroidManifest-entries.xml` | flag on only | the activity declaration, merged into a generated copy of the main manifest |
 | `src/testExperimental/java/.../integrations/hinge/**` | flag on only | the connector's JVM tests |

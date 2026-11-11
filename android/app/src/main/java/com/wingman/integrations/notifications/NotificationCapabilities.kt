@@ -21,6 +21,25 @@ data class NotificationPlatformCapabilities(
     val calendarWrite: CapabilityState,
 )
 
+/**
+ * D-032 shared interface: who else on this phone can read profiles for a platform's connection.
+ * Returns null when it has nothing to say (the notification path's own UNSUPPORTED stands). It can
+ * never return VERIFIED into the wire document: [NotificationContractMapping] downgrades that.
+ */
+fun interface ProfileReadCapabilitySource {
+    fun profileRead(platform: String): CapabilityState?
+}
+
+/** The registered [ProfileReadCapabilitySource]; null in every standard build. */
+object ProfileReadCapability {
+    @Volatile var source: ProfileReadCapabilitySource? = null
+
+    fun apply(c: NotificationPlatformCapabilities): NotificationPlatformCapabilities {
+        val extra = runCatching { source?.profileRead(c.platform) }.getOrNull() ?: return c
+        return c.copy(profileRead = extra)
+    }
+}
+
 /** Inputs to [NotificationCapabilityModel.assess]; all observable on the device. */
 data class NotificationCapabilityInputs(
     val pluginRegistered: Boolean,
@@ -38,6 +57,10 @@ data class NotificationCapabilityInputs(
  *   AND the user enabled direct reply for the platform; then UNVERIFIED (never autopilot-eligible).
  * - `draft`, `swipe`, `profile_read`, `calendar_write`: UNSUPPORTED on this path, always.
  *   No accessibility-service tapping exists or will be added.
+ *
+ * D-032: `profile_read` of a platform's connection can come from ANOTHER reader on the same phone
+ * ([ProfileReadCapability], set only by the experimental build's read-only screen reader). The
+ * notification path itself still never reads a profile, and that reader never taps either.
  */
 object NotificationCapabilityModel {
     const val NOTE_NO_PLUGIN = "No notification plugin for this platform."

@@ -216,6 +216,10 @@ enum class AgentActionType {
     @SerialName("profile_imported") PROFILE_IMPORTED,
     @SerialName("profile_decision_recorded") PROFILE_DECISION_RECORDED,
     @SerialName("profile_action_queued") PROFILE_ACTION_QUEUED,
+    // contract 1.3.2 (D-032)
+    @SerialName("profile_linked") PROFILE_LINKED,
+    @SerialName("profile_unlinked") PROFILE_UNLINKED,
+    @SerialName("profile_deleted") PROFILE_DELETED,
 }
 
 @Serializable

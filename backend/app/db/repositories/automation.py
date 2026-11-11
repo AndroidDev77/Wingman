@@ -56,6 +56,8 @@ class DraftRepository(ScopedRepository[Draft]):
         grounding_memory_ids: Sequence[uuid.UUID],
         grounding_message_ids: Sequence[uuid.UUID],
         reason: str,
+        grounding_profile_id: uuid.UUID | None = None,
+        grounding_profile_fields: Sequence[str] = (),
         created_at: datetime,
         trigger_message_id: uuid.UUID | None = None,
     ) -> Draft | None:
@@ -76,6 +78,8 @@ class DraftRepository(ScopedRepository[Draft]):
             "intent_mode": intent_mode,
             "grounding_memory_ids": list(grounding_memory_ids),
             "grounding_message_ids": list(grounding_message_ids),
+            "grounding_profile_id": grounding_profile_id,
+            "grounding_profile_fields": list(grounding_profile_fields),
             "reason": reason,
             "trigger_message_id": trigger_message_id,
             "created_at": created_at,

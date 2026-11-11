@@ -7,6 +7,9 @@ Every answer is **clearly labeled mock output** and deliberately bland:
 * ``ReplyOutput``: a ``send_candidate`` whose text starts with :data:`MOCK_LABEL`, cites
   the latest contact message, states no fact about the user, proposes nothing and
   never escalates; ``confidence`` 0.75. With no contact message it returns ``no_send``.
+  When the prompt carries a linked profile (contract 1.3.2), the text also names the
+  first profile field's own label (a prompt question or attribute name, never its
+  answer) and cites it as ``p1``.
 * ``AnalysisOutput``: keeps the current stage, one ``neutral`` signal on the latest
   contact message, ``next_action: reply``.
 * ``ExtractionOutput``: no facts (inventing facts about a real contact would be worse
@@ -70,8 +73,32 @@ def _latest_contact_ref(payload: list[dict[str, Any]]) -> str | None:
     return None
 
 
+_PROFILE_MARKER = "Profile fields: "
+
+
+def _first_profile_field(request: ProviderRequest) -> dict[str, Any] | None:
+    """The first ``{"ref", "field", "text"}`` of the prompt's linked-profile block."""
+    users = [m.content for m in request.messages if m.role == "user"]
+    if not users:
+        return None
+    for block in users[-1].split("\n\n"):
+        at = block.find(_PROFILE_MARKER)
+        if at < 0:
+            continue
+        try:
+            data = json.loads(block[at + len(_PROFILE_MARKER) :])
+        except ValueError:
+            return None
+        if isinstance(data, list) and data and isinstance(data[0], dict):
+            first: dict[str, Any] = data[0]
+            if isinstance(first.get("ref"), str) and isinstance(first.get("field"), str):
+                return first
+    return None
+
+
 def _reply(request: ProviderRequest) -> dict[str, Any]:
     ref = _latest_contact_ref(_messages_payload(request))
+    profile = _first_profile_field(request)
     base: dict[str, Any] = {
         "memory_refs": [],
         "user_claims": [],
@@ -79,6 +106,7 @@ def _reply(request: ProviderRequest) -> dict[str, Any]:
         "escalation": False,
         "interest_evidence_refs": [],
         "question_for_user": None,
+        "profile_refs": [],
     }
     if ref is None:
         return base | {
@@ -87,6 +115,19 @@ def _reply(request: ProviderRequest) -> dict[str, Any]:
             "rationale": f"{MOCK_LABEL} No message from the contact to reply to.",
             "confidence": 0.5,
             "message_refs": [],
+        }
+    if profile is not None:
+        label = str(profile["field"]).strip()[:80]
+        return base | {
+            "decision": "send_candidate",
+            "text": (
+                f"{MOCK_LABEL} Thanks for your message! Your profile's "
+                f'"{label}" caught my eye. Tell me more?'
+            ),
+            "rationale": f"{MOCK_LABEL} Deterministic local reply citing the linked profile.",
+            "confidence": 0.75,
+            "message_refs": [ref],
+            "profile_refs": [profile["ref"]],
         }
     return base | {
         "decision": "send_candidate",

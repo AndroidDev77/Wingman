@@ -68,6 +68,8 @@ __all__ = [
     "ResonanceReason",
     "evaluate_rules",
     "input_fingerprint",
+    "model_safe_attributes",
+    "sensitive_attribute_values",
     "usable_attributes",
     "valid_evidence",
 ]
@@ -229,6 +231,28 @@ def usable_attributes(attributes: Mapping[str, Any]) -> dict[str, Any]:
         if value is None or value == "" or value == []:
             continue
         out[key] = value
+    return out
+
+
+def model_safe_attributes(attributes: Mapping[str, Any]) -> dict[str, Any]:
+    """The attributes a model may see: provided, not an image or URL, and not a
+    protected or sensitive trait (age, ethnicity, religion, orientation, gender, health,
+    body, height, weight, politics). Used by the match evaluator and the reply
+    generator (contract 1.3.2)."""
+    return {
+        k: v for k, v in usable_attributes(attributes).items() if not _SENSITIVE_KEY_RE.search(k)
+    }
+
+
+def sensitive_attribute_values(attributes: Mapping[str, Any]) -> list[str]:
+    """String values of the protected or sensitive attributes of a profile: text no
+    model is given and no draft may state."""
+    out: list[str] = []
+    for key, value in usable_attributes(attributes).items():
+        if not _SENSITIVE_KEY_RE.search(key):
+            continue
+        values = value if isinstance(value, list) else [value]
+        out += [str(v).strip() for v in values if isinstance(v, str) and str(v).strip()]
     return out
 
 
@@ -769,11 +793,7 @@ _SYSTEM_PROMPT = (
 
 
 def _llm_payload(profile: ProfileInput, intent: IntentInput) -> dict[str, Any]:
-    attrs = {
-        k: v
-        for k, v in usable_attributes(profile.attributes).items()
-        if not _SENSITIVE_KEY_RE.search(k)
-    }
+    attrs = model_safe_attributes(profile.attributes)
     fields: list[dict[str, str]] = []
     if profile.bio and profile.bio.strip():
         fields.append({"id": "bio", "text": profile.bio})

@@ -332,6 +332,9 @@ def draft_to_contract(draft: Draft) -> dict[str, Any]:
         "grounding": {
             "memory_ids": [str(m) for m in draft.grounding_memory_ids],
             "message_ids": [str(m) for m in draft.grounding_message_ids],
+            # Contract 1.3.2 (D-032).
+            "profile_id": (str(draft.grounding_profile_id) if draft.grounding_profile_id else None),
+            "profile_fields": list(draft.grounding_profile_fields),
         },
         "created_at": _ts(draft.created_at),
     }
@@ -488,6 +491,8 @@ class AutomationController:
             intent_mode=result.intent_mode,
             grounding_memory_ids=result.grounding.memory_ids,
             grounding_message_ids=result.grounding.message_ids,
+            grounding_profile_id=result.grounding.profile_id,
+            grounding_profile_fields=result.grounding.profile_fields,
             reason=result.reason.value,
             created_at=result.created_at,
             trigger_message_id=trigger_message_id,

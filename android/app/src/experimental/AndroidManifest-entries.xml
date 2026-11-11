@@ -8,3 +8,28 @@
             android:name=".integrations.hinge.android.HingeExperimentalActivity"
             android:exported="false"
             android:label="Hinge (experimental)" />
+
+        <!-- D-032: the read-only screen reader's own screen (explainer, toggles, inspector, captured
+             profiles). Not exported: reached only from Settings. -->
+        <activity
+            android:name=".integrations.screenreader.android.ScreenReaderActivity"
+            android:exported="false"
+            android:label="Screen reader (experimental)" />
+
+        <!-- D-032: READ-ONLY accessibility service. Bound by the system only after the user switches
+             it on in Android's Accessibility settings (and, for a sideloaded app on Android 13+,
+             allows restricted settings). Its configuration asks for window content of three dating
+             apps and two event types only; it cannot perform gestures and the code performs no
+             action in any app. Device behaviour UNVERIFIED. -->
+        <service
+            android:name=".integrations.screenreader.android.WingmanScreenReaderService"
+            android:exported="true"
+            android:label="@string/screen_reader_service_label"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/wingman_screen_reader" />
+        </service>

@@ -484,6 +484,10 @@ data class DraftCreateRequest(
 data class DraftGrounding(
     @SerialName("memory_ids") val memoryIds: List<String>,
     @SerialName("message_ids") val messageIds: List<String>,
+    /** (1.3.2) The conversation's linked profile, when the draft cited fields of it. */
+    @SerialName("profile_id") val profileId: String? = null,
+    /** (1.3.2) Pointers to the cited profile fields: `bio`, `prompts/0`, `attributes/job_title`. */
+    @SerialName("profile_fields") val profileFields: List<String> = emptyList(),
 )
 
 /** An LLM suggestion. Not an authorization to send. */

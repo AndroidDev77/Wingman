@@ -768,6 +768,50 @@
       "schema": "openapi.yaml#/components/schemas/MarkReadRequest",
       "why_invalid": "mark-read takes no options",
       "expect_error": "'unread_count' was unexpected"
+    },
+    {
+      "file": "profile_link.put.request.json",
+      "schema": "openapi.yaml#/components/schemas/ConversationProfileLinkRequest"
+    },
+    {
+      "file": "profile_link.put.device_match.request.json",
+      "schema": "openapi.yaml#/components/schemas/ConversationProfileLinkRequest"
+    },
+    {
+      "file": "profile_link.response.json",
+      "schema": "openapi.yaml#/components/schemas/ConversationProfileLink"
+    },
+    {
+      "file": "profile.import.device_screen.request.json",
+      "schema": "openapi.yaml#/components/schemas/ProfileImportRequest"
+    },
+    {
+      "file": "draft.profile_grounded.response.json",
+      "schema": "openapi.yaml#/components/schemas/Draft"
+    },
+    {
+      "file": "invalid/profile_link.put.with_display_name.json",
+      "schema": "openapi.yaml#/components/schemas/ConversationProfileLinkRequest",
+      "why_invalid": "a profile is never linked by a display name (ADR 0008)",
+      "expect_error": "'display_name' was unexpected"
+    },
+    {
+      "file": "invalid/profile_link.put.inferred_origin.json",
+      "schema": "openapi.yaml#/components/schemas/ConversationProfileLinkRequest",
+      "why_invalid": "a link is the user's choice or a stable platform ID match, never an inference",
+      "expect_error": "is not one of ['user', 'device_match']"
+    },
+    {
+      "file": "invalid/draft.grounding_photo_field.json",
+      "schema": "openapi.yaml#/components/schemas/Draft",
+      "why_invalid": "a draft cites only text fields of a profile (bio, prompts, attributes), never a photo",
+      "expect_error": "does not match"
+    },
+    {
+      "file": "invalid/draft.grounding_profile_without_fields.json",
+      "schema": "openapi.yaml#/components/schemas/Draft",
+      "why_invalid": "a draft that names a profile must list the fields it cited",
+      "expect_error": "'profile_fields' is a dependency of 'profile_id'"
     }
   ]
 }

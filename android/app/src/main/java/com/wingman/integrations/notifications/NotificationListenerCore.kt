@@ -225,7 +225,7 @@ class NotificationListenerCore(
     /** Current capabilities of every registered platform (and only those). */
     fun capabilities(): List<NotificationPlatformCapabilities> = registry.platforms.map { capabilities(it) }
 
-    fun capabilities(platform: String): NotificationPlatformCapabilities =
+    fun capabilities(platform: String): NotificationPlatformCapabilities = ProfileReadCapability.apply(
         NotificationCapabilityModel.assess(
             platform,
             NotificationCapabilityInputs(
@@ -235,7 +235,8 @@ class NotificationListenerCore(
                 directReplyEnabledByUser = settings.directReplyEnabled(platform),
                 remoteInputObserved = settings.remoteInputObserved(platform),
             ),
-        )
+        ),
+    )
 
     private fun reportCapabilityChange(reason: String) {
         val now = clock.nowMillis()

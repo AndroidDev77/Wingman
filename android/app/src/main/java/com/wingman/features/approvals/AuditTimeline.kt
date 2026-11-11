@@ -78,6 +78,9 @@ object AuditLabels {
         AgentActionType.PROFILE_IMPORTED -> AuditLabel("Profile added for review", LabelTone.NEUTRAL, SendStage.NONE)
         AgentActionType.PROFILE_DECISION_RECORDED -> AuditLabel("Your choice saved (not swiped)", LabelTone.NEUTRAL, SendStage.NONE)
         AgentActionType.PROFILE_ACTION_QUEUED -> AuditLabel("Swipe queued (not done yet)", LabelTone.PENDING, SendStage.NONE)
+        AgentActionType.PROFILE_LINKED -> AuditLabel("Profile linked to this conversation", LabelTone.NEUTRAL, SendStage.NONE)
+        AgentActionType.PROFILE_UNLINKED -> AuditLabel("Profile unlinked from this conversation", LabelTone.NEUTRAL, SendStage.NONE)
+        AgentActionType.PROFILE_DELETED -> AuditLabel("Profile deleted", LabelTone.NEUTRAL, SendStage.NONE)
     }
 
     fun actor(a: Actor): String = when (a) {
