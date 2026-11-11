@@ -1,5 +1,6 @@
 package com.wingman.features.settings
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -7,17 +8,22 @@ import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.RadioButton
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -25,7 +31,11 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import com.wingman.core.model.ApprovalReason
 import com.wingman.core.model.AutomationMode
@@ -37,6 +47,7 @@ import com.wingman.core.model.Punctuation
 import com.wingman.core.model.ResponsePace
 import com.wingman.core.model.Tone
 import com.wingman.core.model.Weekday
+import com.wingman.ui.theme.WingmanTheme
 
 /*
  * Shared, stateless preference sections used by onboarding, settings and per-contact overrides.
@@ -46,7 +57,7 @@ import com.wingman.core.model.Weekday
 
 @Composable
 fun SectionTitle(text: String, modifier: Modifier = Modifier) {
-    Text(text, style = MaterialTheme.typography.titleMedium, modifier = modifier.padding(top = 8.dp))
+    Text(text, style = MaterialTheme.typography.titleMedium, modifier = modifier.padding(top = 8.dp).semantics { heading() })
 }
 
 @Composable
@@ -64,20 +75,15 @@ fun IntentPicker(
     onCustomDescription: (String) -> Unit,
     enabled: Boolean = true,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         IntentMode.entries.forEach { mode ->
-            Row(
-                Modifier.fillMaxWidth()
-                    .selectable(selected = selected == mode, enabled = enabled, role = Role.RadioButton, onClick = { onSelect(mode) })
-                    .padding(vertical = 4.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                RadioButton(selected = selected == mode, onClick = null, enabled = enabled)
-                Column(Modifier.padding(start = 8.dp)) {
-                    Text(PreferenceLabels.intent(mode), style = MaterialTheme.typography.bodyLarge)
-                    Text(PreferenceLabels.intentDescription(mode), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
+            ChoiceCard(
+                title = PreferenceLabels.intent(mode),
+                description = PreferenceLabels.intentDescription(mode),
+                selected = selected == mode,
+                enabled = enabled,
+                onClick = { onSelect(mode) },
+            )
         }
         FieldError(errors, FormField.INTENT_MODE)
         if (selected == IntentMode.CUSTOM) {
@@ -169,7 +175,7 @@ fun AutomationModeSelector(
     onRequest: (AutomationMode?) -> Unit,
     inheritLabel: String? = null,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    Column(Modifier.selectableGroup(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (inheritLabel != null) {
             ModeRow(inheritLabel, "Use the mode from your settings.", selected == null) { onRequest(null) }
         }
@@ -181,14 +187,37 @@ fun AutomationModeSelector(
 
 @Composable
 private fun ModeRow(title: String, description: String, selected: Boolean, onClick: () -> Unit) {
-    Row(
-        Modifier.fillMaxWidth().selectable(selected = selected, role = Role.RadioButton, onClick = onClick).padding(vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
+    ChoiceCard(title, description, selected, enabled = true, onClick = onClick)
+}
+
+/**
+ * One option of a single-choice list, drawn as a card with a radio button. The whole card is the
+ * touch target; the selected card gets the primary container color and a primary border.
+ */
+@Composable
+fun ChoiceCard(title: String, description: String, selected: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    // The selectable Surface overload clips the ripple to the card's rounded shape.
+    Surface(
+        selected = selected,
+        onClick = onClick,
+        enabled = enabled,
+        shape = MaterialTheme.shapes.medium,
+        color = if (selected) colors.primaryContainer else colors.surfaceContainerLow,
+        contentColor = if (selected) colors.onPrimaryContainer else colors.onSurface,
+        border = BorderStroke(if (selected) 2.dp else 1.dp, if (selected) colors.primary else colors.outlineVariant),
+        modifier = Modifier.fillMaxWidth().semantics { role = Role.RadioButton },
     ) {
-        RadioButton(selected = selected, onClick = null)
-        Column(Modifier.padding(start = 8.dp)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Row(Modifier.padding(horizontal = 12.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            RadioButton(selected = selected, onClick = null, enabled = enabled)
+            Column(Modifier.padding(start = 12.dp)) {
+                Text(title, style = MaterialTheme.typography.titleSmall)
+                Text(
+                    description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (selected) colors.onPrimaryContainer else colors.onSurfaceVariant,
+                )
+            }
         }
     }
 }
@@ -199,6 +228,7 @@ fun AutomationConfirmDialog(pending: PendingAutomation, onConfirm: () -> Unit, o
     val e = pending.explanation
     AlertDialog(
         onDismissRequest = onCancel,
+        icon = { Icon(Icons.Filled.Warning, contentDescription = null) },
         title = { Text(e.title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -292,17 +322,23 @@ fun AutomationLimitsEditor(a: AutomationForm, errors: Map<FormField, String>, on
 
 @Composable
 private fun ApprovalToggle(reason: ApprovalReason, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically) {
-        Checkbox(checked = checked, onCheckedChange = onChange)
+    Row(
+        Modifier.fillMaxWidth().toggleable(value = checked, role = Role.Checkbox, onValueChange = onChange),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Checkbox(checked = checked, onCheckedChange = null, modifier = Modifier.padding(12.dp))
         Text(PreferenceLabels.approvalReason(reason), style = MaterialTheme.typography.bodyMedium)
     }
 }
 
 @Composable
 fun LabeledSwitch(label: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-        Switch(checked = checked, onCheckedChange = onChange)
+    Row(
+        Modifier.fillMaxWidth().toggleable(value = checked, role = Role.Switch, onValueChange = onChange).padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f).padding(end = 12.dp))
+        Switch(checked = checked, onCheckedChange = null)
     }
 }
 
@@ -324,7 +360,10 @@ private fun NumberField(label: String, value: String, isError: Boolean, modifier
 fun ConflictBanner(message: String, primaryLabel: String, onPrimary: () -> Unit, secondaryLabel: String, onSecondary: () -> Unit) {
     Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(message, color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodyMedium)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Icons.Filled.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
+                Text(message, color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodyMedium)
+            }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 TextButton(onClick = onPrimary) { Text(primaryLabel) }
                 TextButton(onClick = onSecondary) { Text(secondaryLabel) }
@@ -335,3 +374,26 @@ fun ConflictBanner(message: String, primaryLabel: String, onPrimary: () -> Unit,
 
 private fun <T> List<T>.replace(index: Int, value: T): List<T> = toMutableList().also { it[index] = value }
 private fun <T> Set<T>.toggle(item: T): Set<T> = if (item in this) this - item else this + item
+
+/* ------------------------------------------------------------------ previews */
+
+@Composable
+private fun PartsSample() {
+    Surface {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            SectionTitle("What you're looking for")
+            IntentPicker(IntentMode.SERIOUS, "", emptyMap(), onSelect = {}, onCustomDescription = {})
+            SectionTitle("Automation")
+            AutomationModeSelector(AutomationMode.ASSISTED, onRequest = {})
+            LabeledSwitch("Only send during active hours", checked = true) {}
+        }
+    }
+}
+
+@Preview(name = "Preference parts", heightDp = 1100)
+@Composable
+private fun PartsPreview() = WingmanTheme { PartsSample() }
+
+@Preview(name = "Preference parts dark", heightDp = 1100)
+@Composable
+private fun PartsDarkPreview() = WingmanTheme(darkTheme = true) { PartsSample() }

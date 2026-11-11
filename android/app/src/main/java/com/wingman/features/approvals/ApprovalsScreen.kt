@@ -1,20 +1,37 @@
 package com.wingman.features.approvals
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.DateRange
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
-import androidx.compose.material3.Card
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
@@ -33,7 +50,9 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModel
@@ -42,13 +61,20 @@ import androidx.lifecycle.viewModelScope
 import com.wingman.core.api.AgentActionFilter
 import com.wingman.core.api.WingmanApi
 import com.wingman.core.ui.UiState
+import com.wingman.core.ui.compose.BannerTone
+import com.wingman.core.ui.compose.ContactAvatar
+import com.wingman.core.ui.compose.InfoBanner
 import com.wingman.core.ui.compose.LocalAppContainer
+import com.wingman.core.ui.compose.ScreenHeader
+import com.wingman.core.ui.compose.SectionCard
+import com.wingman.core.ui.compose.StatusPill
 import com.wingman.core.ui.compose.UiStateContent
 import com.wingman.core.ui.compose.wingmanViewModel
 import com.wingman.features.automation.AutomationControls
 import com.wingman.features.automation.AutomationState
 import com.wingman.features.conversation.color
 import com.wingman.navigation.ScreenContent
+import com.wingman.ui.theme.Spacing
 import com.wingman.ui.theme.WingmanTheme
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -131,7 +157,8 @@ fun ApprovalsScreen(onOpenConversation: (String) -> Unit) {
     LaunchedEffect(count) { badge?.report(count) }
 
     Column(Modifier.fillMaxSize()) {
-        TabRow(selectedTabIndex = tab.ordinal) {
+        ScreenHeader("Approvals", subtitle = "Review drafts before they go out, control automation and see what happened.")
+        TabRow(selectedTabIndex = tab.ordinal, containerColor = MaterialTheme.colorScheme.surface) {
             ApprovalsTab.entries.forEach { t ->
                 Tab(
                     selected = t == tab,
@@ -201,26 +228,29 @@ data class QueueActions(
 @Composable
 fun QueueContent(state: UiState<ApprovalsScreenData>, actions: QueueActions, modifier: Modifier = Modifier) {
     Column(modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text("Drafts waiting for you", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            TextButton(onClick = actions.onRefresh) { Text("Refresh") }
-        }
+        ListToolbar("Drafts waiting for you", onRefresh = actions.onRefresh)
         UiStateContent(state, onRetry = actions.onRefresh, emptyMessage = "No drafts are waiting for your approval.") { data ->
-            LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            LazyColumn(
+                Modifier.fillMaxSize(),
+                contentPadding = PaddingValues(horizontal = Spacing.screen, vertical = Spacing.sm),
+                verticalArrangement = Arrangement.spacedBy(Spacing.md),
+            ) {
                 (state as? UiState.Content)?.refreshError?.let { e ->
-                    item(key = "refresh-error") { Text(e.message, color = MaterialTheme.colorScheme.error) }
+                    item(key = "refresh-error") { InfoBanner(e.message, tone = BannerTone.ERROR) }
                 }
                 items(data.decided, key = { "decided:${it.approvalId}" }) { DecidedCard(it, actions) }
                 items(data.pending, key = { "pending:${it.card.approvalId}" }) { PendingCard(it, actions) }
                 if (!data.endReached) {
                     item(key = "more") {
-                        when {
-                            data.loadingMore -> CircularProgressIndicator(Modifier.padding(8.dp))
-                            data.loadMoreError != null -> Column {
-                                Text(data.loadMoreError.message, color = MaterialTheme.colorScheme.error)
-                                TextButton(onClick = actions.onLoadMore) { Text("Retry") }
+                        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            when {
+                                data.loadingMore -> CircularProgressIndicator(Modifier.padding(Spacing.sm))
+                                data.loadMoreError != null -> Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text(data.loadMoreError.message, color = MaterialTheme.colorScheme.error)
+                                    TextButton(onClick = actions.onLoadMore) { Text("Retry") }
+                                }
+                                else -> TextButton(onClick = actions.onLoadMore) { Text("Load more") }
                             }
-                            else -> TextButton(onClick = actions.onLoadMore) { Text("Load more") }
                         }
                     }
                 }
@@ -229,85 +259,157 @@ fun QueueContent(state: UiState<ApprovalsScreenData>, actions: QueueActions, mod
     }
 }
 
+/** Title + "Refresh" row above a list. The text label stays visible: the emulator E2E taps it by text. */
+@Composable
+private fun ListToolbar(title: String, onRefresh: () -> Unit, extra: @Composable () -> Unit = {}) {
+    Row(
+        Modifier.fillMaxWidth().padding(start = Spacing.screen, end = Spacing.sm, top = Spacing.sm),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            title,
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.weight(1f).semantics { heading() },
+        )
+        extra()
+        TextButton(onClick = onRefresh) {
+            Icon(Icons.Filled.Refresh, contentDescription = null, modifier = Modifier.size(18.dp))
+            Spacer(Modifier.width(Spacing.xs))
+            Text("Refresh")
+        }
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun PendingCard(item: PendingItem, actions: QueueActions) {
     val card = item.card
     val busy = item.inFlight != null
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(card.contactName, style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                TextButton(onClick = { actions.onOpenConversation(card.conversationId) }) { Text("Open chat") }
+    SectionCard {
+        // Who and when.
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
+            ContactAvatar(card.contactName, size = 40.dp)
+            Column(Modifier.weight(1f)) {
+                Text(card.contactName, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(card.age, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Text(
-                listOfNotNull(card.age, card.expiry).joinToString(" · "),
-                style = MaterialTheme.typography.labelSmall,
-                color = if (card.expired) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (item.editing) {
-                // Local copy keeps typing smooth; every change is pushed to the holder, which sends it.
-                var text by rememberSaveable(card.approvalId) { mutableStateOf(item.editText) }
-                OutlinedTextField(
-                    value = text,
-                    onValueChange = { text = it; actions.onEditText(card.approvalId, it) },
-                    label = { Text("Your reply (this exact text is sent)") },
-                    isError = item.editError != null,
-                    supportingText = item.editError?.let { message -> @Composable { Text(message) } },
-                    enabled = !busy,
-                    modifier = Modifier.fillMaxWidth(),
-                )
-            } else {
-                Surface(shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.surfaceVariant) {
-                    Text(card.draftText, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(8.dp).fillMaxWidth())
-                }
-            }
-            Text("Why Wingman asked you:", style = MaterialTheme.typography.labelMedium)
-            card.reasons.forEach { Text("• $it", style = MaterialTheme.typography.bodySmall) }
-            item.error?.let { e ->
-                Text(e.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-            }
-            Text("Nothing is sent until you approve.", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
-                Button(onClick = { actions.onApprove(card.approvalId) }, enabled = item.canDecide) {
-                    if (item.inFlight == Decision.APPROVING) {
-                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                        Text("  Approving…")
-                    } else {
-                        Text(if (item.editing) "Approve edited" else "Approve")
-                    }
-                }
-                if (item.editing) {
-                    TextButton(onClick = { actions.onCancelEdit(card.approvalId) }, enabled = !busy) { Text("Undo edit") }
-                } else {
-                    TextButton(onClick = { actions.onStartEdit(card) }, enabled = !busy) { Text("Edit") }
-                }
-                OutlinedButton(onClick = { actions.onReject(card.approvalId) }, enabled = !busy) {
-                    Text(if (item.inFlight == Decision.REJECTING) "Rejecting…" else "Reject")
-                }
-            }
-            TextButton(onClick = { actions.onHistory(card.conversationId) }) { Text("Activity for ${card.contactName}") }
+            TextButton(onClick = { actions.onOpenConversation(card.conversationId) }) { Text("Open chat") }
         }
+        card.expiry?.let { expiry ->
+            val status = WingmanTheme.status
+            StatusPill(
+                expiry,
+                containerColor = if (card.expired) MaterialTheme.colorScheme.errorContainer else status.warningContainer,
+                contentColor = if (card.expired) MaterialTheme.colorScheme.onErrorContainer else status.onWarningContainer,
+                icon = Icons.Filled.DateRange,
+            )
+        }
+
+        // The draft itself: the most prominent thing on the card.
+        if (item.editing) {
+            // Local copy keeps typing smooth; every change is pushed to the holder, which sends it.
+            var text by rememberSaveable(card.approvalId) { mutableStateOf(item.editText) }
+            OutlinedTextField(
+                value = text,
+                onValueChange = { text = it; actions.onEditText(card.approvalId, it) },
+                label = { Text("Your reply (this exact text is sent)") },
+                isError = item.editError != null,
+                supportingText = item.editError?.let { message -> @Composable { Text(message) } },
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth(),
+            )
+        } else {
+            Surface(
+                shape = MaterialTheme.shapes.small,
+                color = MaterialTheme.colorScheme.primaryContainer,
+                contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Column(Modifier.padding(Spacing.md), verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    Text("Draft reply", style = MaterialTheme.typography.labelMedium)
+                    Text(card.draftText, style = MaterialTheme.typography.bodyLarge)
+                }
+            }
+        }
+
+        // Why the user is being asked.
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                Icon(Icons.Filled.Info, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text("Why Wingman asked you:", style = MaterialTheme.typography.labelLarge)
+            }
+            card.reasons.forEach {
+                Text("• $it", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        item.error?.let { e -> InfoBanner(e.message, tone = BannerTone.ERROR) }
+        Text(
+            "Nothing is sent until you approve.",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        // Approve is the primary action; Edit is secondary; Reject is de-emphasized and red.
+        FlowRow(
+            Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(Spacing.sm),
+            verticalArrangement = Arrangement.spacedBy(Spacing.xs),
+        ) {
+            Button(
+                onClick = { actions.onApprove(card.approvalId) },
+                enabled = item.canDecide,
+                modifier = Modifier.heightIn(min = Spacing.touchTarget),
+            ) {
+                if (item.inFlight == Decision.APPROVING) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = LocalContentColor.current)
+                    Text("  Approving…")
+                } else {
+                    Icon(Icons.Filled.Check, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(Spacing.xs))
+                    Text(if (item.editing) "Approve edited" else "Approve")
+                }
+            }
+            if (item.editing) {
+                OutlinedButton(onClick = { actions.onCancelEdit(card.approvalId) }, enabled = !busy, modifier = Modifier.heightIn(min = Spacing.touchTarget)) {
+                    Text("Undo edit")
+                }
+            } else {
+                OutlinedButton(onClick = { actions.onStartEdit(card) }, enabled = !busy, modifier = Modifier.heightIn(min = Spacing.touchTarget)) {
+                    Icon(Icons.Filled.Edit, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(Spacing.xs))
+                    Text("Edit")
+                }
+            }
+            TextButton(
+                onClick = { actions.onReject(card.approvalId) },
+                enabled = !busy,
+                colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                modifier = Modifier.heightIn(min = Spacing.touchTarget),
+            ) {
+                Text(if (item.inFlight == Decision.REJECTING) "Rejecting…" else "Reject")
+            }
+        }
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        TextButton(onClick = { actions.onHistory(card.conversationId) }) { Text("Activity for ${card.contactName}") }
     }
 }
 
 @Composable
 private fun DecidedCard(item: DecidedItem, actions: QueueActions) {
-    Card(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text("${item.contactName}: ${item.title}", style = MaterialTheme.typography.titleSmall, color = item.tone.color(), modifier = Modifier.weight(1f))
-                TextButton(onClick = { actions.onDismiss(item.approvalId) }) { Text("Dismiss") }
-            }
-            item.finalText?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-            Text(item.explanation, style = MaterialTheme.typography.bodySmall)
-            // Delivery comes only from the server's message state: "Queued, not sent yet" until it says otherwise.
-            item.delivery?.let { Text("Status: ${it.text}", style = MaterialTheme.typography.labelMedium, color = it.tone.color()) }
-            item.error?.let { Text(it.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (item.checkingDelivery) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
-                if (item.canCheckDelivery) TextButton(onClick = { actions.onCheckDelivery(item.approvalId) }) { Text("Check status") }
-                TextButton(onClick = { actions.onHistory(item.conversationId) }) { Text("Activity") }
-            }
+    SectionCard(containerColor = MaterialTheme.colorScheme.surfaceContainer) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text("${item.contactName}: ${item.title}", style = MaterialTheme.typography.titleSmall, color = item.tone.color(), modifier = Modifier.weight(1f))
+            TextButton(onClick = { actions.onDismiss(item.approvalId) }) { Text("Dismiss") }
+        }
+        item.finalText?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+        Text(item.explanation, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        // Delivery comes only from the server's message state: "Queued, not sent yet" until it says otherwise.
+        item.delivery?.let { Text("Status: ${it.text}", style = MaterialTheme.typography.labelLarge, color = it.tone.color()) }
+        item.error?.let { InfoBanner(it.message, tone = BannerTone.ERROR) }
+        Row(horizontalArrangement = Arrangement.spacedBy(Spacing.sm), verticalAlignment = Alignment.CenterVertically) {
+            if (item.checkingDelivery) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
+            if (item.canCheckDelivery) TextButton(onClick = { actions.onCheckDelivery(item.approvalId) }) { Text("Check status") }
+            TextButton(onClick = { actions.onHistory(item.conversationId) }) { Text("Activity") }
         }
     }
 }
@@ -322,39 +424,40 @@ fun TimelineContent(
     modifier: Modifier = Modifier,
 ) {
     Column(modifier.fillMaxSize()) {
-        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                if (conversationName != null) "Activity with $conversationName" else "All activity",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.weight(1f),
-            )
+        ListToolbar(
+            if (conversationName != null) "Activity with $conversationName" else "All activity",
+            onRefresh = onRefresh,
+        ) {
             if (conversationName != null) TextButton(onClick = onShowAll) { Text("Show all") }
-            TextButton(onClick = onRefresh) { Text("Refresh") }
         }
-        Text(
+        InfoBanner(
             "Exactly what Wingman's records show. \"Queued\" is not sent, and \"Sent\" is not delivered.",
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.padding(horizontal = 16.dp),
+            modifier = Modifier.padding(horizontal = Spacing.screen, vertical = Spacing.xs),
         )
         UiStateContent(state, onRetry = onRefresh, emptyMessage = "No activity yet.") { data ->
-            LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(12.dp)) {
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = Spacing.screen, vertical = Spacing.sm)) {
                 items(data.rows, key = { it.key }) { row ->
-                    Column(Modifier.fillMaxWidth().padding(vertical = 6.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(row.title, style = MaterialTheme.typography.bodyLarge, color = row.tone.color())
-                        Text(
-                            listOfNotNull(row.time, row.actor, row.contactName).joinToString(" · "),
-                            style = MaterialTheme.typography.labelSmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    Row(Modifier.fillMaxWidth().padding(vertical = Spacing.sm), horizontalArrangement = Arrangement.spacedBy(Spacing.md)) {
+                        Box(
+                            Modifier.padding(top = 6.dp).size(10.dp).background(row.tone.color(), CircleShape),
                         )
-                        row.reason?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                        row.detail?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
+                            Text(row.title, style = MaterialTheme.typography.bodyLarge, color = row.tone.color())
+                            Text(
+                                listOfNotNull(row.time, row.actor, row.contactName).joinToString(" · "),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            row.reason?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                            row.detail?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
+                        }
                     }
-                    HorizontalDivider()
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                 }
                 if (!data.endReached) {
                     item(key = "more") {
                         when {
-                            data.loadingMore -> CircularProgressIndicator(Modifier.padding(8.dp))
+                            data.loadingMore -> CircularProgressIndicator(Modifier.padding(Spacing.sm))
                             else -> Column {
                                 data.loadMoreError?.let { Text(it.message, color = MaterialTheme.colorScheme.error) }
                                 TextButton(onClick = onLoadMore) { Text(if (data.loadMoreError != null) "Retry" else "Load older") }
@@ -419,4 +522,46 @@ private fun QueueErrorPreview() = WingmanTheme(darkTheme = true) {
             QueueActions(),
         )
     }
+}
+
+@Preview(name = "Queue: pending dark", heightDp = 700)
+@Composable
+private fun QueuePendingDarkPreview() = WingmanTheme(darkTheme = true) {
+    Surface {
+        QueueContent(
+            UiState.Content(
+                ApprovalsScreenData(
+                    pending = listOf(PendingItem(previewCard, editing = false, editText = previewCard.draftText, editError = null, inFlight = null, error = null)),
+                    decided = emptyList(), loadingMore = false, endReached = true, loadMoreError = null,
+                ),
+            ),
+            QueueActions(),
+        )
+    }
+}
+
+@Preview(name = "Queue: empty")
+@Composable
+private fun QueueEmptyPreview() = WingmanTheme {
+    Surface { QueueContent(UiState.Empty, QueueActions()) }
+}
+
+private val previewTimeline = AuditScreenData(
+    rows = listOf(
+        AuditRow("r2", "Sent (delivery not confirmed)", com.wingman.features.conversation.LabelTone.NEUTRAL, SendStage.SENT, "Wingman", "Sam", "10:42", "2m ago", null, null, "c1"),
+        AuditRow("r1", "Draft approved (not sent yet)", com.wingman.features.conversation.LabelTone.PENDING, SendStage.NONE, "You", "Sam", "10:41", "3m ago", null, null, "c1"),
+    ),
+    loadingMore = false, endReached = true, loadMoreError = null,
+)
+
+@Preview(name = "Activity timeline")
+@Composable
+private fun TimelinePreview() = WingmanTheme {
+    Surface { TimelineContent(UiState.Content(previewTimeline), conversationName = "Sam", onShowAll = {}, onRefresh = {}, onLoadMore = {}) }
+}
+
+@Preview(name = "Activity timeline dark")
+@Composable
+private fun TimelineDarkPreview() = WingmanTheme(darkTheme = true) {
+    Surface { TimelineContent(UiState.Content(previewTimeline), conversationName = null, onShowAll = {}, onRefresh = {}, onLoadMore = {}) }
 }
