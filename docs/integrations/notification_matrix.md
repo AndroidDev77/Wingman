@@ -52,6 +52,12 @@ What the code does with these today:
   `VERIFIED` itself (D-016: operator CLI with evidence only).
 * `send.reports_delivery_receipts` is `false`: nothing on this path can observe delivery.
 
+> **D-032 (experimental branch):** `profile_read` stays UNSUPPORTED on the notification path itself.
+> In the sideloaded experimental build, the read-only screen reader
+> ([`screen_reader.md`](screen_reader.md)) can report `profile_read: UNVERIFIED` for the Hinge
+> notification connection through the shared `ProfileReadCapability` hook while the user has it on.
+> It never taps: "no accessibility-service tapping" still holds.
+
 ## 2. Architecture
 
 ```

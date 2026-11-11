@@ -1,0 +1,6 @@
+<resources>
+    <!-- D-032, EXPERIMENTAL BUILD ONLY: shown by Android's Accessibility settings. -->
+    <string name="screen_reader_service_label">Wingman screen reader</string>
+    <string name="screen_reader_service_summary">Reads match profile text in dating apps you choose. Read-only.</string>
+    <string name="screen_reader_service_description">Experimental. Wingman reads the text of a match\'s profile and the open chat in the dating apps you switch on inside Wingman (today: Hinge), so reply drafts can refer to the profile. It ignores every other app, never reads photos, and never taps, types or swipes anything. Switch an app off in Wingman to stop reading at once.</string>
+</resources>

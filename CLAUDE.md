@@ -24,11 +24,11 @@ Android-first AI dating assistant. It drafts replies; it sends only through veri
 | Dev-only backend (API + worker, mock LLM, mock connector) | `scripts/dev-run.sh` (needs a migrated DB) |
 | Mint a dev token | `cd backend && uv run python -m app.security.dev_stub --sub <name>` |
 
-Android app: `cd android && ./gradlew :app:installDebug` runs on built-in mock data; add `-Pwingman.useMockApi=false` to use the local backend at `10.0.2.2:8000` (emulator) and sign in with "Developer sign-in (debug build only)". The experimental Hinge connector compiles only with `-Pwingman.experimental=true` (never a Play build, D-023/D-026).
+Android app: `cd android && ./gradlew :app:installDebug` runs on built-in mock data; add `-Pwingman.useMockApi=false` to use the local backend at `10.0.2.2:8000` (emulator) and sign in with "Developer sign-in (debug build only)". The experimental Hinge connector and the read-only screen reader (D-032, `docs/integrations/screen_reader.md`) compile only with `-Pwingman.experimental=true` (never a Play build, D-023/D-026).
 
 ## Rules that bite
 - One Alembic migration (`0001`) until the first production deploy: amend it, don't add `0002` (D-010).
-- Contract changes are additive and versioned (current v1.3.1); update examples and negative examples, run `contracts/validate.sh`.
+- Contract changes are additive and versioned (current v1.3.2); update examples and negative examples, run `contracts/validate.sh`.
 - Use `FOR NO KEY UPDATE` for exclusive row locks; `FOR UPDATE` only where key changes or deletes must be blocked (D-020).
 - Never put platform credentials or session tokens on the backend, in logs, fixtures or the repo (D-021).
 - Never claim a capability is VERIFIED without a reproducible real-device test; release gates refuse autonomous features without evidence.

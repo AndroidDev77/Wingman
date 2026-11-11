@@ -23,6 +23,8 @@ import com.wingman.core.model.ContactPreferenceOverrideUpdate
 import com.wingman.core.model.ContactPreferences
 import com.wingman.core.model.Conversation
 import com.wingman.core.model.ConversationDetail
+import com.wingman.core.model.ConversationProfileLink
+import com.wingman.core.model.ConversationProfileLinkRequest
 import com.wingman.core.model.ConversationStage
 import com.wingman.core.model.Draft
 import com.wingman.core.model.DraftCreateRequest
@@ -278,4 +280,23 @@ interface WingmanApi {
      * Turning it off always works. PUT is idempotent: no key.
      */
     suspend fun putConnectionSettings(connectionId: String, body: ConnectionSettingsUpdate): ApiResult<Connection>
+
+    // profile links for reply drafts (contract v1.3.2, D-032)
+
+    /**
+     * `deleteProfile` (1.3.2): removes the profile with its evaluations, decisions and any
+     * conversation link. `404` when it is already gone.
+     */
+    suspend fun deleteProfile(profileId: String): ApiResult<Unit>
+
+    /**
+     * `putConversationProfileLink` (1.3.2): attaches one of the user's profiles to a conversation so
+     * reply drafts can use its stated text. `origin: device_match` is refused (`422`) unless the
+     * server finds the same stable platform ID on both; nothing links by display name. PUT is
+     * idempotent: no key.
+     */
+    suspend fun putConversationProfileLink(conversationId: String, body: ConversationProfileLinkRequest): ApiResult<ConversationProfileLink>
+
+    /** `deleteConversationProfileLink` (1.3.2): detaches the profile; it stays stored. `404` when none. */
+    suspend fun deleteConversationProfileLink(conversationId: String): ApiResult<Unit>
 }

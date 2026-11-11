@@ -35,12 +35,20 @@ from app.db.enums import (
     ProfileSource,
 )
 from app.db.errors import NotFoundError
-from app.db.models import AssistedDelivery, IdentityLink, Message, Profile, ProfileAction
+from app.db.models import (
+    AssistedDelivery,
+    ConversationProfileLink,
+    IdentityLink,
+    Message,
+    Profile,
+    ProfileAction,
+)
 from app.db.repositories import (
     AgentActionRepository,
     AssistedDeliveryRepository,
     ConnectionRepository,
     ContactRepository,
+    ConversationProfileLinkRepository,
     ConversationRepository,
     IdentityLinkRepository,
     ProfileActionRepository,
@@ -58,6 +66,7 @@ __all__ = [
     "AssistedDeliveryService",
     "IdentityLinkService",
     "InvalidRequest",
+    "ProfileLinkService",
     "ProfileService",
     "SwipeExecutionDisabled",
     "is_stale",
@@ -199,6 +208,100 @@ class IdentityLinkService:
         )
 
 
+# --------------------------------------------------------------------------- profile links
+
+PROFILE_LINK_ORIGINS = ("user", "device_match")
+
+
+class ProfileLinkService:
+    """Contract 1.3.2 (D-032): attach one profile to a conversation so reply drafts can
+    use its stated text as grounded context.
+
+    ``origin: user`` is the user's own choice (the "Which match is this?" picker).
+    ``origin: device_match`` is accepted only when the profile and the conversation are
+    on the same platform **and** the profile's ``external_profile_id`` equals the
+    conversation's ``external_thread_id`` or its contact's ``external_contact_id``: a
+    stable platform ID, as ADR 0008 section 4 requires for ``linked``. There is
+    deliberately no path that links by display name, photo or model output.
+    """
+
+    def __init__(self, *, now: Callable[[], datetime] = utc_now) -> None:
+        self._now = now
+
+    async def link(
+        self,
+        session: AsyncSession,
+        scope: UserScope,
+        conversation_id: uuid.UUID,
+        profile_id: uuid.UUID,
+        *,
+        origin: str = "user",
+    ) -> ConversationProfileLink:
+        conversation = await ConversationRepository(session, scope).require(conversation_id)
+        profile = await ProfileRepository(session, scope).get(profile_id)
+        if profile is None:
+            raise InvalidRequest(
+                "profile_id must be one of the caller's profiles",
+                pointer="/profile_id",
+                message="no such profile",
+            )
+        if origin not in PROFILE_LINK_ORIGINS:  # pragma: no cover - schema enum
+            raise InvalidRequest("unknown origin", pointer="/origin", message="unknown")
+        if origin == "device_match":
+            contact = await ContactRepository(session, scope).require(conversation.contact_id)
+            stable = {conversation.external_thread_id, contact.external_contact_id} - {None}
+            if (
+                profile.provider.value != conversation.platform
+                or profile.external_profile_id not in stable
+            ):
+                raise InvalidRequest(
+                    "device_match needs the same stable platform ID on the profile and the "
+                    "conversation; a display name is not an identity",
+                    pointer="/origin",
+                    message="no stable ID match; link as 'user' instead",
+                )
+        link, changed = await ConversationProfileLinkRepository(session, scope).put(
+            conversation_id, profile_id, origin
+        )
+        if changed:
+            await AgentActionRepository(session, scope).record(
+                type=AgentActionType.PROFILE_LINKED,
+                actor=Actor.USER if origin == "user" else Actor.CONNECTOR,
+                conversation_id=conversation_id,
+                contact_id=conversation.contact_id,
+                occurred_at=self._now(),
+                details={"profile_id": str(profile_id), "origin": origin},
+            )
+        return link
+
+    async def get(
+        self, session: AsyncSession, scope: UserScope, conversation_id: uuid.UUID
+    ) -> ConversationProfileLink:
+        await ConversationRepository(session, scope).require(conversation_id)
+        link = await ConversationProfileLinkRepository(session, scope).for_conversation(
+            conversation_id
+        )
+        if link is None:
+            raise NotFoundError("no profile is linked to this conversation")
+        return link
+
+    async def unlink(
+        self, session: AsyncSession, scope: UserScope, conversation_id: uuid.UUID
+    ) -> None:
+        conversation = await ConversationRepository(session, scope).require(conversation_id)
+        removed = await ConversationProfileLinkRepository(session, scope).remove(conversation_id)
+        if removed is None:
+            raise NotFoundError("no profile is linked to this conversation")
+        await AgentActionRepository(session, scope).record(
+            type=AgentActionType.PROFILE_UNLINKED,
+            actor=Actor.USER,
+            conversation_id=conversation_id,
+            contact_id=conversation.contact_id,
+            occurred_at=self._now(),
+            details={"profile_id": str(removed.profile_id), "origin": removed.origin},
+        )
+
+
 # --------------------------------------------------------------------------- profiles
 
 
@@ -306,6 +409,29 @@ class ProfileService:
             },
         )
         return await self.view(session, scope, profile), created
+
+    async def delete_profile(
+        self, session: AsyncSession, scope: UserScope, profile_id: uuid.UUID
+    ) -> None:
+        """``deleteProfile`` (1.3.2): removes the profile with its evaluations, decisions
+        and conversation links. Drafts made afterwards no longer see it. Audit carries
+        IDs and counts only."""
+        links = ConversationProfileLinkRepository(session, scope)
+        conversation_ids = await links.conversation_ids_for_profile(profile_id)
+        deleted = await ProfileRepository(session, scope).delete(profile_id)
+        if deleted is None:
+            raise NotFoundError("profile not found")
+        await AgentActionRepository(session, scope).record(
+            type=AgentActionType.PROFILE_DELETED,
+            actor=Actor.USER,
+            occurred_at=self._now(),
+            details={
+                "profile_id": str(profile_id),
+                "provider": deleted.provider.value,
+                "source": deleted.source.value,
+                "unlinked_conversations": len(conversation_ids),
+            },
+        )
 
     async def decide(
         self,

@@ -16,12 +16,17 @@
   executed here). WING-031 (:mod:`app.discovery`): decision rate limits (``429``),
   audited gate refusals, the superseded-decision and per-connection execution limits.
 
+Contract 1.3.2 (D-032): ``PUT`` / ``GET`` / ``DELETE
+/v1/conversations/{id}/profile-link`` (``putConversationProfileLink``,
+``getConversationProfileLink``, ``deleteConversationProfileLink``) attach one profile to
+a conversation for reply drafts, and ``DELETE /v1/profiles/{id}`` (``deleteProfile``).
+
 No request model accepts a platform credential or session field (``extra="forbid"``).
 """
 
 import re
 import uuid
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Body, Depends, Header, Query, Request, Response
 from fastapi.responses import JSONResponse
@@ -46,6 +51,7 @@ from app.db.enums import (
 )
 from app.db.models import (
     AssistedDelivery,
+    ConversationProfileLink,
     IdentityLink,
     InboundNotice,
     ProfileAction,
@@ -72,6 +78,7 @@ from app.services.integrations import (
     AssistedDeliveryService,
     IdentityLinkService,
     InvalidRequest,
+    ProfileLinkService,
     ProfileView,
     SwipeExecutionDisabled,
 )
@@ -543,6 +550,80 @@ async def import_profile(
         except InvalidRequest as exc:
             raise _invalid(exc) from None
         return slot.complete(201 if created else 200, profile_out(view))
+
+
+@router.delete(
+    "/v1/profiles/{profile_id}",
+    operation_id="deleteProfile",
+    tags=["profiles"],
+    status_code=204,
+)
+async def delete_profile(
+    profile_id: uuid.UUID, scope: Scope, session: Session, service: ProfileSvc
+) -> Response:
+    await service.delete_profile(session, scope, profile_id)
+    return Response(status_code=204)
+
+
+# --------------------------------------------------------------------------- profile links
+
+
+class ConversationProfileLinkRequest(_Strict):
+    profile_id: uuid.UUID
+    origin: Literal["user", "device_match"] = "user"
+
+
+def profile_link_out(link: ConversationProfileLink) -> dict[str, Any]:
+    return {
+        "id": str(link.id),
+        "conversation_id": str(link.conversation_id),
+        "profile_id": str(link.profile_id),
+        "origin": link.origin,
+        "created_at": ts(link.created_at),
+        "updated_at": ts(link.updated_at),
+    }
+
+
+PROFILE_LINK_ROUTE = "/v1/conversations/{conversation_id}/profile-link"
+
+
+@router.put(PROFILE_LINK_ROUTE, operation_id="putConversationProfileLink", tags=["profiles"])
+async def put_conversation_profile_link(
+    conversation_id: uuid.UUID,
+    body: ConversationProfileLinkRequest,
+    scope: Scope,
+    session: Session,
+    services: Services,
+) -> dict[str, Any]:
+    try:
+        link = await ProfileLinkService(now=services.dispatcher._now).link(  # noqa: SLF001
+            session, scope, conversation_id, body.profile_id, origin=body.origin
+        )
+    except InvalidRequest as exc:
+        raise _invalid(exc) from None
+    return profile_link_out(link)
+
+
+@router.get(PROFILE_LINK_ROUTE, operation_id="getConversationProfileLink", tags=["profiles"])
+async def get_conversation_profile_link(
+    conversation_id: uuid.UUID, scope: Scope, session: Session
+) -> dict[str, Any]:
+    return profile_link_out(await ProfileLinkService().get(session, scope, conversation_id))
+
+
+@router.delete(
+    PROFILE_LINK_ROUTE,
+    operation_id="deleteConversationProfileLink",
+    tags=["profiles"],
+    status_code=204,
+)
+async def delete_conversation_profile_link(
+    conversation_id: uuid.UUID, scope: Scope, session: Session, services: Services
+) -> Response:
+    await ProfileLinkService(now=services.dispatcher._now).unlink(  # noqa: SLF001
+        session, scope, conversation_id
+    )
+    return Response(status_code=204)
 
 
 def get_match_evaluator(request: Request, services: Services) -> MatchEvaluator:

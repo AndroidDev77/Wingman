@@ -36,6 +36,8 @@ import com.wingman.core.model.ContactPreferenceOverrideUpdate
 import com.wingman.core.model.ContactPreferences
 import com.wingman.core.model.Conversation
 import com.wingman.core.model.ConversationDetail
+import com.wingman.core.model.ConversationProfileLink
+import com.wingman.core.model.ConversationProfileLinkRequest
 import com.wingman.core.model.Draft
 import com.wingman.core.model.DraftCreateRequest
 import com.wingman.core.model.GlobalAutomationState
@@ -240,6 +242,15 @@ class HttpWingmanApi(
 
     override suspend fun putConnectionSettings(connectionId: String, body: ConnectionSettingsUpdate): ApiResult<Connection> =
         call { service.putConnectionSettings(connectionId, body) }
+
+    override suspend fun deleteProfile(profileId: String): ApiResult<Unit> =
+        callNoContent { service.deleteProfile(profileId) }
+
+    override suspend fun putConversationProfileLink(conversationId: String, body: ConversationProfileLinkRequest): ApiResult<ConversationProfileLink> =
+        call { service.putConversationProfileLink(conversationId, body) }
+
+    override suspend fun deleteConversationProfileLink(conversationId: String): ApiResult<Unit> =
+        callNoContent { service.deleteConversationProfileLink(conversationId) }
 
     private fun ifMatch(version: Int?): String? = version?.let { "\"$it\"" }
 

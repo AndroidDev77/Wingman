@@ -44,6 +44,16 @@ class ExperimentalSourceSetTest {
         it.startsWith("com/wingman/integrations/hinge/") && !it.startsWith("com/wingman/integrations/hinge/notifications/")
     }
 
+    /** D-032: the read-only screen reader, accessibility service included. */
+    private fun screenReaderClasses(files: List<String>) = files.filter { it.startsWith("com/wingman/integrations/screenreader/") }
+
+    private val screenReaderRepresentative = listOf(
+        "com.wingman.integrations.screenreader.ScreenReaderCore",
+        "com.wingman.integrations.screenreader.ProfileExtractor",
+        "com.wingman.integrations.screenreader.ScreenInspector",
+        "com.wingman.integrations.screenreader.ProfileSync",
+    )
+
     private val representative = listOf(
         "com.wingman.integrations.hinge.HingeConnector",
         "com.wingman.integrations.hinge.HingeBuildFlags",
@@ -63,6 +73,16 @@ class ExperimentalSourceSetTest {
         } else {
             assertEquals("default build contains experimental classes", emptyList<String>(), connector)
             for (name in representative) assertFalse("$name is loadable in the default build", loadable(name))
+        }
+        // D-032: the same holds for the screen reader package.
+        val reader = screenReaderClasses(files)
+        if (experimentalBuild()) {
+            assertTrue("experimental build without the screen reader", reader.size > 10)
+            for (name in screenReaderRepresentative) assertTrue("$name missing from the experimental build", loadable(name))
+        } else {
+            assertEquals("default build contains screen reader classes", emptyList<String>(), reader)
+            for (name in screenReaderRepresentative) assertFalse("$name is loadable in the default build", loadable(name))
+            assertFalse(loadable("com.wingman.integrations.screenreader.android.WingmanScreenReaderService"))
         }
         // The notification-assisted fallback ships in every build.
         assertTrue(loadable("com.wingman.integrations.hinge.notifications.HingeNotificationPlugin"))
@@ -85,6 +105,8 @@ class ExperimentalSourceSetTest {
             root.walkTopDown().filter { it.isFile && it.name.endsWith(".kt") }.mapNotNull { f ->
                 val code = withoutComments(f.readText()) // comments may name them; code may not
                 val bad = Regex("""com\.wingman\.integrations\.hinge\.(?!notifications\b)""").containsMatchIn(code) ||
+                    code.contains("integrations.screenreader") ||
+                    Regex("""\b(ScreenReaderModule|ScreenReaderRuntime|ScreenReaderActivity|WingmanScreenReaderService|AccessibilityService)\b""").containsMatchIn(code) ||
                     Regex("""\b(HingeModule|HingeConnector|HingeExperimentalActivity|HingeBuildFlags)\b""").containsMatchIn(code)
                 f.relativeTo(appDir).invariantSeparatorsPath.takeIf { bad }
             }.toList()
@@ -92,6 +114,18 @@ class ExperimentalSourceSetTest {
         assertEquals(emptyList<String>(), offenders)
         val manifest = File(appDir, "src/main/AndroidManifest.xml").readText()
         assertFalse("main manifest declares an experimental component", manifest.contains("integrations.hinge.android"))
+        // D-032: no accessibility service, permission or configuration outside the experimental build.
+        val manifestCode = manifest.replace(Regex("""<!--[\s\S]*?-->"""), "")
+        for (word in listOf("screenreader", "BIND_ACCESSIBILITY_SERVICE", "accessibilityservice", "AccessibilityService")) {
+            assertFalse("main manifest mentions $word", manifestCode.contains(word))
+        }
+        assertFalse("src/main holds screen reader sources", File(appDir, "src/main/java/com/wingman/integrations/screenreader").exists())
+        assertFalse("src/standard holds screen reader sources", File(appDir, "src/standard/java/com/wingman/integrations/screenreader").exists())
+        val mainRes = File(appDir, "src/main/res").walkTopDown().filter { it.isFile }.toList()
+        assertTrue(mainRes.none { it.readText().contains("accessibility-service") || it.readText().contains("screen_reader") })
+        val entries = File(appDir, "src/experimental/AndroidManifest-entries.xml").readText()
+        assertTrue(entries.contains(".integrations.screenreader.android.WingmanScreenReaderService"))
+        assertTrue(File(appDir, "src/experimental/res/xml/wingman_screen_reader.xml").isFile)
     }
 
     @Test fun `static - the experimental and standard stubs expose the same members`() {
@@ -104,5 +138,8 @@ class ExperimentalSourceSetTest {
         val gradle = File(appDir, "build.gradle.kts").readText()
         assertTrue(gradle.contains("""java.srcDir(if (wingmanExperimental) "src/experimental/java" else "src/standard/java")"""))
         assertTrue(gradle.contains("""if (wingmanExperimental) java.srcDir("src/testExperimental/java")"""))
+        // D-032: experimental-only resources, and the class check covers the screen reader package.
+        assertTrue(gradle.contains("""if (wingmanExperimental) res.srcDir("src/experimental/res")"""))
+        assertTrue(gradle.contains("""it.startsWith("com/wingman/integrations/screenreader/")"""))
     }
 }

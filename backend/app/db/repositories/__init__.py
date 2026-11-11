@@ -36,6 +36,7 @@ from app.db.repositories.idempotency import (
 )
 from app.db.repositories.integrations import (
     AssistedDeliveryRepository,
+    ConversationProfileLinkRepository,
     IdentityLinkRepository,
     InboundNoticeRepository,
     ProfileActionRepository,
@@ -59,6 +60,7 @@ __all__ = [
     "ClaimOutcome",
     "ConnectionRepository",
     "ContactRepository",
+    "ConversationProfileLinkRepository",
     "ConversationRepository",
     "DateProposalRepository",
     "DraftRepository",

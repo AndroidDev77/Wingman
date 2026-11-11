@@ -34,6 +34,7 @@ import com.wingman.core.model.FieldError
 import com.wingman.core.model.ConnectionStatus
 import com.wingman.core.model.ConnectionUnpairRequest
 import com.wingman.core.model.ConnectionUnpairResult
+import com.wingman.core.api.WingmanJson
 import com.wingman.core.model.ConnectorCapabilities
 import com.wingman.core.model.ConnectorEventIngestOutcome
 import com.wingman.core.model.ConnectorEventIngestResult
@@ -44,6 +45,8 @@ import com.wingman.core.model.ContactPreferenceOverrideUpdate
 import com.wingman.core.model.ContactPreferences
 import com.wingman.core.model.Conversation
 import com.wingman.core.model.ConversationDetail
+import com.wingman.core.model.ConversationProfileLink
+import com.wingman.core.model.ConversationProfileLinkRequest
 import com.wingman.core.model.DeliveryState
 import com.wingman.core.model.Draft
 import com.wingman.core.model.DraftCreateRequest
@@ -153,6 +156,9 @@ class MockWingmanApi(
     private val assisted = MockAssistedFixtures.assistedDeliveries.toMutableList()
     private val notices = MockAssistedFixtures.inboundNotices.toMutableList()
     private val profiles = MockProfileFixtures.profiles.associateBy { it.id }.toMutableMap()
+
+    /** (1.3.2) conversation ID -> its linked profile. */
+    private val profileLinks = LinkedHashMap<String, ConversationProfileLink>()
     private val profileActions = mutableListOf<ProfileAction>()
 
     init {
@@ -461,18 +467,25 @@ class MockWingmanApi(
         idempotent("createDraft", "POST /v1/conversations/{id}/drafts", key, conversationId to body) {
             val conv = conversations.find { it.id == conversationId } ?: return@idempotent notFound()
             val lastInbound = messages[conversationId].orEmpty().lastOrNull { it.direction == MessageDirection.INBOUND }
+            // 1.3.2: with a linked profile the placeholder names its first prompt (the question only).
+            val linkedProfile = profileLinks[conversationId]?.let { profiles[it.profileId] }
+            val citedPrompt = linkedProfile?.prompts?.firstOrNull { it.answer.isNotBlank() }
             val draft = Draft(
                 id = nextId(),
                 conversationId = conversationId,
                 decision = DraftDecision.SEND_CANDIDATE,
-                text = "That sounds great! Tell me more.",
+                text = if (citedPrompt == null) "That sounds great! Tell me more." else "That sounds great! Your profile's \"${citedPrompt.prompt.take(80)}\" caught my eye. Tell me more.",
                 questionForUser = null,
                 rationale = "Mock draft: deterministic placeholder, not model output.",
                 confidence = 0.5,
                 requiresApproval = false,
                 approvalReasons = emptyList(),
                 intentMode = conv.effectiveIntent,
-                grounding = DraftGrounding(emptyList(), listOfNotNull(lastInbound?.id)),
+                grounding = DraftGrounding(
+                    emptyList(), listOfNotNull(lastInbound?.id),
+                    profileId = linkedProfile?.id.takeIf { citedPrompt != null },
+                    profileFields = if (citedPrompt == null) emptyList() else listOf("prompts/" + linkedProfile!!.prompts.indexOf(citedPrompt)),
+                ),
                 createdAt = clock(),
             )
             audit(AgentActionType.DRAFT_GENERATED, Actor.AGENT, conversationId = conversationId, contactId = conv.contact.id)
@@ -609,6 +622,19 @@ class MockWingmanApi(
                 return@op problem(422, ErrorCode.VALIDATION_ERROR, "connection is unpaired; only send outcomes are accepted")
             }
             val payload = (envelope["payload"] as? JsonObject) ?: JsonObject(emptyMap())
+            if (type == "connection.capabilities_changed") {
+                // D-032: the mock stores the optional `profile_read` a device reports (never VERIFIED),
+                // which is what a device profile import is checked against. Other capabilities keep
+                // their paired values here.
+                val claimed = (payload["capabilities"] as? JsonObject)
+                    ?.let { runCatching { WingmanJson.decodeFromJsonElement(ConnectorCapabilities.serializer(), it) }.getOrNull() }
+                if (claimed != null) {
+                    val index = connections.indexOfFirst { it.id == connectionId }
+                    val current = connections[index]
+                    val profileRead = trustClaimedCapabilities(claimed).capabilities.profileRead
+                    connections[index] = current.copy(capabilities = current.capabilities.copy(capabilities = current.capabilities.capabilities.copy(profileRead = profileRead)))
+                }
+            }
             fun payloadField(name: String) = (payload[name] as? JsonPrimitive)?.takeIf { it.isString }?.content
             var messageId: String? = null
             if (type.endsWith("send_acknowledged") || type.endsWith("send_failed") || type.endsWith("delivery_receipt")) {
@@ -774,8 +800,13 @@ class MockWingmanApi(
                 return@idempotent problem(422, ErrorCode.VALIDATION_ERROR, "connection_id must be your connection on the profile's platform")
             }
             if (body.source == com.wingman.core.model.ProfileSource.DEVICE) {
-                // Mirrors the server: no connection has a supported profile_read today.
-                return@idempotent problem(422, ErrorCode.VALIDATION_ERROR, "profile_read is UNSUPPORTED or the connection is unpaired")
+                // Mirrors the server: a device import needs a paired connection whose profile_read is
+                // not UNSUPPORTED (absent means UNSUPPORTED).
+                val c = connections.firstOrNull { it.id == body.connectionId }
+                val profileRead = c?.capabilities?.capabilities?.profileRead?.status ?: Verification.UNSUPPORTED
+                if (c == null || !c.isPaired || profileRead == Verification.UNSUPPORTED) {
+                    return@idempotent problem(422, ErrorCode.VALIDATION_ERROR, "profile_read is UNSUPPORTED or the connection is unpaired")
+                }
             }
             val now = clock()
             val existing = profiles.values.firstOrNull { it.provider == body.provider && it.externalProfileId == body.externalProfileId }
@@ -796,7 +827,9 @@ class MockWingmanApi(
 
     override suspend fun listProfileReviewQueue(page: PageRequest, filter: ProfileQueueFilter): ApiResult<Page<Profile>> =
         op("listProfileReviewQueue") {
-            val decided = profileActions.filter { it.decision != ProfileDecision.SKIP }.map { it.profileId }.toSet()
+            // 1.3.2: a profile linked to a conversation is a match's profile, not a candidate.
+            val linked = profileLinks.values.map { it.profileId }.toSet()
+            val decided = profileActions.filter { it.decision != ProfileDecision.SKIP }.map { it.profileId }.toSet() + linked
             fun excluded(p: Profile) = !p.latestEvaluation?.dealbreakersHit.isNullOrEmpty()
             val ranked = profiles.values
                 .filter { it.id !in decided && (filter.provider == null || it.provider == filter.provider) }
@@ -869,6 +902,58 @@ class MockWingmanApi(
             if (body.autoSwipeEnabled) swipeGateFailure(connections[index])?.let { return@op swipeDisabled(it) }
             connections[index] = connections[index].copy(autoSwipeEnabled = body.autoSwipeEnabled)
             ok(connections[index])
+        }
+
+    /* ------------------------------------------------------------ profile links (v1.3.2, D-032) */
+
+    override suspend fun deleteProfile(profileId: String): ApiResult<Unit> =
+        op("deleteProfile") {
+            val removed = profiles.remove(profileId) ?: return@op notFound()
+            val conversationsUnlinked = profileLinks.filterValues { it.profileId == profileId }.keys.toList()
+            conversationsUnlinked.forEach { profileLinks.remove(it) }
+            profileActions.removeAll { it.profileId == profileId }
+            audit(
+                AgentActionType.PROFILE_DELETED, Actor.USER,
+                details = details("profile_id" to removed.id, "provider" to removed.provider.wireName(), "unlinked_conversations" to conversationsUnlinked.size),
+            )
+            ok(Unit)
+        }
+
+    override suspend fun putConversationProfileLink(conversationId: String, body: ConversationProfileLinkRequest): ApiResult<ConversationProfileLink> =
+        op("putConversationProfileLink") {
+            val conv = conversations.find { it.id == conversationId } ?: return@op notFound()
+            val profile = profiles[body.profileId] ?: return@op problem(422, ErrorCode.VALIDATION_ERROR, "profile_id must be one of your profiles")
+            if (body.origin == com.wingman.core.model.ProfileLinkOrigin.DEVICE_MATCH) {
+                // Mirrors the server: a stable platform ID on both sides, never a display name.
+                val stable = profile.provider.wireName() == conv.platform && conv.externalThreadId != null && profile.externalProfileId == conv.externalThreadId
+                if (!stable) return@op problem(422, ErrorCode.VALIDATION_ERROR, "device_match needs the same stable platform ID on the profile and the conversation")
+            }
+            val now = clock()
+            val existing = profileLinks[conversationId]
+            if (existing != null && existing.profileId == body.profileId && existing.origin == body.origin) return@op ok(existing)
+            val link = ConversationProfileLink(
+                id = existing?.id ?: nextId(), conversationId = conversationId, profileId = body.profileId,
+                origin = body.origin, createdAt = existing?.createdAt ?: now, updatedAt = now,
+            )
+            profileLinks[conversationId] = link
+            audit(
+                AgentActionType.PROFILE_LINKED,
+                if (body.origin == com.wingman.core.model.ProfileLinkOrigin.USER) Actor.USER else Actor.CONNECTOR,
+                conversationId = conversationId, contactId = conv.contact.id,
+                details = details("profile_id" to body.profileId, "origin" to (if (body.origin == com.wingman.core.model.ProfileLinkOrigin.USER) "user" else "device_match")),
+            )
+            ok(link)
+        }
+
+    override suspend fun deleteConversationProfileLink(conversationId: String): ApiResult<Unit> =
+        op("deleteConversationProfileLink") {
+            val conv = conversations.find { it.id == conversationId } ?: return@op notFound()
+            val removed = profileLinks.remove(conversationId) ?: return@op notFound()
+            audit(
+                AgentActionType.PROFILE_UNLINKED, Actor.USER, conversationId = conversationId, contactId = conv.contact.id,
+                details = details("profile_id" to removed.profileId),
+            )
+            ok(Unit)
         }
 
     /** The connection-level swipe gate (backend `swipe_gate_failure`). */
@@ -1222,7 +1307,7 @@ class MockWingmanApi(
             }
             val s = claimed.capabilities
             return claimed.copy(
-                capabilities = CapabilitySet(trust(s.read), trust(s.draft), trust(s.send), trust(s.swipe), trust(s.calendarWrite)),
+                capabilities = CapabilitySet(trust(s.read), trust(s.draft), trust(s.send), trust(s.swipe), trust(s.calendarWrite), s.profileRead?.let(::trust)),
             )
         }
 

@@ -250,7 +250,7 @@ class ContractExamplesTest {
         assertEquals(contractEnum("ErrorCode"), ErrorCode.entries.map { it.wire })
         // Sanity: the parser found real lists.
         assertEquals(18, contractEnum("ErrorCode").size)
-        assertEquals(35, contractEnum("AgentActionType").size)
+        assertEquals(38, contractEnum("AgentActionType").size) // 35 + 3 in 1.3.2 (D-032)
         // Contract 1.3.0 (ADR 0008) enums.
         assertEquals(contractEnum("ConnectionTransport"), wire(ConnectionTransport.entries.toTypedArray(), ConnectionTransport.serializer()))
         assertEquals(contractEnum("InboundEventKind"), wire(InboundEventKind.entries.toTypedArray(), InboundEventKind.serializer()))

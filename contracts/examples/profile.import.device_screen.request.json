@@ -1,0 +1,22 @@
+{
+  "provider": "hinge",
+  "external_profile_id": "screen:3f0c7a52-6f1d-4b7e-9d43-51c2a8e0b001",
+  "source": "device",
+  "connection_id": "0192f3a0-0000-7000-8000-0000000000a7",
+  "display_name": "Riley",
+  "prompts": [
+    {
+      "prompt": "A shower thought I recently had",
+      "answer": "Do fish get thirsty?"
+    },
+    {
+      "prompt": "Typical Sunday",
+      "answer": "Farmers market, then a long trail run."
+    }
+  ],
+  "attributes": {
+    "job_title": "Pastry chef",
+    "hometown": "Example Falls"
+  },
+  "source_observed_at": "2026-11-11T08:55:00Z"
+}

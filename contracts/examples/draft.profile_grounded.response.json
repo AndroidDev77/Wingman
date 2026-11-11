@@ -1,0 +1,25 @@
+{
+  "id": "0192f3a0-0000-7000-8000-0000000000e7",
+  "conversation_id": "0192f3a0-0000-7000-8000-0000000000b1",
+  "decision": "send_candidate",
+  "text": "Farmers market and a trail run sounds like a great Sunday. Which trail is your favorite?",
+  "question_for_user": null,
+  "rationale": "Answers the contact's message and picks up a prompt from their profile.",
+  "confidence": 0.8,
+  "requires_approval": true,
+  "approval_reasons": [
+    "assisted_mode"
+  ],
+  "intent_mode": "serious",
+  "grounding": {
+    "memory_ids": [],
+    "message_ids": [
+      "0192f3a0-0000-7000-8000-0000000000d1"
+    ],
+    "profile_id": "0192f3a0-0000-7000-8000-000000000a01",
+    "profile_fields": [
+      "prompts/1"
+    ]
+  },
+  "created_at": "2026-11-11T09:01:10Z"
+}

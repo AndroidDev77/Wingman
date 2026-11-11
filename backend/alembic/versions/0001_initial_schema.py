@@ -104,6 +104,9 @@ ENUMS: dict[str, tuple[str, ...]] = {
         "profile_imported",
         "profile_decision_recorded",
         "profile_action_queued",
+        "profile_linked",
+        "profile_unlinked",
+        "profile_deleted",
     ),
     "connection_status": ("connected", "disconnected", "error"),
     # Contract 1.3.0 (ADR 0008).
@@ -1589,6 +1592,14 @@ def upgrade() -> None:
             server_default=sa.text("'{}'"),
             nullable=False,
         ),
+        # Contract 1.3.2 (D-032): the linked profile and the fields of it the draft cited.
+        sa.Column("grounding_profile_id", sa.UUID(), nullable=True),
+        sa.Column(
+            "grounding_profile_fields",
+            postgresql.ARRAY(sa.Text()),
+            server_default=sa.text("'{}'"),
+            nullable=False,
+        ),
         sa.Column("reason", sa.String(length=64), nullable=False),
         sa.Column("trigger_message_id", sa.UUID(), nullable=True),
         sa.Column(
@@ -2400,6 +2411,62 @@ def upgrade() -> None:
         ["user_id", "profile_id", "created_at", "id"],
         unique=False,
     )
+    # ---- contract 1.3.2 (D-032): a profile attached to a conversation, for reply drafts
+    op.create_table(
+        "conversation_profile_links",
+        sa.Column("id", sa.UUID(), nullable=False),
+        sa.Column("user_id", sa.UUID(), nullable=False),
+        sa.Column("conversation_id", sa.UUID(), nullable=False),
+        sa.Column("profile_id", sa.UUID(), nullable=False),
+        sa.Column("origin", sa.String(length=16), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.text("now()"),
+            nullable=False,
+        ),
+        sa.CheckConstraint(
+            "origin IN ('user', 'device_match')",
+            name=op.f("ck_conversation_profile_links_origin_known"),
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "conversation_id"],
+            ["conversations.user_id", "conversations.id"],
+            name=op.f("fk_conversation_profile_links_user_id_conversation_id_conversations"),
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id", "profile_id"],
+            ["profiles.user_id", "profiles.id"],
+            name=op.f("fk_conversation_profile_links_user_id_profile_id_profiles"),
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id"],
+            ["users.id"],
+            name=op.f("fk_conversation_profile_links_user_id_users"),
+            ondelete="CASCADE",
+        ),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_conversation_profile_links")),
+        sa.UniqueConstraint(
+            "user_id",
+            "conversation_id",
+            name=op.f("uq_conversation_profile_links_user_id_conversation_id"),
+        ),
+        sa.UniqueConstraint("user_id", "id", name=op.f("uq_conversation_profile_links_user_id_id")),
+    )
+    op.create_index(
+        op.f("ix_conversation_profile_links_user_id_profile_id"),
+        "conversation_profile_links",
+        ["user_id", "profile_id"],
+        unique=False,
+    )
     op.create_table(
         "assisted_deliveries",
         sa.Column("id", sa.UUID(), nullable=False),
@@ -2546,6 +2613,11 @@ def downgrade() -> None:
         "ix_assisted_deliveries_user_id_status_created_at_id", table_name="assisted_deliveries"
     )
     op.drop_table("assisted_deliveries")
+    op.drop_index(
+        op.f("ix_conversation_profile_links_user_id_profile_id"),
+        table_name="conversation_profile_links",
+    )
+    op.drop_table("conversation_profile_links")
     op.drop_index(
         op.f("ix_profile_evaluations_user_id_profile_id_created_at_id"),
         table_name="profile_evaluations",

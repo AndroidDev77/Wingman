@@ -30,7 +30,14 @@ Flow
          is ever marked confirmed;
        * escalation must cite matching interest in the contact's own messages, and
          explicit or coercive content is refused (``no_send``);
-       * style caps (emoji, punctuation, length) are applied or flagged.
+       * style caps (emoji, punctuation, length) are applied or flagged;
+       * (contract 1.3.2, D-032) when the user linked a profile to the conversation, its
+         stated text fields are handed out as ``p1``, ``p2``, ...; a cited profile ref
+         must be one of them (else ``no_send``, ``invalid_grounding``), a profile field
+         can never ground a fact about the user, protected or sensitive attributes
+         (age, ethnicity, religion, orientation, gender, health, body, height, politics)
+         are never given to the model, and a draft that states such a withheld value is
+         refused (``sensitive_profile_attribute``). Images are never part of a profile.
     6. Append a ``draft_generated`` audit entry with redacted details (no text).
 
 Model failure (timeout, transport error, malformed or schema-invalid output) gives a
@@ -63,6 +70,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.ai.llm_gateway import LLMGateway, build_gateway
+from app.ai.match_evaluator import model_safe_attributes, sensitive_attribute_values
 from app.ai.memory import ContextFact, ContextLimits, MemoryContext, MemoryService
 from app.ai.prompts import (
     BREVITY_MAX_CHARS,
@@ -71,6 +79,7 @@ from app.ai.prompts import (
     INTENT_REF,
     AnalysisView,
     MemoryLine,
+    ProfileLine,
     PromptMessage,
     ReplyPromptContext,
     build_reply_messages,
@@ -88,8 +97,13 @@ from app.db.enums import (
     ResponsePace,
 )
 from app.db.ids import uuid7
-from app.db.models import Message
-from app.db.repositories import AgentActionRepository, ConversationRepository
+from app.db.models import Message, Profile
+from app.db.repositories import (
+    AgentActionRepository,
+    ConversationProfileLinkRepository,
+    ConversationRepository,
+    ProfileRepository,
+)
 from app.db.scope import UserScope
 from app.services.preferences import EffectivePreferences, get_effective_preferences
 
@@ -111,12 +125,13 @@ __all__ = [
     "detect_personal_claims",
     "detect_unsafe_content",
     "generate_draft",
+    "profile_context_fields",
 ]
 
 logger = logging.getLogger(__name__)
 
 GENERATE_OPERATION = "reply.generate"
-REF_PATTERN = r"^(m[1-9][0-9]{0,3}|f[1-9][0-9]{0,3}|s1|guidance|intent)$"
+REF_PATTERN = r"^(m[1-9][0-9]{0,3}|f[1-9][0-9]{0,3}|p[1-9][0-9]{0,1}|s1|guidance|intent)$"
 _REF_RE = re.compile(REF_PATTERN)
 MAX_TEXT_CHARS = 4000
 MAX_QUESTION_CHARS = 500
@@ -158,6 +173,7 @@ class DraftReason(StrEnum):
     NOTHING_TO_REPLY_TO = "nothing_to_reply_to"
     MODEL_UNAVAILABLE = "model_unavailable"
     INVALID_GROUNDING = "invalid_grounding"
+    SENSITIVE_PROFILE_ATTRIBUTE = "sensitive_profile_attribute"
     FABRICATED_PERSONAL_FACT = "fabricated_personal_fact"
     UNSUPPORTED_ESCALATION = "unsupported_escalation"
     UNSAFE_CONTENT = "unsafe_content"
@@ -173,7 +189,7 @@ class _Strict(BaseModel):
 def _check_refs(refs: Iterable[str]) -> None:
     for ref in refs:
         if not _REF_RE.fullmatch(ref):
-            raise ValueError("refs must look like m1, f1, s1, guidance or intent")
+            raise ValueError("refs must look like m1, f1, p1, s1, guidance or intent")
 
 
 class UserClaim(_Strict):
@@ -191,8 +207,16 @@ class UserClaim(_Strict):
         return self
 
 
+def _require_every_field(schema: dict[str, Any]) -> None:
+    schema["required"] = list(schema.get("properties", {}))
+
+
 class ReplyOutput(_Strict):
-    """What the model must return. Every field is required (no silent defaults)."""
+    """What the model must return. The JSON schema sent to the model requires every
+    field. ``profile_refs`` (1.3.2) is the one field accepted when absent, as "no profile
+    field used", so outputs written for 1.3.1 stay valid."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, json_schema_extra=_require_every_field)
 
     decision: DraftDecision
     text: str | None = Field(max_length=MAX_TEXT_CHARS)
@@ -205,9 +229,15 @@ class ReplyOutput(_Strict):
     commitment: Commitment
     escalation: bool
     interest_evidence_refs: list[str] = Field(max_length=20)
+    profile_refs: list[str] = Field(
+        default_factory=list,
+        max_length=20,
+        description="Profile field refs (p1, p2, ...) the draft relied on; [] if none.",
+    )
 
     @model_validator(mode="after")
     def _shape(self) -> "ReplyOutput":
+        _check_refs(self.profile_refs)
         _check_refs(self.message_refs)
         _check_refs(self.memory_refs)
         _check_refs(self.interest_evidence_refs)
@@ -227,7 +257,12 @@ class ReplyOutput(_Strict):
         return self
 
     def all_refs(self) -> list[str]:
-        out = [*self.message_refs, *self.memory_refs, *self.interest_evidence_refs]
+        out = [
+            *self.message_refs,
+            *self.memory_refs,
+            *self.interest_evidence_refs,
+            *self.profile_refs,
+        ]
         for claim in self.user_claims:
             out += claim.refs
         return out
@@ -239,6 +274,16 @@ class ReplyOutput(_Strict):
 class Grounding(_Strict):
     memory_ids: tuple[uuid.UUID, ...]
     message_ids: tuple[uuid.UUID, ...]
+    # Contract 1.3.2: the linked profile and the field pointers (``prompts/0``,
+    # ``attributes/job``, ``bio``) the draft cited. Both empty when none was cited.
+    profile_id: uuid.UUID | None = None
+    profile_fields: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def _profile_shape(self) -> "Grounding":
+        if (self.profile_id is None) != (not self.profile_fields):
+            raise ValueError("profile_id is set exactly when profile_fields is not empty")
+        return self
 
 
 class GuardrailViolation(_Strict):
@@ -304,6 +349,10 @@ class DraftResult(_Strict):
             "grounding": {
                 "memory_ids": [str(m) for m in self.grounding.memory_ids],
                 "message_ids": [str(m) for m in self.grounding.message_ids],
+                "profile_id": (
+                    str(self.grounding.profile_id) if self.grounding.profile_id else None
+                ),
+                "profile_fields": list(self.grounding.profile_fields),
             },
             "created_at": _timestamp(self.created_at),
         }
@@ -321,6 +370,9 @@ class DraftLimits:
     max_query_chars: int = 500
     max_guidance_chars: int = 500
     memory: ContextLimits = ContextLimits(max_facts=12, max_chars=1500, max_summary_chars=600)
+    # Linked profile (1.3.2): at most this many text fields, each cut to this length.
+    max_profile_fields: int = 16
+    max_profile_field_chars: int = 400
     # Below this model confidence a send_candidate gets ``low_confidence``.
     low_confidence: float = 0.6
 
@@ -571,6 +623,54 @@ _ASK_FOR: dict[ClaimKind, str] = {
 }
 
 
+@dataclass(frozen=True)
+class ProfileField:
+    """One citable text field of a linked profile: its contract pointer, the field's
+    own name and the stated text."""
+
+    pointer: str
+    label: str
+    text: str
+
+
+def profile_context_fields(
+    profile: Profile, *, max_fields: int = 16, max_chars: int = 400
+) -> list[ProfileField]:
+    """The text fields of ``profile`` a draft may use, in a stable order: prompts, bio,
+    then attributes by name. Only stated text: no display name, no image or URL
+    attribute, and none of the protected or sensitive attributes
+    (:func:`app.ai.match_evaluator.model_safe_attributes`). Bounded."""
+    fields: list[ProfileField] = []
+    for i, prompt in enumerate(profile.prompts or []):
+        question = str(prompt.get("prompt", "")).strip()
+        answer = str(prompt.get("answer", "")).strip()
+        if question and answer:
+            fields.append(ProfileField(f"prompts/{i}", question[:max_chars], answer[:max_chars]))
+    if profile.bio and profile.bio.strip():
+        fields.append(ProfileField("bio", "bio", profile.bio.strip()[:max_chars]))
+    for key in sorted(model_safe_attributes(profile.attributes or {})):
+        value = profile.attributes[key]
+        text = ", ".join(str(v) for v in value) if isinstance(value, list) else str(value)
+        if text.strip():
+            fields.append(ProfileField(f"attributes/{key}", key, text.strip()[:max_chars]))
+    return fields[:max_fields]
+
+
+def _states_withheld_value(text: str, values: Iterable[str], elsewhere: str) -> bool:
+    """True when the draft contains a sensitive profile value (3+ characters, whole
+    words) that appears neither in the conversation nor in the user's guidance."""
+    haystack = text.casefold()
+    known = elsewhere.casefold()
+    for value in values:
+        needle = value.casefold()
+        if len(needle) < 3:
+            continue
+        pattern = r"(?<!\w)" + re.escape(needle) + r"(?!\w)"
+        if re.search(pattern, haystack) and not re.search(pattern, known):
+            return True
+    return False
+
+
 @dataclass
 class _Context:
     conversation_id: uuid.UUID
@@ -584,6 +684,10 @@ class _Context:
     has_outbound: bool
     message_refs: dict[str, Message] = field(default_factory=dict)
     fact_refs: dict[str, ContextFact] = field(default_factory=dict)
+    # Linked profile (1.3.2): absent unless the user linked one to this conversation.
+    profile_id: uuid.UUID | None = None
+    profile_refs: dict[str, ProfileField] = field(default_factory=dict)
+    profile_withheld: list[str] = field(default_factory=list)
 
     @property
     def mode(self) -> IntentMode:
@@ -689,7 +793,28 @@ class ReplyGenerator:
         )
         ctx.message_refs = {f"m{i}": m for i, m in enumerate(window, start=1)}
         ctx.fact_refs = {f"f{i}": f for i, f in enumerate(memory.facts, start=1)}
+        await self._load_profile(session, scope, ctx)
         return ctx
+
+    async def _load_profile(self, session: AsyncSession, scope: UserScope, ctx: _Context) -> None:
+        """The profile the user linked to this conversation, read on every draft: an
+        unlinked or deleted profile is never used again."""
+        link = await ConversationProfileLinkRepository(session, scope).for_conversation(
+            ctx.conversation_id
+        )
+        if link is None:
+            return
+        profile = await ProfileRepository(session, scope).get(link.profile_id)
+        if profile is None:  # pragma: no cover - FK cascade removes the link
+            return
+        fields = profile_context_fields(
+            profile,
+            max_fields=self.limits.max_profile_fields,
+            max_chars=self.limits.max_profile_field_chars,
+        )
+        ctx.profile_id = profile.id
+        ctx.profile_refs = {f"p{i}": f for i, f in enumerate(fields, start=1)}
+        ctx.profile_withheld = sensitive_attribute_values(profile.attributes or {})
 
     async def _window(
         self, session: AsyncSession, scope: UserScope, conversation_id: uuid.UUID
@@ -737,6 +862,10 @@ class ReplyGenerator:
             summary=summary,
             analysis=analysis,
             guidance=ctx.guidance,
+            profile=[
+                ProfileLine(ref=ref, label=f.label, text=f.text)
+                for ref, f in ctx.profile_refs.items()
+            ],
         )
 
     # ------------------------------------------------------------------ decision
@@ -789,7 +918,7 @@ class ReplyGenerator:
 
     def _check(self, ctx: _Context, out: ReplyOutput) -> DraftResult:
         # 1. Grounding: only refs the prompt handed out.
-        known = set(ctx.message_refs) | set(ctx.fact_refs)
+        known = set(ctx.message_refs) | set(ctx.fact_refs) | set(ctx.profile_refs)
         if ctx.memory.summary is not None:
             known.add("s1")
         if ctx.guidance is not None:
@@ -797,9 +926,11 @@ class ReplyGenerator:
         if ctx.mode is IntentMode.CUSTOM and ctx.prefs.intent.custom_description:
             known.add(INTENT_REF)
         unknown = sorted({r for r in out.all_refs() if r not in known})
-        misplaced = [r for r in out.message_refs if not r.startswith("m")] + [
-            r for r in out.memory_refs if not (r.startswith("f") or r == "s1")
-        ]
+        misplaced = (
+            [r for r in out.message_refs if not r.startswith("m")]
+            + [r for r in out.memory_refs if not (r.startswith("f") or r == "s1")]
+            + [r for r in out.profile_refs if not r.startswith("p")]
+        )
         if unknown or misplaced:
             return self._no_send(
                 ctx,
@@ -813,6 +944,7 @@ class ReplyGenerator:
                 ],
             )
         memory_ids, message_ids = self._grounding(ctx, out.memory_refs, out.message_refs)
+        profile_fields = list(dict.fromkeys(ctx.profile_refs[r].pointer for r in out.profile_refs))
 
         if out.decision is DraftDecision.NO_SEND:
             return self._result(
@@ -843,6 +975,27 @@ class ReplyGenerator:
 
         text = (out.text or "").strip()
         violations: list[GuardrailViolation] = []
+
+        # 1b. Linked profile: a protected or sensitive attribute is never given to the
+        #     model, so a draft stating its value (and not echoing the conversation) is
+        #     refused whatever it cites.
+        if ctx.profile_withheld and _states_withheld_value(
+            text,
+            ctx.profile_withheld,
+            " ".join([m.text for m in ctx.window] + [ctx.guidance or ""]),
+        ):
+            return self._no_send(
+                ctx,
+                DraftReason.SENSITIVE_PROFILE_ATTRIBUTE,
+                "The draft stated a sensitive detail from the linked profile and was refused.",
+                violations=[
+                    GuardrailViolation(
+                        code="sensitive_profile_attribute", detail="withheld value in draft"
+                    )
+                ],
+                memory_ids=memory_ids,
+                message_ids=message_ids,
+            )
 
         # 2. Unsafe content: explicit or coercive wording is refused in every mode.
         if detect_unsafe_content(text):
@@ -972,6 +1125,7 @@ class ReplyGenerator:
             approval=approval,
             commitment=commitment,
             violations=violations,
+            profile_fields=profile_fields,
         )
 
     # ------------------------------------------------------------------ helpers
@@ -1063,8 +1217,11 @@ class ReplyGenerator:
         commitment: Commitment = Commitment.NONE,
         violations: Sequence[GuardrailViolation] = (),
         model_error: str | None = None,
+        profile_fields: Sequence[str] = (),
     ) -> DraftResult:
         self._assert_grounded(ctx, memory_ids, message_ids)
+        if not set(profile_fields) <= {f.pointer for f in ctx.profile_refs.values()}:
+            raise RuntimeError("draft grounding names a profile field outside its context")
         reasons = tuple(dict.fromkeys(approval))
         return DraftResult(
             id=uuid7(),
@@ -1077,7 +1234,12 @@ class ReplyGenerator:
             requires_approval=bool(reasons),
             approval_reasons=reasons,
             intent_mode=ctx.mode,
-            grounding=Grounding(memory_ids=tuple(memory_ids), message_ids=tuple(message_ids)),
+            grounding=Grounding(
+                memory_ids=tuple(memory_ids),
+                message_ids=tuple(message_ids),
+                profile_id=ctx.profile_id if profile_fields else None,
+                profile_fields=tuple(profile_fields),
+            ),
             created_at=self._now(),
             contact_id=ctx.contact_id,
             reason=reason,
@@ -1118,6 +1280,10 @@ class ReplyGenerator:
             "messages_considered": len(ctx.window),
             "memory_ids": [str(m) for m in draft.grounding.memory_ids],
             "message_ids": [str(m) for m in draft.grounding.message_ids],
+            # 1.3.2: IDs and field pointers only, never profile text.
+            "profile_linked": ctx.profile_id is not None,
+            "profile_id": (str(draft.grounding.profile_id) if draft.grounding.profile_id else None),
+            "profile_fields": list(draft.grounding.profile_fields),
         }
 
 

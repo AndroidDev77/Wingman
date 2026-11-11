@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- D-032, EXPERIMENTAL BUILD ONLY. Read-only configuration of WingmanScreenReaderService:
+     - events: window state changed and window content changed, nothing else;
+     - packages: Hinge (profile capture and inspector), Tinder and Bumble (inspector only). Android
+       delivers no event from any other app; the code checks the same list again;
+     - canRetrieveWindowContent: needed to read the node tree;
+     - flagReportViewIds: view-id resource names (structure, not user data);
+       flagIncludeNotImportantViews: also nodes the app marks unimportant, for the inspector verdict.
+     Not requested, on purpose: gestures, touch exploration, key event filtering, screenshots,
+     fingerprint gestures, magnification control. -->
+<accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:accessibilityEventTypes="typeWindowStateChanged|typeWindowContentChanged"
+    android:accessibilityFeedbackType="feedbackGeneric"
+    android:accessibilityFlags="flagReportViewIds|flagIncludeNotImportantViews"
+    android:canRetrieveWindowContent="true"
+    android:description="@string/screen_reader_service_description"
+    android:notificationTimeout="300"
+    android:packageNames="co.hinge.app,com.tinder,com.bumble.app"
+    android:summary="@string/screen_reader_service_summary" />

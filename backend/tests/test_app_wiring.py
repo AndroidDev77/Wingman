@@ -377,7 +377,7 @@ def test_every_contract_operation_is_mounted_with_its_operation_id(
     with _client(monkeypatch, env) as client:
         served_all = _operations(client.get("/openapi.json").json()["paths"])
     served = {k: v for k, v in served_all.items() if not k[0].startswith(DEV_ONLY_PATH_PREFIXES)}
-    assert len(contract) == 49  # 35 in 1.2.0 + 14 in 1.3.0 (ADR 0008)
+    assert len(contract) == 53  # 35 in 1.2.0 + 14 in 1.3.0 (ADR 0008) + 4 in 1.3.2 (D-032)
     assert served == contract
     assert set(served.values()) == set(contract.values())
     dev_only = set(served_all) - set(served)

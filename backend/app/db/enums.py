@@ -168,6 +168,11 @@ class AgentActionType(StrEnum):
     PROFILE_IMPORTED = "profile_imported"
     PROFILE_DECISION_RECORDED = "profile_decision_recorded"
     PROFILE_ACTION_QUEUED = "profile_action_queued"
+    # Contract 1.3.2 (D-032): a profile attached to / detached from a conversation, and a
+    # profile deleted by the user.
+    PROFILE_LINKED = "profile_linked"
+    PROFILE_UNLINKED = "profile_unlinked"
+    PROFILE_DELETED = "profile_deleted"
 
 
 class ConnectionStatus(StrEnum):

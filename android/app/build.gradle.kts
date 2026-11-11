@@ -99,6 +99,9 @@ android {
             // Exactly one of the two: the experimental connector, or the no-op standard stub.
             java.srcDir(if (wingmanExperimental) "src/experimental/java" else "src/standard/java")
             if (wingmanExperimental) manifest.srcFile(experimentalManifest())
+            // D-032: the screen reader's accessibility-service configuration and its strings exist
+            // only in the experimental build.
+            if (wingmanExperimental) res.srcDir("src/experimental/res")
         }
         getByName("test") {
             if (wingmanExperimental) java.srcDir("src/testExperimental/java")
@@ -178,7 +181,8 @@ gradle.taskGraph.whenReady {
 
 // D-023 / D-026 (WING-031): a build without the experimental flag must contain no experimental
 // connector class. Scans the class files the debug and release Kotlin and Java compilations wrote
-// and fails on any `com/wingman/integrations/hinge/` class outside `notifications/`. It also fails
+// and fails on any `com/wingman/integrations/hinge/` class outside `notifications/` and on any
+// `com/wingman/integrations/screenreader/` class (D-032). It also fails
 // if it found no app classes at all, so a changed output layout cannot make it pass silently. Runs
 // before the unit tests of every non-experimental build (CI included).
 val checkNoExperimentalClasses = tasks.register("checkNoExperimentalClasses") {
@@ -196,8 +200,10 @@ val checkNoExperimentalClasses = tasks.register("checkNoExperimentalClasses") {
         if ("com/wingman/MainActivity.class" !in classFiles || "com/wingman/experimental/ExperimentalModules.class" !in classFiles) {
             throw GradleException("checkNoExperimentalClasses found no app classes to scan (${classFiles.size} class files); fix the scan")
         }
+        // D-032: the read-only screen reader (accessibility service included) is experimental-only too.
         val offenders = classFiles.filter {
-            it.startsWith("com/wingman/integrations/hinge/") && !it.startsWith("com/wingman/integrations/hinge/notifications/")
+            (it.startsWith("com/wingman/integrations/hinge/") && !it.startsWith("com/wingman/integrations/hinge/notifications/")) ||
+                it.startsWith("com/wingman/integrations/screenreader/")
         }.distinct().sorted()
         if (offenders.isNotEmpty()) {
             throw GradleException("D-023: the standard build compiled experimental classes: $offenders")

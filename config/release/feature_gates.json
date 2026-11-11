@@ -1,6 +1,6 @@
 {
   "schema_version": "wingman.feature_gates.v1",
-  "updated": "2026-11-03",
+  "updated": "2026-11-11",
   "doc": "docs/integrations/release_gates.md",
   "matrix": "docs/integrations/cross_platform_test_matrix.md",
   "rules": [
@@ -108,6 +108,19 @@
       "blockers": ["Owner live test L0-L10 not run", "verify-experimental not recorded", "I-031: experimental build distribution undecided", "D-023: never in a Play build"]
     },
     {
+      "id": "hinge.screen_reader_profile",
+      "platform": "hinge",
+      "transport": "notification",
+      "mode": "experimental",
+      "channel": "experimental_build_only",
+      "ui_label": "Experimental: read-only screen reader for a match's profile text, sideloaded build only, off until you turn it on",
+      "requires_verified": ["profile_read"],
+      "matrix_row": "Hinge (screen reader)",
+      "evidence": ["E-HINGE-SR-MOCK", "E-HINGE-SR-DEVICE"],
+      "backend_check": {"kind": "none", "why": "reads and uploads profile text only (importProfile source device, never VERIFIED); it creates no message, draft, approval or send, so there is no dispatch outcome to observe. A draft that uses a linked profile follows the conversation's own gate (hinge.notification_assisted_reply: assisted_delivery)"},
+      "blockers": ["D-032: owner test S1-S8 (docs/integrations/screen_reader.md) never run; whether Hinge exposes profile text to an accessibility reader is unknown", "D-032: never in a Play build; sideloaded experimental build only", "Not autonomous: it only reads; replies stay assisted or approval-only"]
+    },
+    {
       "id": "imessage.companion_reply",
       "platform": "imessage",
       "transport": "companion",
@@ -195,6 +208,8 @@
     {"id": "E-IMESSAGE-MOCK", "platform": "imessage", "capabilities": ["read", "send"], "result": "PASSED WITH MOCK", "verification": "UNVERIFIED", "date": "2026-11-02", "evidence_ref": "docs/integrations/cross_platform_test_matrix.md", "note": "tests/e2e/platforms P4, C4, C5 (golden companion envelopes)"},
     {"id": "E-IMESSAGE-MAC", "platform": "imessage", "capabilities": ["read", "send"], "result": "BLOCKED", "verification": "UNVERIFIED", "date": null, "evidence_ref": "docs/integrations/cross_platform_test_matrix.md", "note": "Needs the owner's Mac, Developer ID and Auth0 Native app (I-035)"},
     {"id": "E-DISCOVERY-MOCK", "platform": "tinder,bumble,hinge", "capabilities": ["profile_read", "swipe"], "result": "PASSED WITH MOCK", "verification": "UNVERIFIED", "date": "2026-11-02", "evidence_ref": "docs/integrations/cross_platform_test_matrix.md", "note": "tests/e2e/platforms P5 (review workflow; execute refused)"},
-    {"id": "E-SWIPE-DEVICE", "platform": "tinder,bumble,hinge", "capabilities": ["profile_read", "swipe"], "result": "BLOCKED", "verification": "UNSUPPORTED", "date": null, "evidence_ref": "docs/integrations/cross_platform_test_matrix.md", "note": "No swipe path exists (D-027); nothing to run"}
+    {"id": "E-SWIPE-DEVICE", "platform": "tinder,bumble,hinge", "capabilities": ["profile_read", "swipe"], "result": "BLOCKED", "verification": "UNSUPPORTED", "date": null, "evidence_ref": "docs/integrations/cross_platform_test_matrix.md", "note": "No swipe path exists (D-027); nothing to run"},
+    {"id": "E-HINGE-SR-MOCK", "platform": "hinge", "capabilities": ["profile_read"], "result": "PASSED WITH MOCK", "verification": "UNVERIFIED", "date": "2026-11-11", "evidence_ref": "docs/integrations/screen_reader.md", "note": "JVM tests on synthetic node trees (android src/testExperimental screenreader) and backend tests/integrations/test_profile_links.py; nothing ran against the real app"},
+    {"id": "E-HINGE-SR-DEVICE", "platform": "hinge", "capabilities": ["profile_read"], "result": "NOT RUN", "verification": "UNVERIFIED", "date": null, "evidence_ref": "docs/integrations/screen_reader.md", "note": "Owner test S1-S8 on his own phone and account (D-032)"}
   ]
 }

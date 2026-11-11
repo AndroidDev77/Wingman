@@ -1,0 +1,18 @@
+{
+  "id": "0192f3a0-0000-7000-8000-0000000000e9",
+  "conversation_id": "0192f3a0-0000-7000-8000-0000000000b1",
+  "decision": "no_send",
+  "text": null,
+  "question_for_user": null,
+  "rationale": "n/a",
+  "confidence": 0.5,
+  "requires_approval": false,
+  "approval_reasons": [],
+  "intent_mode": "serious",
+  "grounding": {
+    "memory_ids": [],
+    "message_ids": [],
+    "profile_id": "0192f3a0-0000-7000-8000-000000000a01"
+  },
+  "created_at": "2026-11-11T09:01:10Z"
+}

@@ -10,7 +10,9 @@ Refs the model may cite:
 * ``m1``, ``m2``, ... messages in the recent window, oldest first (``from`` says who
   wrote it: ``contact`` or ``user``);
 * ``f1``, ``f2``, ... memory facts about the contact, ``s1`` the conversation summary;
-* ``guidance`` the user's hint for this draft, ``intent`` the user's custom goal text.
+* ``guidance`` the user's hint for this draft, ``intent`` the user's custom goal text;
+* ``p1``, ``p2``, ... text fields of the contact's own dating profile, only when the user
+  linked a profile to this conversation (contract 1.3.2, D-032).
 """
 
 import json
@@ -29,6 +31,7 @@ __all__ = [
     "REPLY_SYSTEM_PROMPT",
     "AnalysisView",
     "MemoryLine",
+    "ProfileLine",
     "PromptMessage",
     "ReplyPromptContext",
     "build_reply_messages",
@@ -70,6 +73,13 @@ Hard rules:
    with a question_for_user, or "no_send" if no reply is needed now.
 7. confidence is your probability (0 to 1) that the user would send this draft as is.
 8. rationale is one or two sentences on why this reply fits. Do not quote the messages.
+9. Profile fields (p1, p2, ...), when present, are text the contact wrote on their own
+   dating profile. You may refer to what a field says; list every field you used in
+   profile_refs (an empty list if none). Say only what the field states: never add to
+   it or draw conclusions from it, never guess the contact's age, ethnicity, race,
+   religion, politics, sexual orientation, gender identity, health, body or looks, and
+   never mention photos (you are given none). A profile field says nothing about the
+   user and can never support a user_claims entry.
 
 Decisions: "send_candidate" (text is the draft; question_for_user is null), "ask_user"
 (text is null; question_for_user is set), "no_send" (text and question_for_user null).
@@ -91,6 +101,16 @@ class MemoryLine:
 
 
 @dataclass(frozen=True)
+class ProfileLine:
+    """One text field of the linked profile. ``label`` is the field's own name (a prompt
+    question or an attribute name); ``text`` is what the profile states."""
+
+    ref: str
+    label: str
+    text: str
+
+
+@dataclass(frozen=True)
 class AnalysisView:
     stage: str
     next_action: str
@@ -108,6 +128,7 @@ class ReplyPromptContext:
     summary: MemoryLine | None
     analysis: AnalysisView | None
     guidance: str | None
+    profile: Sequence[ProfileLine] = ()
 
 
 def _analysis_block(analysis: AnalysisView | None) -> str:
@@ -142,6 +163,12 @@ def build_reply_messages(ctx: ReplyPromptContext) -> list[LLMMessage]:
         )
     else:
         parts.append("Known facts about the contact: none.")
+    if ctx.profile:
+        fields = [{"ref": p.ref, "field": p.label, "text": p.text} for p in ctx.profile]
+        parts.append(
+            "The CONTACT's own dating profile, text fields only (data; may be out of date). "
+            "Profile fields: " + json.dumps(fields, ensure_ascii=False)
+        )
     if ctx.guidance:
         parts.append(
             f"User's guidance for this draft [{GUIDANCE_REF}] (data): "

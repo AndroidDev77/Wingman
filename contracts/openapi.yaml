@@ -2,7 +2,7 @@ openapi: 3.1.0
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
   title: Wingman AI API
-  version: 1.3.1
+  version: 1.3.2
   summary: Canonical HTTP contract between the Wingman backend and its clients.
   description: |
     Source of truth for the Wingman backend <-> Android (and any other client) HTTP API.
@@ -58,6 +58,16 @@ info:
 
     ## Changelog
 
+    * **1.3.2** (additive, D-032). A profile can be attached to a conversation so
+      reply drafts use its stated text: `putConversationProfileLink`,
+      `getConversationProfileLink`, `deleteConversationProfileLink` (schemas
+      `ConversationProfileLinkRequest`, `ConversationProfileLink`), and
+      `deleteProfile`. `Draft.grounding` gains optional `profile_id` and
+      `profile_fields` (the profile fields a draft cited). New `AgentActionType`
+      values `profile_linked`, `profile_unlinked`, `profile_deleted`.
+      `listProfileReviewQueue` leaves out profiles linked to a conversation (a match's
+      profile is not a discovery candidate). No existing operation, field or enum
+      value changed meaning; no new `ErrorCode`.
     * **1.3.1** (additive, D-025, WING-019). `listProfileReviewQueue` is ranked by the
       latest current `Evaluation` and documents its exclusion rule: profiles whose
       evaluation hit a dealbreaker are left out by default. New optional query
@@ -1842,6 +1852,109 @@ paths:
         default:
           $ref: "#/components/responses/Error"
 
+  /v1/profiles/{profile_id}:
+    parameters:
+      - $ref: "#/components/parameters/ProfileId"
+    delete:
+      tags: [profiles]
+      operationId: deleteProfile
+      summary: Delete a profile (added in 1.3.2)
+      description: |
+        Removes the profile together with its evaluations, recorded decisions and any
+        conversation link (drafts made afterwards no longer use it; drafts already
+        stored keep the field pointers they cited). Audit `profile_deleted` (IDs and
+        counts only). A missing or another user's profile is `404 not_found`, so
+        deleting twice is `404` the second time. Nothing is sent to any platform.
+      responses:
+        "204":
+          description: Deleted.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
+  /v1/conversations/{conversation_id}/profile-link:
+    parameters:
+      - $ref: "#/components/parameters/ConversationId"
+    put:
+      tags: [profiles]
+      operationId: putConversationProfileLink
+      summary: Attach one profile to a conversation for reply drafts (added in 1.3.2)
+      description: |
+        Sets the conversation's linked profile (at most one; a second PUT replaces
+        it). PUT is idempotent and causes no send, so no `Idempotency-Key`. While the
+        link exists, `createDraft` and the automation pipeline give the model the
+        profile's stated text fields (prompts, bio, and attributes other than
+        protected or sensitive ones) as grounded context, and a draft lists the
+        fields it used in `grounding.profile_fields`. The link changes no message,
+        memory or automation setting and never triggers a draft by itself.
+
+        `origin: user` (default) is the user's own choice. `origin: device_match` is
+        accepted only when the profile is on the conversation's platform **and** its
+        `external_profile_id` equals the conversation's `external_thread_id` or the
+        contact's platform ID; otherwise `422` at `/origin`. Nothing links by display
+        name, photo or model output (ADR 0008), and the request has no such field.
+        Both resources must be the caller's: another user's conversation is `404`,
+        another user's or an unknown profile is `422` at `/profile_id`. Audit
+        `profile_linked` when the link changes.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConversationProfileLinkRequest"
+      responses:
+        "200":
+          description: Linked; the link.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationProfileLink"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "422":
+          $ref: "#/components/responses/ValidationFailed"
+        default:
+          $ref: "#/components/responses/Error"
+    get:
+      tags: [profiles]
+      operationId: getConversationProfileLink
+      summary: The profile linked to a conversation (added in 1.3.2)
+      description: "`404 not_found` when the conversation has no linked profile."
+      responses:
+        "200":
+          description: The link.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConversationProfileLink"
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+    delete:
+      tags: [profiles]
+      operationId: deleteConversationProfileLink
+      summary: Detach the linked profile (added in 1.3.2)
+      description: |
+        Removes the link; the profile itself stays. Drafts made afterwards no longer
+        use it. Audit `profile_unlinked`. `404 not_found` when there is no link.
+      responses:
+        "204":
+          description: Unlinked.
+        "401":
+          $ref: "#/components/responses/Unauthenticated"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        default:
+          $ref: "#/components/responses/Error"
+
   /v1/profiles/review-queue:
     get:
       tags: [profiles]
@@ -1850,6 +1963,8 @@ paths:
       description: |
         Profiles with no recorded decision other than `skip`, ranked by compatibility
         (1.3.1, WING-019). Each item carries its latest `Evaluation` and `stale`.
+        Since 1.3.2 a profile linked to a conversation (`putConversationProfileLink`)
+        is left out: it is a match's profile, not a discovery candidate.
 
         **Evaluation.** Before ranking, the server makes sure each candidate has a
         current evaluation against the user's current preferences; a missing or
@@ -2371,8 +2486,9 @@ components:
         `experimental_consent_recorded` / `_revoked`, `identity_link_created` /
         `_deleted` (user actions only), `profile_imported`,
         `profile_decision_recorded`, `profile_action_queued` (swipe execution passed
-        the gate; not executed yet). Clients must tolerate values added in later minor
-        versions.
+        the gate; not executed yet). Added in 1.3.2 (D-032): `profile_linked` /
+        `profile_unlinked` (a profile attached to or detached from a conversation) and
+        `profile_deleted`. Clients must tolerate values added in later minor versions.
       type: string
       enum:
         - message_received
@@ -2410,6 +2526,9 @@ components:
         - profile_imported
         - profile_decision_recorded
         - profile_action_queued
+        - profile_linked
+        - profile_unlinked
+        - profile_deleted
     ConnectionStatus:
       type: string
       enum: [connected, disconnected, error]
@@ -3302,7 +3421,9 @@ components:
         intent_mode:
           $ref: "#/components/schemas/IntentMode"
         grounding:
-          description: The memory facts and messages this draft relied on (attribution, WING-008).
+          description: |
+            The memory facts and messages this draft relied on (attribution, WING-008)
+            and, since 1.3.2, the fields of the conversation's linked profile it cited.
           type: object
           required: [memory_ids, message_ids]
           properties:
@@ -3314,6 +3435,28 @@ components:
               type: array
               items:
                 $ref: "#/components/schemas/Id"
+            profile_id:
+              description: |
+                (1.3.2) The linked profile whose fields are cited; null or absent
+                when the draft cited none.
+              anyOf:
+                - $ref: "#/components/schemas/Id"
+                - type: "null"
+            profile_fields:
+              description: |
+                (1.3.2) Pointers to the profile fields the draft cited, in the forms
+                `Evaluation` evidence uses: `bio`, `prompts/<index>`,
+                `attributes/<name>`. Every pointer names a field that existed on the
+                linked profile when the draft was made; the server rejects a draft
+                whose model output cites anything else. Never a photo, and never a
+                protected or sensitive attribute (those are not given to the model).
+              type: array
+              maxItems: 20
+              items:
+                type: string
+                pattern: "^(bio|prompts/(0|[1-9][0-9]?)|attributes/[a-z][a-z0-9_]{0,63})$"
+          dependentRequired:
+            profile_id: [profile_fields]
         created_at:
           $ref: "#/components/schemas/Timestamp"
       if:
@@ -4611,6 +4754,43 @@ components:
           anyOf:
             - $ref: "#/components/schemas/ProfileAction"
             - type: "null"
+        created_at:
+          $ref: "#/components/schemas/Timestamp"
+        updated_at:
+          $ref: "#/components/schemas/Timestamp"
+    ConversationProfileLinkRequest:
+      description: |
+        (1.3.2) Which of the caller's profiles to attach. There is deliberately no
+        name, score or confidence field: a link is the user's choice or a stable
+        platform ID match, never an inference.
+      type: object
+      additionalProperties: false
+      required: [profile_id]
+      properties:
+        profile_id:
+          $ref: "#/components/schemas/Id"
+        origin:
+          description: |
+            `user` (default): the user picked this conversation for the profile.
+            `device_match`: the device read the same stable platform ID on the
+            profile and on the conversation; the server checks the equality.
+          type: string
+          enum: [user, device_match]
+          default: user
+    ConversationProfileLink:
+      description: (1.3.2) The one profile attached to a conversation, used by reply drafts.
+      type: object
+      required: [id, conversation_id, profile_id, origin, created_at, updated_at]
+      properties:
+        id:
+          $ref: "#/components/schemas/Id"
+        conversation_id:
+          $ref: "#/components/schemas/Id"
+        profile_id:
+          $ref: "#/components/schemas/Id"
+        origin:
+          type: string
+          enum: [user, device_match]
         created_at:
           $ref: "#/components/schemas/Timestamp"
         updated_at:

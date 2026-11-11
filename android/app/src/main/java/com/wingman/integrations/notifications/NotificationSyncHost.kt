@@ -149,6 +149,13 @@ class NotificationSyncHost(
         NotificationToggleResult.Done("Direct reply is on. Every reply still needs your approval.")
     }
 
+    /**
+     * D-032: queues a `connection.capabilities_changed` for a paired [platform] because something
+     * outside the notification path changed its document (the experimental screen reader turning
+     * `profile_read` on or off). False when the platform is not paired. Uploaded by the next [sync].
+     */
+    fun reportCapabilities(platform: String, reason: String): Boolean = synchronized(lock) { enqueueCapabilities(platform, reason) }
+
     /** Direct reply may be offered only when the server-stored `send` of a paired connection is VERIFIED. */
     fun directReplyAllowed(platform: String): Boolean {
         val c: Connection = pairingState(platform) ?: return false

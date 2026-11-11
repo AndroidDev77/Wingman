@@ -155,6 +155,34 @@ data class ProfileImportRequest(
     }
 }
 
+/** (1.3.2) `ConversationProfileLink.origin`: never an inference, never a name match. */
+@Serializable
+enum class ProfileLinkOrigin {
+    /** The user picked the conversation ("Which match is this?"). */
+    @SerialName("user") USER,
+
+    /** The device read the same stable platform ID on the profile and the conversation (server-checked). */
+    @SerialName("device_match") DEVICE_MATCH,
+}
+
+/** (1.3.2) `ConversationProfileLinkRequest`. No name, score or confidence field exists. */
+@Serializable
+data class ConversationProfileLinkRequest(
+    @SerialName("profile_id") val profileId: String,
+    val origin: ProfileLinkOrigin = ProfileLinkOrigin.USER,
+)
+
+/** (1.3.2) `ConversationProfileLink`: the one profile reply drafts may use for a conversation. */
+@Serializable
+data class ConversationProfileLink(
+    val id: String,
+    @SerialName("conversation_id") val conversationId: String,
+    @SerialName("profile_id") val profileId: String,
+    val origin: ProfileLinkOrigin,
+    @SerialName("created_at") val createdAt: Instant,
+    @SerialName("updated_at") val updatedAt: Instant,
+)
+
 /** `ProfileDecisionRequest`. [connectionId] is the connection a later execution would use. */
 @Serializable
 data class ProfileDecisionRequest(

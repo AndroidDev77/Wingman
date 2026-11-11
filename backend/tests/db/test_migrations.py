@@ -39,6 +39,7 @@ EXPECTED_TABLES = {
     "inbound_notices",
     "assisted_deliveries",
     "identity_links",
+    "conversation_profile_links",
     "profiles",
     "profile_evaluations",
     "profile_actions",
